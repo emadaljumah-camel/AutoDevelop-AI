@@ -15,7 +15,7 @@ function MenuActions.autoDevelopSelectedPhotos()
 end
 
 function MenuActions.analyzeSelectedPhotos()
-    showPlaceholder("Analyze Selected Photos")
+    require("lib.AnalyzeCommand").start()
 end
 
 function MenuActions.applyRecommendedCrop()
