@@ -1,6 +1,6 @@
-local Config = require("lib.Config")
-local ExifMapper = require("lib.ExifMapper")
-local Utils = require("lib.Utils")
+local Config = ModuleLoader.load("lib/Config.lua")
+local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
+local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local RequestBuilder = {}
 

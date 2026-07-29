@@ -11,11 +11,11 @@ local function showPlaceholder(commandName)
 end
 
 function MenuActions.autoDevelopSelectedPhotos()
-    require("lib.AutoDevelopCommand").start()
+    ModuleLoader.load("lib/AutoDevelopCommand.lua").start()
 end
 
 function MenuActions.analyzeSelectedPhotos()
-    require("lib.AnalyzeCommand").start()
+    ModuleLoader.load("lib/AnalyzeCommand.lua").start()
 end
 
 function MenuActions.applyRecommendedCrop()

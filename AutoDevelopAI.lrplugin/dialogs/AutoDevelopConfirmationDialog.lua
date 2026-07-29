@@ -1,6 +1,6 @@
 local LrDialogs = import("LrDialogs")
 
-local Utils = require("lib.Utils")
+local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local AutoDevelopConfirmationDialog = {}
 

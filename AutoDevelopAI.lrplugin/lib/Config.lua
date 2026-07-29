@@ -1,6 +1,6 @@
 local LrPrefs = import("LrPrefs")
 
-local Utils = require("lib.Utils")
+local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local Config = {}
 

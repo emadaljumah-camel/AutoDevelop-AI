@@ -1,28 +1,152 @@
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 
 PLUGIN = Path("AutoDevelopAI.lrplugin")
+MENU_ITEM_PATTERN = re.compile(
+    r"""
+    \{
+        \s*title\s*=\s*"(?P<title>[^"]+)"\s*,
+        \s*file\s*=\s*"(?P<file>[^"]+)"\s*,
+    \s*\}
+    """,
+    re.VERBOSE,
+)
+DOTTED_MODULE_PATTERN = re.compile(
+    r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$"
+)
+REQUIRE_PATTERN = re.compile(
+    r"""\brequire\s*(?:\(\s*)?["'](?P<module>[^"']+)["']"""
+)
+LOADER_PATTERN = re.compile(
+    r"""\bModuleLoader\.load\(\s*["'](?P<path>[^"']+)["']"""
+)
 
 
 def _read(relative_path: str) -> str:
     return (PLUGIN / relative_path).read_text(encoding="utf-8")
 
 
-def test_analyze_menu_is_registered_and_delegated() -> None:
+def _library_menu_items() -> dict[str, str]:
     info = _read("Info.lua")
-    menu_actions = _read("lib/MenuActions.lua")
+    items = {
+        match.group("title"): match.group("file")
+        for match in MENU_ITEM_PATTERN.finditer(info)
+    }
+    assert items, "Info.lua did not contain any parseable menu items"
+    return items
 
-    assert 'title = "Analyze Selected Photos"' in info
-    assert 'file = "AnalyzeSelectedPhotos.lua"' in info
-    assert 'require("lib.AnalyzeCommand").start()' in menu_actions
+
+def test_library_menu_files_are_real_relative_lua_scripts() -> None:
+    items = _library_menu_items()
+    actual_lua_files = {
+        path.relative_to(PLUGIN).as_posix()
+        for path in PLUGIN.rglob("*.lua")
+    }
+
+    assert items["Analyze Selected Photos"] == "AnalyzeSelectedPhotos.lua"
+    assert (
+        items["Auto Develop Selected Photos"]
+        == "AutoDevelopSelectedPhotos.lua"
+    )
+
+    for title, file_value in items.items():
+        assert not (
+            DOTTED_MODULE_PATTERN.fullmatch(file_value)
+            and not file_value.endswith(".lua")
+        ), f"{title!r} uses dotted Lua module notation: {file_value!r}"
+        assert file_value.endswith(
+            ".lua"
+        ), f"{title!r} must reference a Lua script path"
+        assert "\\" not in file_value
+        path = PurePosixPath(file_value)
+        assert not path.is_absolute()
+        assert all(part not in {"", ".", ".."} for part in path.parts)
+        assert (
+            file_value in actual_lua_files
+        ), f"{title!r} references a missing or case-mismatched script"
 
 
-def test_auto_develop_menu_is_registered_and_delegated() -> None:
-    info = _read("Info.lua")
-    menu_actions = _read("lib/MenuActions.lua")
+def test_primary_menu_scripts_delegate_directly_to_commands() -> None:
+    analyze_entry = _read("AnalyzeSelectedPhotos.lua")
+    auto_develop_entry = _read("AutoDevelopSelectedPhotos.lua")
 
-    assert 'title = "Auto Develop Selected Photos"' in info
-    assert 'file = "AutoDevelopSelectedPhotos.lua"' in info
-    assert 'require("lib.AutoDevelopCommand").start()' in menu_actions
+    assert analyze_entry.strip() == (
+        'require "ModuleLoader.lua"\n\n'
+        'local AnalyzeCommand = ModuleLoader.load("lib/AnalyzeCommand.lua")\n'
+        "AnalyzeCommand.start()"
+    )
+    assert auto_develop_entry.strip() == (
+        'require "ModuleLoader.lua"\n\n'
+        "local AutoDevelopCommand = "
+        'ModuleLoader.load("lib/AutoDevelopCommand.lua")\n'
+        "AutoDevelopCommand.start()"
+    )
+
+
+def test_plugin_imports_resolve_with_lightroom_compatible_loader() -> None:
+    actual_lua_files = {
+        path.relative_to(PLUGIN).as_posix()
+        for path in PLUGIN.rglob("*.lua")
+    }
+
+    for source_path in PLUGIN.rglob("*.lua"):
+        source_relative = source_path.relative_to(PLUGIN).as_posix()
+        source = source_path.read_text(encoding="utf-8")
+        modules = [
+            match.group("module")
+            for match in REQUIRE_PATTERN.finditer(source)
+        ]
+        for module in modules:
+            assert "/" not in module and "\\" not in module, (
+                f"{source_relative!r} requires a non-root toolkit script: "
+                f"{module!r}"
+            )
+            assert module.endswith(".lua"), (
+                f"{source_relative!r} requires a script without .lua: "
+                f"{module!r}"
+            )
+            assert module in actual_lua_files, (
+                f"{source_relative!r} imports missing or case-mismatched "
+                f"module {module!r}"
+            )
+
+        loaded_paths = [
+            match.group("path")
+            for match in LOADER_PATTERN.finditer(source)
+        ]
+        for loaded_path in loaded_paths:
+            assert loaded_path.endswith(".lua")
+            assert "\\" not in loaded_path
+            path = PurePosixPath(loaded_path)
+            assert not path.is_absolute()
+            assert all(part not in {"", ".", ".."} for part in path.parts)
+            assert loaded_path in actual_lua_files, (
+                f"{source_relative!r} loads missing or case-mismatched "
+                f"module {loaded_path!r}"
+            )
+
+    for title, wrapper_path in _library_menu_items().items():
+        wrapper = _read(wrapper_path)
+        required = [
+            match.group("module")
+            for match in REQUIRE_PATTERN.finditer(wrapper)
+        ]
+        assert required == ["ModuleLoader.lua"], (
+            f"{title!r} wrapper must require only ModuleLoader.lua"
+        )
+        assert LOADER_PATTERN.search(
+            wrapper
+        ), f"{title!r} wrapper does not load a command module"
+
+
+def test_module_loader_is_cached_and_plugin_relative() -> None:
+    loader = _read("ModuleLoader.lua")
+
+    assert "_PLUGIN.path" in loader
+    assert "LrPathUtils.child" in loader
+    assert "cache[relativePath]" in loader
+    assert "pcall(dofile, absolutePath(relativePath))" in loader
+    assert 'relativePath:find("..", 1, true)' in loader
 
 
 def test_backend_configuration_uses_autodevelop_port_and_route() -> None:
@@ -53,11 +177,15 @@ def test_requests_use_backend_contract_field_names() -> None:
     assert "current_develop_settings" not in builder
 
 
-def test_json_is_encoded_through_lrjson() -> None:
+def test_json_codec_is_bundled_and_used_by_api_client() -> None:
     json_module = _read("lib/Json.lua")
     client = _read("lib/ApiClient.lua")
 
-    assert "LrJson.encode(value)" in json_module
+    assert 'import("LrJson")' not in json_module
+    assert "function Json.encode(value)" in json_module
+    assert "function Json.decode(value)" in json_module
+    assert "pcall(encodeValue, value, {})" in json_module
+    assert "pcall(parseValue, state)" in json_module
     assert "Json.encode(request)" in client
     assert "preview_path" not in client
 

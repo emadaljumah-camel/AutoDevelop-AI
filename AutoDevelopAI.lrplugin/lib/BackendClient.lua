@@ -1,6 +1,6 @@
 local LrHttp = import("LrHttp")
 
-local Config = require("lib.Config")
+local Config = ModuleLoader.load("lib/Config.lua")
 
 local BackendClient = {}
 

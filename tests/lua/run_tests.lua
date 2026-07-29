@@ -4,24 +4,23 @@ package.path = "AutoDevelopAI.lrplugin/?.lua;"
 
 local assertions = 0
 local fakePreferences = {}
-local encodedValue = nil
+
+_G._PLUGIN = {
+    path = "AutoDevelopAI.lrplugin",
+}
 
 _G.import = function(name)
+    if name == "LrPathUtils" then
+        return {
+            child = function(parent, child)
+                return parent .. "/" .. child
+            end,
+        }
+    end
     if name == "LrPrefs" then
         return {
             prefsForPlugin = function()
                 return fakePreferences
-            end,
-        }
-    end
-    if name == "LrJson" then
-        return {
-            encode = function(value)
-                encodedValue = value
-                return "{\"preview_path\":\"D:\\\\Temp\\\\preview.jpg\"}"
-            end,
-            decode = function()
-                return {}
             end,
         }
     end
@@ -56,17 +55,26 @@ local function assertEqual(actual, expected, message)
     end
 end
 
-local Utils = require("lib.Utils")
-local Config = require("lib.Config")
-local ExifMapper = require("lib.ExifMapper")
-local RequestBuilder = require("lib.RequestBuilder")
-local Validation = require("lib.Validation")
-local BatchPolicy = require("lib.BatchPolicy")
-local ResultStore = require("lib.ResultStore")
-local DevelopSettingsMapper = require("lib.DevelopSettingsMapper")
-local CropMapper = require("lib.CropMapper")
-local PendingOperation = require("lib.PendingOperation")
-local ApplyService = require("lib.ApplyService")
+local ModuleLoader = require("ModuleLoader")
+local Utils = ModuleLoader.load("lib/Utils.lua")
+local Config = ModuleLoader.load("lib/Config.lua")
+local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
+local RequestBuilder = ModuleLoader.load("lib/RequestBuilder.lua")
+local Validation = ModuleLoader.load("lib/Validation.lua")
+local BatchPolicy = ModuleLoader.load("lib/BatchPolicy.lua")
+local ResultStore = ModuleLoader.load("lib/ResultStore.lua")
+local DevelopSettingsMapper =
+    ModuleLoader.load("lib/DevelopSettingsMapper.lua")
+local CropMapper = ModuleLoader.load("lib/CropMapper.lua")
+local PendingOperation = ModuleLoader.load("lib/PendingOperation.lua")
+local ApplyService = ModuleLoader.load("lib/ApplyService.lua")
+
+assertTrue(
+    Utils == ModuleLoader.load("lib/Utils.lua"),
+    "module loader must cache successful loads"
+)
+local unsafeLoadOk = pcall(ModuleLoader.load, "../outside.lua")
+assertTrue(not unsafeLoadOk, "module loader must reject path traversal")
 
 local function photo(raw, formatted, develop)
     formatted = formatted or {}
@@ -748,12 +756,37 @@ assertEqual(
 ResultStore.remove(resultPhotoKey)
 assertEqual(ResultStore.count(), 0)
 
-local Json = require("lib.Json")
+local Json = ModuleLoader.load("lib/Json.lua")
 local encoded = assert(Json.encode(request))
-assertTrue(encodedValue == request, "LrJson must receive the request table")
 assertTrue(
     encoded:find("D:\\\\Temp", 1, true) ~= nil,
-    "Windows path must be escaped by LrJson"
+    "Windows path must be escaped in JSON"
 )
+local decodedRequest = assert(Json.decode(encoded))
+assertEqual(decodedRequest.request_id, request.request_id)
+assertEqual(decodedRequest.options.style_profile, "natural_travel")
+
+local decodedValues = assert(Json.decode(
+    '{"array":[1,false,null],"false_value":false,'
+        .. '"null_value":null,"unicode":"\\u0041","zero":0}'
+))
+assertEqual(decodedValues.zero, 0)
+assertEqual(decodedValues.false_value, false)
+assertTrue(decodedValues.null_value == nil)
+assertEqual(decodedValues.unicode, "A")
+assertEqual(decodedValues.array[1], 1)
+assertEqual(decodedValues.array[2], false)
+assertTrue(decodedValues.array[3] == Json.null)
+
+local deterministic = assert(Json.encode({ b = 2, a = 1 }))
+assertEqual(deterministic, '{"a":1,"b":2}')
+assertTrue(Json.decode('{"value":1} trailing') == nil)
+assertTrue(Json.decode('{"value":}') == nil)
+assertTrue(Json.encode({ value = 0 / 0 }) == nil)
+assertTrue(Json.encode({ value = math.huge }) == nil)
+
+local circular = {}
+circular.self = circular
+assertTrue(Json.encode(circular) == nil)
 
 print("Lua assertions passed: " .. tostring(assertions))

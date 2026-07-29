@@ -1,8 +1,8 @@
 local LrHttp = import("LrHttp")
 local LrTasks = import("LrTasks")
 
-local Config = require("lib.Config")
-local Json = require("lib.Json")
+local Config = ModuleLoader.load("lib/Config.lua")
+local Json = ModuleLoader.load("lib/Json.lua")
 
 local ApiClient = {}
 

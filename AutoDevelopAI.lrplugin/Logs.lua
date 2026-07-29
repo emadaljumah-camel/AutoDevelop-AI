@@ -1,1 +1,4 @@
-require("lib.MenuActions").showLogs()
+require "ModuleLoader.lua"
+
+local MenuActions = ModuleLoader.load("lib/MenuActions.lua")
+MenuActions.showLogs()

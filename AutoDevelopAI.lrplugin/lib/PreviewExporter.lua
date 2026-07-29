@@ -3,7 +3,7 @@ local LrFileUtils = import("LrFileUtils")
 local LrPathUtils = import("LrPathUtils")
 local LrTasks = import("LrTasks")
 
-local Utils = require("lib.Utils")
+local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local PreviewExporter = {}
 

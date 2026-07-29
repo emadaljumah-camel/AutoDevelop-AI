@@ -1,8 +1,9 @@
 local LrTasks = import("LrTasks")
 
-local CropMapper = require("lib.CropMapper")
-local DevelopSettingsMapper = require("lib.DevelopSettingsMapper")
-local Utils = require("lib.Utils")
+local CropMapper = ModuleLoader.load("lib/CropMapper.lua")
+local DevelopSettingsMapper =
+    ModuleLoader.load("lib/DevelopSettingsMapper.lua")
+local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local ApplyService = {}
 
