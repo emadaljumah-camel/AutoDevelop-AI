@@ -71,9 +71,20 @@ function ApplyService.applyBatch(catalog, operations, options)
         notApplied = 0,
         cancelled = false,
         writeError = nil,
+        writeErrorCategory = nil,
+        writeErrorCode = nil,
     }
 
-    local writeOk, writeError = LrTasks.pcall(function()
+    if isCancelled() then
+        result.cancelled = true
+        result.notApplied = #operations
+        for _, operation in ipairs(operations) do
+            operation.applicationStatus = "not_applied"
+        end
+        return result
+    end
+
+    local writeOk = LrTasks.pcall(function()
         return catalog:withWriteAccessDo(
             "AutoDevelop AI: Apply Develop Settings",
             function()
@@ -91,7 +102,7 @@ function ApplyService.applyBatch(catalog, operations, options)
                         operation.applicationStatus = "not_applied"
                         result.notApplied = result.notApplied + 1
                     else
-                        local applyOk, applyError = LrTasks.pcall(function()
+                        local applyOk = LrTasks.pcall(function()
                             operation.photo:applyDevelopSettings(
                                 safeSettings,
                                 "AutoDevelop AI"
@@ -112,15 +123,20 @@ function ApplyService.applyBatch(catalog, operations, options)
                                     )
                                 end)
                             end
-                            operation.applyError = Utils.safeMessage(
-                                applyError,
-                                "Develop settings could not be applied."
-                            )
+                            operation.applyErrorCategory = "apply_failed"
+                            operation.applyErrorCode =
+                                "lightroom_apply_failed"
+                            operation.applyError =
+                                "Lightroom could not apply the prepared settings."
                             if restoreOk then
                                 operation.applicationStatus = "restored"
                                 result.restoredAfterFailure =
                                     result.restoredAfterFailure + 1
                             else
+                                operation.restoreErrorCategory =
+                                    "restore_failed"
+                                operation.restoreErrorCode =
+                                    "lightroom_restore_failed"
                                 operation.applicationStatus =
                                     "failed_not_restored"
                                 result.failedNotRestored =
@@ -134,10 +150,10 @@ function ApplyService.applyBatch(catalog, operations, options)
     end)
 
     if not writeOk then
-        result.writeError = Utils.safeMessage(
-            writeError,
-            "Could not obtain Lightroom catalog write access."
-        )
+        result.writeError =
+            "Lightroom catalog write access failed."
+        result.writeErrorCategory = "write_access_failed"
+        result.writeErrorCode = "catalog_write_access_failed"
         result.notApplied = #operations
         result.applied = 0
         result.restoredAfterFailure = 0

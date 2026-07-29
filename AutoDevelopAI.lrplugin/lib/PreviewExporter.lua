@@ -17,7 +17,7 @@ local function cleanupDirectory(directory)
         directory
     )
     if not existsOk then
-        return false, existsOrError
+        return false, "temporary_path_check_failed"
     end
     if not existsOrError then
         return true
@@ -28,9 +28,12 @@ local function cleanupDirectory(directory)
         directory
     )
     if not deleteOk then
-        return false, deleted
+        return false, "temporary_path_delete_failed"
     end
-    return deleted == true, reason
+    if deleted == true then
+        return true
+    end
+    return false, "temporary_path_delete_failed"
 end
 
 local function createDirectory(directory)
@@ -39,10 +42,10 @@ local function createDirectory(directory)
         directory
     )
     if not ok then
-        return false, created
+        return false, "temporary_directory_create_failed"
     end
     if created ~= true then
-        return false, reason
+        return false, "temporary_directory_create_failed"
     end
 
     local existsOk, existsOrError = LrTasks.pcall(
@@ -50,7 +53,7 @@ local function createDirectory(directory)
         directory
     )
     if not existsOk then
-        return false, existsOrError
+        return false, "temporary_path_check_failed"
     end
     return existsOrError == "directory",
         "Could not verify the temporary directory."
@@ -116,8 +119,7 @@ local function renderPhoto(
         )
         local moved, moveError = LrFileUtils.move(renderedPath, uniquePath)
         if not moved then
-            return nil, "Could not finalize the temporary preview: "
-                .. tostring(moveError or "move failed")
+            return nil, "Lightroom could not finalize the temporary preview."
         end
         if LrFileUtils.exists(uniquePath) ~= "file" then
             return nil, "The temporary preview was not created."
@@ -155,8 +157,8 @@ function PreviewExporter.exportPhoto(photo, batchDirectory, progressScope)
     if not ok or not preview then
         local cleaned, cleanupError = cleanupDirectory(photoDirectory)
         if not cleaned then
-            return nil, "Preview rendering failed and cleanup failed: "
-                .. tostring(cleanupError or "unknown cleanup error")
+            return nil,
+                "Preview rendering failed and temporary cleanup failed."
         end
         if not ok then
             return nil, "Lightroom encountered an unexpected preview error."

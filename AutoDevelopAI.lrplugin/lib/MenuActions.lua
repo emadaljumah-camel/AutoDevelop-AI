@@ -27,7 +27,12 @@ function MenuActions.showStyleProfiles()
 end
 
 function MenuActions.showSettings()
-    showPlaceholder("Settings")
+    LrDialogs.message(
+        "AutoDevelop AI Preferences",
+        "Open File > Plug-in Manager, select AutoDevelop AI, and use "
+            .. "the AutoDevelop AI preferences section.",
+        "info"
+    )
 end
 
 function MenuActions.showLogs()

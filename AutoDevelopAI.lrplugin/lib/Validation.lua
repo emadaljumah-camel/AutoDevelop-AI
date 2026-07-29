@@ -30,6 +30,32 @@ local function validUnitNumber(value)
     return Utils.isFiniteNumber(value) and value >= 0 and value <= 1
 end
 
+function Validation.validateModelIdentifier(value)
+    if type(value) ~= "string"
+        or #value < 1
+        or #value > 128
+        or Utils.trim(value) ~= value then
+        return nil
+    end
+    -- Single-letter prefixes followed by `:` are reserved because they are
+    -- indistinguishable from Windows drive-relative paths.
+    if value:match("^[A-Za-z]:") then
+        return nil
+    end
+    if not value:match("^[A-Za-z0-9_%.%-%/%:%+]+$") then
+        return nil
+    end
+    if value:find("://", 1, true)
+        or value:find("..", 1, true)
+        or value:find("//", 1, true)
+        or value:find("::", 1, true)
+        or value:sub(1, 1) == "/"
+        or value:sub(-1) == "/" then
+        return nil
+    end
+    return value
+end
+
 local function validateCrop(crop)
     if crop == nil then
         return true
@@ -124,10 +150,12 @@ function Validation.validateAnalyzeResponse(response, request)
     if type(response.edit_plan) ~= "table" then
         return false, "Response edit_plan was missing."
     end
-    if not Utils.trim(response.model) then
-        return false, "Response model name was missing."
+    local modelIdentifier =
+        Validation.validateModelIdentifier(response.model)
+    if not modelIdentifier then
+        return false, "Response model identifier was invalid."
     end
-    return true
+    return true, nil, modelIdentifier
 end
 
 function Validation.validateDevelopResponse(response, request)
@@ -150,8 +178,10 @@ function Validation.validateDevelopResponse(response, request)
         or response.filename ~= request.filename then
         return false, "Response filename did not match the request."
     end
-    if not Utils.trim(response.model) then
-        return false, "Response model name was missing."
+    local modelIdentifier =
+        Validation.validateModelIdentifier(response.model)
+    if not modelIdentifier then
+        return false, "Response model identifier was invalid."
     end
     if type(response.develop_settings) ~= "table" then
         return false, "Response develop_settings was missing."
@@ -165,7 +195,7 @@ function Validation.validateDevelopResponse(response, request)
     if not validateWarnings(response.warnings) then
         return false, "Response warnings were invalid."
     end
-    return true
+    return true, nil, modelIdentifier
 end
 
 function Validation.parseErrorResponse(decoded, httpStatus)

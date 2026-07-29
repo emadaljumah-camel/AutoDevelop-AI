@@ -1,5 +1,8 @@
 local LrDialogs = import("LrDialogs")
 
+local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
+local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
+local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local AnalysisSummaryDialog = {}
@@ -12,13 +15,26 @@ local function summaryText(summary)
         "Skipped: " .. tostring(summary.skipped),
         "Not processed: " .. tostring(summary.notProcessed),
         "Cancelled: " .. (summary.cancelled and "yes" or "no"),
+        "Elapsed: "
+            .. ProgressTracker.formatDuration(summary.elapsedSeconds or 0),
     }
 
-    if summary.backendUnavailable then
+    local categories = BatchSummary.sortedCategories(summary)
+    if #categories > 0 then
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "Failure categories:"
+        for _, category in ipairs(categories) do
+            lines[#lines + 1] = "- "
+                .. ErrorDialog.details(category).title
+                .. ": "
+                .. tostring(summary.failureCategories[category])
+        end
+    end
+
+    if summary.terminalCategory then
         lines[#lines + 1] = ""
         lines[#lines + 1] =
-            "The backend could not be reached. Check that AutoDevelop AI "
-            .. "is running on port 8005."
+            ErrorDialog.messageFor(summary.terminalCategory, summary)
     end
 
     if #summary.failures > 0 then
@@ -28,7 +44,7 @@ local function summaryText(summary)
             lines[#lines + 1] = "- "
                 .. Utils.safeMessage(failure.filename, "Photo")
                 .. ": "
-                .. Utils.safeMessage(failure.reason, "Analysis failed.")
+                .. ErrorDialog.messageFor(failure.category, summary)
         end
     end
     return table.concat(lines, "\n")

@@ -4,37 +4,24 @@ local LrFunctionContext = import("LrFunctionContext")
 local LrProgressScope = import("LrProgressScope")
 local LrTasks = import("LrTasks")
 
-local ApiClient = ModuleLoader.load("lib/ApiClient.lua")
+local ApplicationGate = ModuleLoader.load("lib/ApplicationGate.lua")
 local ApplyService = ModuleLoader.load("lib/ApplyService.lua")
-local BatchPolicy = ModuleLoader.load("lib/BatchPolicy.lua")
-local Config = ModuleLoader.load("lib/Config.lua")
-local CropMapper = ModuleLoader.load("lib/CropMapper.lua")
-local DevelopSettingsMapper =
-    ModuleLoader.load("lib/DevelopSettingsMapper.lua")
-local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
+local BatchOperationRecorder =
+    ModuleLoader.load("lib/BatchOperationRecorder.lua")
+local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
+local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
 local Logger = ModuleLoader.load("lib/Logger.lua")
 local PendingOperation = ModuleLoader.load("lib/PendingOperation.lua")
+local Preferences = ModuleLoader.load("lib/Preferences.lua")
+local PreparationService = ModuleLoader.load("lib/PreparationService.lua")
 local PreviewExporter = ModuleLoader.load("lib/PreviewExporter.lua")
-local RequestBuilder = ModuleLoader.load("lib/RequestBuilder.lua")
+local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
-local Validation = ModuleLoader.load("lib/Validation.lua")
 local AutoDevelopConfirmationDialog =
     ModuleLoader.load("dialogs/AutoDevelopConfirmationDialog.lua")
+local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
 
 local AutoDevelopCommand = {}
-
-local function cleanupPreview(preview)
-    local ok, cleaned, reason = LrTasks.pcall(
-        PreviewExporter.cleanupPreview,
-        preview
-    )
-    if not ok or not cleaned then
-        Logger.warn(
-            "Temporary develop preview cleanup failed: "
-                .. Utils.safeMessage(reason or cleaned, "unknown cleanup error")
-        )
-    end
-end
 
 local function cleanupBatch(batchDirectory)
     local ok, cleaned, reason = LrTasks.pcall(
@@ -43,8 +30,8 @@ local function cleanupBatch(batchDirectory)
     )
     if not ok or not cleaned then
         Logger.warn(
-            "Develop batch cleanup failed: "
-                .. Utils.safeMessage(reason or cleaned, "unknown cleanup error")
+            "operation=develop_batch_cleanup category=cleanup_failed "
+                .. "code=batch_cleanup_failed"
         )
     end
 end
@@ -55,39 +42,22 @@ local function finishProgress(progressScope)
     end)
     if not ok then
         Logger.warn(
-            "Develop progress cleanup failed: "
-                .. Utils.safeMessage(reason, "unknown progress error")
+            "operation=develop_progress_cleanup category=cleanup_failed "
+                .. "code=progress_cleanup_failed"
         )
     end
 end
 
 local function newSummary(selected, profileId)
-    return {
-        selected = selected,
-        ready = 0,
-        failed = 0,
-        skipped = 0,
-        notProcessed = 0,
-        cancelled = false,
-        backendUnavailable = false,
-        profileId = profileId,
-        cropCount = 0,
-        denoiseIgnored = 0,
-        warningCount = 0,
-        models = {},
-        failures = {},
-        examples = {},
-    }
+    local summary = BatchSummary.new(selected, "develop")
+    summary.profileId = profileId
+    summary.models = {}
+    summary.examples = {}
+    return summary
 end
 
-local function addFailure(summary, filename, reason)
-    summary.failed = summary.failed + 1
-    if #summary.failures < 5 then
-        summary.failures[#summary.failures + 1] = {
-            filename = filename,
-            reason = reason,
-        }
-    end
+local function addFailure(summary, filename, failure)
+    BatchSummary.addFailure(summary, filename, failure)
 end
 
 local function countSettings(settings)
@@ -98,273 +68,50 @@ local function countSettings(settings)
     return count
 end
 
-local function mergeSettings(first, second)
-    local merged = Utils.deepCopy(first or {})
-    for key, value in pairs(second or {}) do
-        merged[key] = value
-    end
-    return merged
-end
-
-local function currentDevelopSettings(photo)
-    local ok, settings = LrTasks.pcall(function()
-        return photo:getDevelopSettings()
-    end)
-    if not ok or type(settings) ~= "table" then
-        return nil, "Could not capture the current develop settings."
-    end
-    return Utils.deepCopy(settings)
-end
-
-local function requestBackend(request, progressScope)
-    local retriesUsed = 0
-    while true do
-        if progressScope:isCanceled() then
-            return nil, "cancelled", "Preparation was cancelled."
-        end
-        local response = ApiClient.develop(request)
-        Logger.info(
-            "Develop HTTP request_id="
-                .. request.request_id
-                .. " filename="
-                .. request.filename
-                .. " profile="
-                .. request.options.style_profile
-                .. " status="
-                .. tostring(response.status or "transport-error")
-        )
-        if response.transportError then
-            return nil,
-                "connection",
-                "The AutoDevelop AI backend is unavailable."
-        end
-        if progressScope:isCanceled() then
-            return nil, "cancelled", "Preparation was cancelled."
-        end
-        if BatchPolicy.shouldRetry(
-            response.status,
-            retriesUsed,
-            progressScope:isCanceled()
-        ) then
-            retriesUsed = retriesUsed + 1
-            LrTasks.sleep(0.5)
-        else
-            return response
-        end
-    end
-end
-
-local function processPhotoBody(
-    photo,
-    batchDirectory,
-    progressScope,
-    context
-)
-    if not ExifMapper.isSupportedPhoto(photo) then
-        return "skipped", "Videos are not supported."
-    end
-    if progressScope:isCanceled() then
-        return "cancelled", "Preparation was cancelled."
-    end
-
-    local preview, previewError = PreviewExporter.exportPhoto(
-        photo,
-        batchDirectory,
-        progressScope
-    )
-    if not preview then
-        if progressScope:isCanceled() then
-            return "cancelled", "Preparation was cancelled."
-        end
-        return "failed", Utils.safeMessage(
-            previewError,
-            "Could not create a temporary preview."
-        )
-    end
-    local previewCleaned = false
-    context:addCleanupHandler(function()
-        if previewCleaned then
-            return
-        end
-        previewCleaned = true
-        cleanupPreview(preview)
-    end)
-
-    if progressScope:isCanceled() then
-        return "cancelled", "Preparation was cancelled."
-    end
-
-    local request, requestError = RequestBuilder.buildDevelop(
-        photo,
-        preview.path,
-        {
-            styleProfileId = Config.getStyleProfileId(),
-            includeCrop = true,
-            includeDenoise = true,
-            preserveCurrentAdjustments = true,
-        }
-    )
-    if not request then
-        return "failed", Utils.safeMessage(
-            requestError,
-            "Could not build the Develop request."
-        )
-    end
-
-    Logger.info(
-        "Develop request start request_id="
-            .. request.request_id
-            .. " filename="
-            .. request.filename
-    )
-    local response, connectionOutcome, connectionReason = requestBackend(
-        request,
-        progressScope
-    )
-    if not response then
-        return connectionOutcome, connectionReason
-    end
-
-    local decoded, decodeError = ApiClient.decodeBody(response)
-    if response.status < 200 or response.status >= 300 then
-        local parsed = Validation.parseErrorResponse(decoded, response.status)
-        return "failed", parsed.message
-    end
-    if not decoded then
-        Logger.warn(
-            "Develop response JSON failure request_id="
-                .. request.request_id
-                .. " reason="
-                .. Utils.safeMessage(decodeError, "invalid JSON")
-        )
-        return "failed", "The backend returned malformed JSON."
-    end
-
-    local valid, validationError =
-        Validation.validateDevelopResponse(decoded, request)
-    if not valid then
-        Logger.warn(
-            "Develop response validation failed request_id="
-                .. request.request_id
-                .. " reason="
-                .. Utils.safeMessage(validationError, "invalid response")
-        )
-        return "failed", validationError
-    end
-
-    local currentSettings, currentError = currentDevelopSettings(photo)
-    if not currentSettings then
-        return "failed", currentError
-    end
-    local mappedSettings = DevelopSettingsMapper.map(
-        decoded.develop_settings,
-        currentSettings
-    )
-    local mappedCrop = CropMapper.map(
-        decoded.crop,
-        Config.getApplyCrop(),
-        currentSettings
-    )
-    mappedSettings = mergeSettings(mappedSettings, mappedCrop)
-    local settingCount = countSettings(mappedSettings)
-    if settingCount == 0 then
-        return "skipped", "No safely applicable develop settings remained."
-    end
-
-    local originalSettings = ApplyService.captureOriginal(
-        currentSettings,
-        mappedSettings
-    )
-    if countSettings(originalSettings) ~= settingCount then
-        return "failed", "Original settings could not be captured safely."
-    end
-
-    local warnings = Utils.deepCopy(decoded.warnings or {})
-    local denoiseRecommended = type(decoded.denoise) == "table"
-        and decoded.denoise.recommended == true
-    local operation = PendingOperation.new({
-        photo = photo,
-        photoKey = Utils.photoKey(photo),
-        filename = request.filename,
-        requestId = request.request_id,
-        profileId = request.options.style_profile,
-        originalSettings = originalSettings,
-        mappedSettings = mappedSettings,
-        cropIncluded = mappedCrop ~= nil,
-        denoiseRecommended = denoiseRecommended,
-        warnings = warnings,
-        model = decoded.model,
-        processingDurationMs = decoded.processing_duration_ms,
-    })
-    Logger.info(
-        "Develop response prepared request_id="
-            .. request.request_id
-            .. " settings="
-            .. tostring(settingCount)
-            .. " crop="
-            .. tostring(operation.cropIncluded)
-            .. " denoise_ignored="
-            .. tostring(operation.denoiseRecommended)
-    )
-    return "ready", operation
-end
-
-local function processPhoto(photo, batchDirectory, progressScope)
-    local ok, outcome, value = LrTasks.pcall(function()
-        return LrFunctionContext.callWithContext(
-            "AutoDevelop AI Prepare Photo",
-            function(context)
-                return processPhotoBody(
-                    photo,
-                    batchDirectory,
-                    progressScope,
-                    context
-                )
-            end
-        )
-    end)
-    if not ok then
-        Logger.error(
-            "Unexpected develop preparation error: " .. tostring(outcome)
-        )
-        return "failed", "An unexpected plug-in error occurred."
-    end
-    return outcome, value
-end
-
 local function prepareBatch(
     photos,
     progressScope,
     batchDirectory,
     summary,
-    operations
+    operations,
+    preferences,
+    tracker
 )
     for index, photo in ipairs(photos) do
         if progressScope:isCanceled() then
             summary.cancelled = true
-            BatchPolicy.markNotProcessed(summary, #photos - index + 1)
+            BatchSummary.markNotProcessed(summary, #photos - index + 1)
             break
         end
 
         local filename = Utils.photoFilename(photo)
-        progressScope:setCaption(
-            "Preparing "
-                .. tostring(index)
-                .. " of "
-                .. tostring(#photos)
-                .. ": "
-                .. filename
-        )
-        local outcome, value = processPhoto(
+        tracker:setPhase("Preparing recommendations")
+        tracker:setCurrent(filename, index)
+        progressScope:setCaption(tracker:caption())
+        local outcome, value = PreparationService.prepareDevelopPhoto(
             photo,
             batchDirectory,
-            progressScope
+            progressScope,
+            preferences,
+            tracker
         )
-        if outcome == "ready" then
-            operations[#operations + 1] = value
+        local terminalFailure = outcome == "failed"
+            and type(value) == "table"
+            and ErrorClassifier.isTerminalForBatch(value.category)
+        local recordingStatus = BatchOperationRecorder.tryRecord({
+            cancelled = progressScope:isCanceled(),
+            terminalFailure = terminalFailure,
+            preparationResult = outcome,
+            operation = value,
+            operations = operations,
+        })
+        if recordingStatus == "recorded" then
             summary.ready = summary.ready + 1
             if value.cropIncluded then
                 summary.cropCount = summary.cropCount + 1
+            end
+            if value.cropDisabled then
+                summary.cropDisabled = summary.cropDisabled + 1
             end
             if value.denoiseRecommended then
                 summary.denoiseIgnored = summary.denoiseIgnored + 1
@@ -380,23 +127,46 @@ local function prepareBatch(
                     warningCount = #(value.warnings or {}),
                 }
             end
+        elseif recordingStatus == "cancelled" then
+            summary.cancelled = true
+            BatchSummary.markNotProcessed(summary, #photos - index + 1)
+            break
+        elseif recordingStatus == "terminal_failure" then
+            addFailure(summary, filename, value)
+            summary.terminalCategory = value.category
+            BatchSummary.markNotProcessed(summary, #photos - index)
+            tracker:markCompleted(index)
+            progressScope:setPortionComplete(index, #photos)
+            progressScope:setCaption(tracker:caption())
+            break
         elseif outcome == "skipped" then
             summary.skipped = summary.skipped + 1
-        elseif outcome == "connection" then
-            addFailure(summary, filename, value)
-            summary.backendUnavailable = true
-            BatchPolicy.markNotProcessed(summary, #photos - index)
-            progressScope:setPortionComplete(index, #photos)
-            break
-        elseif outcome == "cancelled" then
-            summary.cancelled = true
-            BatchPolicy.markNotProcessed(summary, #photos - index + 1)
-            break
+            if type(value) == "table" and value.cropDisabled then
+                summary.cropDisabled = summary.cropDisabled + 1
+            end
+            if type(value) == "table" and value.denoiseRecommended then
+                summary.denoiseIgnored = summary.denoiseIgnored + 1
+            end
+        elseif outcome == "ready" then
+            addFailure(
+                summary,
+                filename,
+                PreparationService.failure(
+                    ErrorClassifier.codes.internalError,
+                    "invalid_prepared_operation"
+                )
+            )
         else
             addFailure(summary, filename, value)
         end
+        tracker:markCompleted(index)
         progressScope:setPortionComplete(index, #photos)
+        progressScope:setCaption(tracker:caption())
     end
+    if progressScope:isCanceled() then
+        summary.cancelled = true
+    end
+    summary.elapsedSeconds = tracker:elapsedSeconds()
 end
 
 local function defaultApplication(notApplied)
@@ -422,8 +192,25 @@ local function runCommand(context)
         return
     end
 
-    local profileId = Config.getStyleProfileId()
-    local summary = newSummary(#photos, profileId)
+    local preferences, _, invalidKey = Preferences.validatedSnapshot()
+    if not preferences then
+        local current = Preferences.valuesForUi()
+        ErrorDialog.show(
+            invalidKey == "styleProfileId"
+                and ErrorClassifier.codes.invalidProfile
+                or ErrorClassifier.codes.validationError,
+            {
+                backendBaseUrl = current.backendBaseUrl,
+                requestTimeoutSeconds = current.requestTimeoutSeconds,
+                profileId = current.styleProfileId,
+            }
+        )
+        return
+    end
+    local summary = newSummary(#photos, preferences.styleProfileId)
+    summary.backendBaseUrl = preferences.backendBaseUrl
+    summary.requestTimeoutSeconds = preferences.requestTimeoutSeconds
+    summary.confirmationMode = preferences.confirmationMode
     local operations = {}
     local operationsCleared = false
     local function releaseOperations()
@@ -439,14 +226,14 @@ local function runCommand(context)
         "Auto Develop Selected Photos start selected="
             .. tostring(#photos)
             .. " profile="
-            .. profileId
+            .. preferences.styleProfileId
     )
     local batchDirectory, directoryError =
         PreviewExporter.createBatchDirectory()
     if not batchDirectory then
         Logger.error(
-            "Could not create develop preview directory: "
-                .. Utils.safeMessage(directoryError, "unknown error")
+            "operation=create_develop_preview_directory "
+                .. "category=internal_error code=preview_directory_failed"
         )
         LrDialogs.message(
             "AutoDevelop AI",
@@ -479,25 +266,55 @@ local function runCommand(context)
     end
     context:addCleanupHandler(releasePreparationProgress)
     preparationProgress:setCancelable(true)
+    local preparationTracker =
+        ProgressTracker.new(#photos, "Preparing recommendations")
 
     prepareBatch(
         photos,
         preparationProgress,
         batchDirectory,
         summary,
-        operations
+        operations,
+        preferences,
+        preparationTracker
     )
+    local preparationDecision = ApplicationGate.evaluate({
+        confirmationMode = preferences.confirmationMode,
+        preparationCancelled = summary.cancelled,
+        progressCancelled = preparationProgress:isCanceled(),
+        terminalFailure = summary.terminalCategory ~= nil,
+        readyCount = #operations,
+    })
+    if preparationDecision.cancelled then
+        summary.cancelled = true
+    end
     releaseBatch()
     releasePreparationProgress()
 
-    if summary.cancelled then
+    if preparationDecision.cancelled then
+        if summary.terminalCategory then
+            Logger.info(
+                "operation=prepare_batch category=cancelled "
+                    .. "code=cancelled_precedes_terminal "
+                    .. "terminal_category="
+                    .. Utils.safeErrorCode(
+                        summary.terminalCategory,
+                        "internal_error"
+                    )
+            )
+        end
         local application = defaultApplication(#operations)
         application.userCancelled = true
         AutoDevelopConfirmationDialog.showFinal(summary, application)
         releaseOperations()
         return
+    elseif preparationDecision.terminalFailure then
+        local application = defaultApplication(#operations)
+        ErrorDialog.show(summary.terminalCategory, summary)
+        releaseOperations()
+        return
     end
-    if #operations == 0 then
+    if preparationDecision.reason == "no_operations" then
         AutoDevelopConfirmationDialog.showFinal(
             summary,
             defaultApplication(0)
@@ -506,11 +323,32 @@ local function runCommand(context)
         return
     end
 
-    local confirmed = AutoDevelopConfirmationDialog.confirm(summary)
-    Logger.info("Auto Develop confirmation apply=" .. tostring(confirmed))
-    if not confirmed then
+    local confirmed = true
+    if preparationDecision.reason == "confirmation_required" then
+        confirmed = AutoDevelopConfirmationDialog.confirm(summary)
+    end
+    Logger.info(
+        "Auto Develop confirmation_mode="
+            .. preferences.confirmationMode
+            .. " apply="
+            .. tostring(confirmed)
+    )
+    local confirmedDecision = ApplicationGate.evaluate({
+        confirmationMode = preferences.confirmationMode,
+        preparationCancelled = summary.cancelled,
+        progressCancelled = false,
+        terminalFailure = summary.terminalCategory ~= nil,
+        readyCount = #operations,
+        confirmationAccepted = confirmed,
+    })
+    if not confirmedDecision.shouldApply then
+        if confirmedDecision.cancelled then
+            summary.cancelled = true
+        end
         local application = defaultApplication(#operations)
-        application.userCancelled = true
+        application.userCancelled =
+            confirmedDecision.reason == "confirmation_declined"
+                or confirmedDecision.cancelled
         AutoDevelopConfirmationDialog.showFinal(summary, application)
         releaseOperations()
         return
@@ -530,44 +368,66 @@ local function runCommand(context)
     end
     context:addCleanupHandler(releaseApplyProgress)
     applyProgress:setCancelable(true)
+    local applyTracker =
+        ProgressTracker.new(#operations, "Applying recommendations")
 
     local application
-    if applyProgress:isCanceled() then
+    local finalDecision = ApplicationGate.evaluate({
+        confirmationMode = preferences.confirmationMode,
+        preparationCancelled = summary.cancelled,
+        progressCancelled = applyProgress:isCanceled(),
+        terminalFailure = summary.terminalCategory ~= nil,
+        readyCount = #operations,
+        confirmationAccepted = confirmed,
+    })
+    if not finalDecision.shouldApply then
+        if finalDecision.cancelled then
+            summary.cancelled = true
+        end
         application = defaultApplication(#operations)
-        application.cancelled = true
+        application.cancelled = finalDecision.cancelled
+        application.userCancelled = finalDecision.cancelled
     else
         application = ApplyService.applyBatch(catalog, operations, {
             isCancelled = function()
                 return applyProgress:isCanceled()
             end,
             onProgress = function(index, total, operation)
-                applyProgress:setCaption(
-                    "Applying "
-                        .. tostring(index)
-                        .. " of "
-                        .. tostring(total)
-                        .. ": "
-                        .. operation.filename
-                )
+                applyTracker:setCurrent(operation.filename, index)
+                applyTracker:markCompleted(index - 1)
+                applyProgress:setCaption(applyTracker:caption())
                 applyProgress:setPortionComplete(index - 1, total)
             end,
         })
     end
+    if application.cancelled then
+        summary.cancelled = true
+    end
+    summary.elapsedSeconds = preparationTracker:elapsedSeconds()
     releaseApplyProgress()
+    application.cropApplied = 0
     for _, operation in ipairs(operations) do
         local message = "Auto Develop application filename="
             .. operation.filename
             .. " status="
             .. tostring(operation.applicationStatus)
         if operation.applicationStatus == "applied" then
+            if operation.cropIncluded then
+                application.cropApplied = application.cropApplied + 1
+            end
             Logger.info(message)
         else
             Logger.warn(
                 message
-                    .. " reason="
-                    .. Utils.safeMessage(
-                        operation.applyError,
-                        "not applied"
+                    .. " category="
+                    .. Utils.safeErrorCode(
+                        operation.applyErrorCategory,
+                        "apply_failed"
+                    )
+                    .. " code="
+                    .. Utils.safeErrorCode(
+                        operation.applyErrorCode,
+                        "operation_not_applied"
                     )
             )
         end
@@ -596,13 +456,10 @@ function AutoDevelopCommand.start()
         end)
         if not ok then
             Logger.error(
-                "Auto Develop Selected Photos failed: " .. tostring(failure)
+                "operation=auto_develop_command category=internal_error "
+                    .. "code=unexpected_exception"
             )
-            LrDialogs.message(
-                "AutoDevelop AI",
-                "Auto Develop Selected Photos encountered an unexpected error.",
-                "critical"
-            )
+            ErrorDialog.show(ErrorClassifier.codes.internalError)
         end
     end)
 end

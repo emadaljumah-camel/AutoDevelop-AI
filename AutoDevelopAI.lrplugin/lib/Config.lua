@@ -1,55 +1,28 @@
-local LrPrefs = import("LrPrefs")
-
-local Utils = ModuleLoader.load("lib/Utils.lua")
-
 local Config = {}
 
 Config.DEFAULT_STYLE_PROFILE = "natural_travel"
+Config.API_PREFIX = "/autodevelop/v1"
+Config.SCHEMA_VERSION = "1.0"
 
 Config.defaults = {
     backendBaseUrl = "http://127.0.0.1:8005",
     styleProfileId = Config.DEFAULT_STYLE_PROFILE,
     requestTimeoutSeconds = 120,
     applyCrop = true,
+    confirmationMode = "always",
+    loggingLevel = "info",
 }
 
-Config.apiBaseUrl = Config.defaults.backendBaseUrl .. "/autodevelop/v1"
 Config.apiPaths = {
-    analyze = "/autodevelop/v1/analyze",
-    develop = "/autodevelop/v1/develop",
+    analyze = Config.API_PREFIX .. "/analyze",
+    develop = Config.API_PREFIX .. "/develop",
+    health = Config.API_PREFIX .. "/health",
 }
 Config.logPath = "logs/autodevelop.log"
 Config.tempDirectory = "temp"
 
-local function preferences()
-    return LrPrefs.prefsForPlugin()
-end
-
-function Config.getBackendBaseUrl()
-    local value = Utils.trim(preferences().backendBaseUrl)
-        or Config.defaults.backendBaseUrl
-    return value:gsub("/+$", "")
-end
-
-function Config.getStyleProfileId()
-    return Utils.trim(preferences().styleProfileId)
-        or Config.defaults.styleProfileId
-end
-
-function Config.getRequestTimeoutSeconds()
-    local value = preferences().requestTimeoutSeconds
-    if Utils.isFiniteNumber(value) and value > 0 then
-        return value
-    end
-    return Config.defaults.requestTimeoutSeconds
-end
-
-function Config.getApplyCrop()
-    local value = preferences().applyCrop
-    if type(value) == "boolean" then
-        return value
-    end
-    return Config.defaults.applyCrop
+function Config.apiUrl(baseUrl, path)
+    return tostring(baseUrl):gsub("/+$", "") .. path
 end
 
 return Config

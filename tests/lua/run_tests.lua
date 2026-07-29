@@ -4,6 +4,13 @@ package.path = "AutoDevelopAI.lrplugin/?.lua;"
 
 local assertions = 0
 local fakePreferences = {}
+local logged = {
+    error = {},
+    warning = {},
+    info = {},
+    debug = {},
+}
+local lastDialog = nil
 
 _G._PLUGIN = {
     path = "AutoDevelopAI.lrplugin",
@@ -21,6 +28,44 @@ _G.import = function(name)
         return {
             prefsForPlugin = function()
                 return fakePreferences
+            end,
+        }
+    end
+    if name == "LrDate" then
+        return {
+            currentTime = function()
+                return 1000
+            end,
+        }
+    end
+    if name == "LrLogger" then
+        return function()
+            return {
+                enable = function()
+                end,
+                error = function(_, message)
+                    logged.error[#logged.error + 1] = message
+                end,
+                warn = function(_, message)
+                    logged.warning[#logged.warning + 1] = message
+                end,
+                info = function(_, message)
+                    logged.info[#logged.info + 1] = message
+                end,
+                debug = function(_, message)
+                    logged.debug[#logged.debug + 1] = message
+                end,
+            }
+        end
+    end
+    if name == "LrDialogs" then
+        return {
+            message = function(title, message, style)
+                lastDialog = {
+                    title = title,
+                    message = message,
+                    style = style,
+                }
             end,
         }
     end
@@ -58,10 +103,21 @@ end
 local ModuleLoader = require("ModuleLoader")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 local Config = ModuleLoader.load("lib/Config.lua")
+local Preferences = ModuleLoader.load("lib/Preferences.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
 local RequestBuilder = ModuleLoader.load("lib/RequestBuilder.lua")
 local Validation = ModuleLoader.load("lib/Validation.lua")
 local BatchPolicy = ModuleLoader.load("lib/BatchPolicy.lua")
+local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
+local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
+local ApplicationGate = ModuleLoader.load("lib/ApplicationGate.lua")
+local BatchOperationRecorder =
+    ModuleLoader.load("lib/BatchOperationRecorder.lua")
+local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
+local Logger = ModuleLoader.load("lib/Logger.lua")
+local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
+local AutoDevelopConfirmationDialog =
+    ModuleLoader.load("dialogs/AutoDevelopConfirmationDialog.lua")
 local ResultStore = ModuleLoader.load("lib/ResultStore.lua")
 local DevelopSettingsMapper =
     ModuleLoader.load("lib/DevelopSettingsMapper.lua")
@@ -75,6 +131,218 @@ assertTrue(
 )
 local unsafeLoadOk = pcall(ModuleLoader.load, "../outside.lua")
 assertTrue(not unsafeLoadOk, "module loader must reject path traversal")
+
+local function gateState(overrides)
+    local state = {
+        confirmationMode = "never",
+        preparationCancelled = false,
+        progressCancelled = false,
+        terminalFailure = false,
+        readyCount = 1,
+    }
+    for key, value in pairs(overrides or {}) do
+        state[key] = value
+    end
+    return state
+end
+
+local neverReady = ApplicationGate.evaluate(gateState())
+assertEqual(neverReady.shouldApply, true)
+assertEqual(neverReady.reason, "ready")
+assertEqual(neverReady.cancelled, false)
+assertEqual(neverReady.terminalFailure, false)
+
+local finalPhotoCancelled = ApplicationGate.evaluate(gateState({
+    preparationCancelled = true,
+}))
+assertEqual(finalPhotoCancelled.shouldApply, false)
+assertEqual(finalPhotoCancelled.reason, "cancelled")
+assertEqual(finalPhotoCancelled.cancelled, true)
+assertEqual(finalPhotoCancelled.terminalFailure, false)
+
+local afterLoopCancelled = ApplicationGate.evaluate(gateState({
+    progressCancelled = true,
+}))
+assertEqual(afterLoopCancelled.shouldApply, false)
+assertEqual(afterLoopCancelled.reason, "cancelled")
+
+local immediatelyBeforeApplyCancelled =
+    ApplicationGate.evaluate(gateState({ progressCancelled = true }))
+assertEqual(immediatelyBeforeApplyCancelled.shouldApply, false)
+
+local confirmationDeclined = ApplicationGate.evaluate(gateState({
+    confirmationMode = "always",
+    confirmationAccepted = false,
+}))
+assertEqual(confirmationDeclined.shouldApply, false)
+assertEqual(confirmationDeclined.reason, "confirmation_declined")
+assertEqual(confirmationDeclined.cancelled, false)
+
+local cancelledAfterConfirmation = ApplicationGate.evaluate(gateState({
+    confirmationMode = "always",
+    confirmationAccepted = true,
+    progressCancelled = true,
+}))
+assertEqual(cancelledAfterConfirmation.shouldApply, false)
+assertEqual(cancelledAfterConfirmation.reason, "cancelled")
+
+local noOperations = ApplicationGate.evaluate(gateState({
+    readyCount = 0,
+}))
+assertEqual(noOperations.shouldApply, false)
+assertEqual(noOperations.reason, "no_operations")
+
+local terminalBackend = ApplicationGate.evaluate(gateState({
+    terminalFailure = true,
+}))
+assertEqual(terminalBackend.shouldApply, false)
+assertEqual(terminalBackend.reason, "terminal_failure")
+assertEqual(terminalBackend.cancelled, false)
+assertEqual(terminalBackend.terminalFailure, true)
+
+local invalidProfile = ApplicationGate.evaluate(gateState({
+    confirmationMode = "always",
+    terminalFailure = true,
+}))
+assertEqual(invalidProfile.shouldApply, false)
+assertEqual(invalidProfile.reason, "terminal_failure")
+
+local cancelledAndTerminal = ApplicationGate.evaluate(gateState({
+    preparationCancelled = true,
+    terminalFailure = true,
+}))
+assertEqual(cancelledAndTerminal.shouldApply, false)
+assertEqual(cancelledAndTerminal.reason, "cancelled")
+assertEqual(cancelledAndTerminal.cancelled, true)
+assertEqual(cancelledAndTerminal.terminalFailure, false)
+
+local cancelledSummary = { cancelled = false }
+if finalPhotoCancelled.cancelled then
+    cancelledSummary.cancelled = true
+end
+assertEqual(cancelledSummary.cancelled, true)
+
+local rejectedApplyCalls = 0
+if immediatelyBeforeApplyCancelled.shouldApply
+    or cancelledAndTerminal.shouldApply then
+    rejectedApplyCalls = rejectedApplyCalls + 1
+end
+assertEqual(rejectedApplyCalls, 0)
+
+local function recordableOperation(filename)
+    return {
+        photo = {},
+        filename = filename or "Ready.NEF",
+        requestId = "12345678-1234-4abc-8abc-1234567890ab",
+        originalSettings = {},
+        mappedSettings = { Exposure2012 = 0 },
+        applicationStatus = "pending",
+    }
+end
+
+local recordedOperations = {}
+local recordedOperation = recordableOperation()
+assertEqual(
+    BatchOperationRecorder.tryRecord({
+        cancelled = false,
+        terminalFailure = false,
+        preparationResult = "ready",
+        operation = recordedOperation,
+        operations = recordedOperations,
+    }),
+    "recorded"
+)
+assertEqual(#recordedOperations, 1)
+assertTrue(recordedOperations[1] == recordedOperation)
+
+local function assertOperationRejected(state, expected)
+    local operations = {}
+    state.operations = operations
+    local status = BatchOperationRecorder.tryRecord(state)
+    assertEqual(status, expected)
+    assertEqual(#operations, 0)
+end
+
+assertOperationRejected({
+    preparationResult = "cancelled",
+    operation = recordableOperation("Cancelled.NEF"),
+}, "cancelled")
+assertOperationRejected({
+    cancelled = true,
+    preparationResult = "ready",
+    operation = recordableOperation("Late.NEF"),
+}, "cancelled")
+assertOperationRejected({
+    terminalFailure = true,
+    preparationResult = "ready",
+    operation = recordableOperation("Terminal.NEF"),
+}, "terminal_failure")
+assertOperationRejected({
+    preparationResult = "ready",
+    operation = nil,
+}, "invalid_operation")
+assertOperationRejected({
+    cancelled = true,
+    preparationResult = "ready",
+    operation = recordableOperation("Final-photo.NEF"),
+}, "cancelled")
+
+for _, identifier in ipairs({
+    "gemma-4-31b",
+    "qwen/qwen3-vl-32b-instruct",
+    "local:gemma-4-31b",
+    "local:gemma",
+    "provider:model",
+    "lmstudio:qwen/model",
+    "ab:model",
+    "model_v2.1",
+    "vendor/model+quant",
+}) do
+    assertEqual(Validation.validateModelIdentifier(identifier), identifier)
+end
+for _, identifier in ipairs({
+    "C:secret",
+    "c:model",
+    "Z:anything",
+    "C:\\Users\\Name\\model",
+    "C:\\secret",
+    "C:/Users/Name/model",
+    "C:/secret",
+    "a:model",
+    "/home/user/model",
+    "https://user:pass@example.com/model?token=abc",
+    "model?token=abc",
+    "model name",
+    "traceback\nline 1",
+    "../../secret",
+    "@model",
+    "vendor//model",
+    "local::model",
+    string.rep("a", 129),
+}) do
+    assertTrue(Validation.validateModelIdentifier(identifier) == nil)
+end
+
+for _, unsafeValue in ipairs({
+    "C:\\Users\\Person\\secret-preview.jpg",
+    "/home/person/private/preview.jpg",
+    "https://user:password@example.test/health",
+    "https://example.test/api?token=secret",
+    "stack traceback:\n\tprivate.lua:42",
+}) do
+    local code = Utils.safeErrorCode(unsafeValue, "unexpected_exception")
+    assertEqual(code, "unexpected_exception")
+    assertTrue(code:find(unsafeValue, 1, true) == nil)
+    Logger.error(
+        "operation=test category=internal_error code=" .. code
+    )
+    local logRecord = logged.error[#logged.error]
+    assertTrue(logRecord:find(unsafeValue, 1, true) == nil)
+end
+assertEqual(
+    Utils.safeErrorCode("apply_failed", "internal_error"),
+    "apply_failed"
+)
 
 local function photo(raw, formatted, develop)
     formatted = formatted or {}
@@ -274,9 +542,9 @@ assertEqual(request.current_settings.Exposure2012, 0)
 assertEqual(request.preview_path, "D:\\Temp\\AutoDevelopAI\\preview.jpg")
 assertEqual(Config.DEFAULT_STYLE_PROFILE, "natural_travel")
 fakePreferences.styleProfileId = nil
-assertEqual(Config.getStyleProfileId(), Config.DEFAULT_STYLE_PROFILE)
+assertEqual(Preferences.getStyleProfileId(), Config.DEFAULT_STYLE_PROFILE)
 fakePreferences.styleProfileId = "architecture"
-assertEqual(Config.getStyleProfileId(), "architecture")
+assertEqual(Preferences.getStyleProfileId(), "architecture")
 
 local configured = assert(RequestBuilder.build(
     mappedPhoto,
@@ -309,11 +577,91 @@ assertEqual(developRequest.options.dry_run, false)
 assertEqual(developRequest.options.preserve_current_adjustments, true)
 assertEqual(Config.apiPaths.develop, "/autodevelop/v1/develop")
 assertEqual(Config.defaults.backendBaseUrl, "http://127.0.0.1:8005")
+assertEqual(Config.SCHEMA_VERSION, "1.0")
+fakePreferences.backendBaseUrl = nil
+fakePreferences.styleProfileId = nil
+fakePreferences.requestTimeoutSeconds = nil
 fakePreferences.applyCrop = nil
-assertEqual(Config.getApplyCrop(), true)
+fakePreferences.confirmationMode = nil
+fakePreferences.loggingLevel = nil
+assertEqual(
+    Preferences.getBackendBaseUrl(),
+    "http://127.0.0.1:8005"
+)
+assertEqual(Preferences.getStyleProfileId(), "natural_travel")
+assertEqual(Preferences.getRequestTimeoutSeconds(), 120)
+assertEqual(Preferences.getApplyCrop(), true)
+assertEqual(Preferences.getConfirmationMode(), "always")
+assertEqual(Preferences.getLoggingLevel(), "info")
+fakePreferences.applyCrop = nil
+assertEqual(Preferences.getApplyCrop(), true)
 fakePreferences.applyCrop = false
-assertEqual(Config.getApplyCrop(), false)
+assertEqual(Preferences.getApplyCrop(), false)
 fakePreferences.applyCrop = nil
+
+local normalizedUrl = assert(Preferences.set(
+    "backendBaseUrl",
+    "  HTTP://127.0.0.1:8005///  "
+))
+assertEqual(normalizedUrl, "HTTP://127.0.0.1:8005")
+local lastValidUrl = fakePreferences.backendBaseUrl
+local invalidUrl, invalidUrlReason =
+    Preferences.set("backendBaseUrl", "ftp://127.0.0.1")
+assertTrue(invalidUrl == nil)
+assertTrue(type(invalidUrlReason) == "string")
+assertEqual(fakePreferences.backendBaseUrl, lastValidUrl)
+assertEqual(
+    Preferences.set("backendBaseUrl", "https://autodevelop.example.com/"),
+    "https://autodevelop.example.com"
+)
+assertTrue(Preferences.set("backendBaseUrl", "   ") == nil)
+assertTrue(Preferences.set("backendBaseUrl", "127.0.0.1:8005") == nil)
+assertTrue(Preferences.set("backendBaseUrl", "ftp://127.0.0.1") == nil)
+assertTrue(Preferences.set(
+    "backendBaseUrl",
+    "http://127.0.0.1:8005/autodevelop/v1"
+) == nil)
+assertTrue(Preferences.set("requestTimeoutSeconds", 10) ~= nil)
+assertTrue(Preferences.set("requestTimeoutSeconds", 600) ~= nil)
+assertTrue(Preferences.set("requestTimeoutSeconds", 9) == nil)
+assertTrue(Preferences.set("requestTimeoutSeconds", 601) == nil)
+assertTrue(Preferences.set("requestTimeoutSeconds", 10.5) == nil)
+assertTrue(Preferences.set("requestTimeoutSeconds", "120") == nil)
+for _, choice in ipairs(Preferences.profileChoices) do
+    assertEqual(
+        Preferences.set("styleProfileId", choice.value),
+        choice.value
+    )
+end
+assertTrue(Preferences.set("styleProfileId", "unknown") == nil)
+assertEqual(Preferences.set("confirmationMode", "never"), "never")
+assertTrue(Preferences.set("confirmationMode", "sometimes") == nil)
+for _, level in ipairs({ "error", "warning", "info", "debug" }) do
+    assertEqual(Preferences.set("loggingLevel", level), level)
+end
+assertTrue(Preferences.set("loggingLevel", "trace") == nil)
+fakePreferences.loggingLevel = "invalid"
+assertEqual(Preferences.getRuntimeLoggingLevel(), "info")
+assertEqual(fakePreferences.loggingLevel, "invalid")
+fakePreferences.loggingLevel = "info"
+local defaults = Preferences.resetDefaults()
+assertEqual(defaults.backendBaseUrl, "http://127.0.0.1:8005")
+assertEqual(defaults.styleProfileId, "natural_travel")
+assertEqual(defaults.requestTimeoutSeconds, 120)
+assertEqual(defaults.applyCrop, true)
+assertEqual(defaults.confirmationMode, "always")
+assertEqual(defaults.loggingLevel, "info")
+
+fakePreferences.loggingLevel = "error"
+Logger.info("suppressed info")
+Logger.error("visible error")
+assertEqual(#logged.info, 0)
+assertEqual(#logged.error, 1)
+fakePreferences.loggingLevel = "debug"
+Logger.debug("safe debug event")
+assertEqual(#logged.debug, 1)
+assertTrue(logged.debug[1]:find("preview_path", 1, true) == nil)
+fakePreferences.loggingLevel = "info"
 
 local successfulResponse = {
     status = "success",
@@ -325,6 +673,44 @@ local successfulResponse = {
     model = "fake-autodevelop-v1",
 }
 assertTrue(Validation.validateAnalyzeResponse(successfulResponse, request))
+local invalidAnalyzeModel = Utils.deepCopy(successfulResponse)
+invalidAnalyzeModel.model =
+    "https://user:pass@example.com/model?token=secret"
+assertTrue(
+    not Validation.validateAnalyzeResponse(invalidAnalyzeModel, request)
+)
+
+local cancelledDialogSummary = BatchSummary.new(1, "develop")
+cancelledDialogSummary.cancelled = true
+cancelledDialogSummary.profileId = "natural_travel"
+cancelledDialogSummary.confirmationMode = "never"
+cancelledDialogSummary.terminalCategory =
+    ErrorClassifier.codes.backendNotRunning
+cancelledDialogSummary.models = {
+    ["vendor/model+quant"] = true,
+    ["https://user:password@example.com/model?token=secret"] = true,
+}
+cancelledDialogSummary.examples = {}
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(
+    cancelledDialogSummary,
+    {
+        applied = 0,
+        notApplied = 0,
+        userCancelled = true,
+    }
+)
+assertTrue(lastDialog ~= nil)
+assertTrue(lastDialog.message:find("vendor/model+quant", 1, true) ~= nil)
+assertTrue(lastDialog.message:find("user:password", 1, true) == nil)
+assertTrue(lastDialog.message:find("token=secret", 1, true) == nil)
+assertTrue(
+    lastDialog.message:find(
+        "Could not connect to the AutoDevelop AI backend.",
+        1,
+        true
+    ) == nil
+)
 
 local mismatched = Utils.deepCopy(successfulResponse)
 mismatched.request_id = "32345678-1234-4abc-8abc-1234567890ab"
@@ -398,6 +784,14 @@ local developResponse = {
 }
 assertTrue(
     Validation.validateDevelopResponse(developResponse, developRequest)
+)
+local developInvalidModel = Utils.deepCopy(developResponse)
+developInvalidModel.model = "../../secret"
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developInvalidModel,
+        developRequest
+    )
 )
 local developRequestMismatch = Utils.deepCopy(developResponse)
 developRequestMismatch.request_id =
@@ -652,13 +1046,18 @@ assertEqual(completeCropSettings.CropBottom, 0.9)
 assertEqual(completeCropSettings.CropAngle, 0)
 
 local cancelledCalls = 0
+local cancelledWriteCalls = 0
 local cancelledPhoto = {
     applyDevelopSettings = function()
         cancelledCalls = cancelledCalls + 1
     end,
 }
 local cancelledResult = ApplyService.applyBatch(
-    fakeCatalog,
+    {
+        withWriteAccessDo = function()
+            cancelledWriteCalls = cancelledWriteCalls + 1
+        end,
+    },
     {
         PendingOperation.new({
             photo = cancelledPhoto,
@@ -673,8 +1072,34 @@ local cancelledResult = ApplyService.applyBatch(
     }
 )
 assertEqual(cancelledCalls, 0)
+assertEqual(cancelledWriteCalls, 0)
 assertEqual(cancelledResult.notApplied, 1)
 assertEqual(cancelledResult.cancelled, true)
+
+local writeFailureOperation = PendingOperation.new({
+    photo = successfulPhoto,
+    mappedSettings = { Exposure2012 = 1 },
+    originalSettings = { Exposure2012 = 0 },
+})
+local writeFailureResult = ApplyService.applyBatch(
+    {
+        withWriteAccessDo = function()
+            error("/home/person/private/catalog?token=secret")
+        end,
+    },
+    { writeFailureOperation }
+)
+assertEqual(writeFailureResult.writeErrorCategory, "write_access_failed")
+assertEqual(
+    writeFailureResult.writeErrorCode,
+    "catalog_write_access_failed"
+)
+assertTrue(
+    writeFailureResult.writeError:find("/home/person", 1, true) == nil
+)
+assertTrue(
+    writeFailureResult.writeError:find("token=secret", 1, true) == nil
+)
 
 local restoreCalls = 0
 local restoredValue = nil
@@ -682,24 +1107,33 @@ local failingPhoto = {
     applyDevelopSettings = function(_, values)
         restoreCalls = restoreCalls + 1
         if restoreCalls == 1 then
-            error("simulated apply failure")
+            error("C:\\Users\\Person\\secret-preview.jpg?token=secret")
         end
         restoredValue = values.Exposure2012
     end,
 }
+local restoreOperation = PendingOperation.new({
+    photo = failingPhoto,
+    mappedSettings = { Exposure2012 = 1 },
+    originalSettings = { Exposure2012 = 0 },
+})
 local restoreResult = ApplyService.applyBatch(
     fakeCatalog,
-    {
-        PendingOperation.new({
-            photo = failingPhoto,
-            mappedSettings = { Exposure2012 = 1 },
-            originalSettings = { Exposure2012 = 0 },
-        }),
-    }
+    { restoreOperation }
 )
 assertEqual(restoreResult.restoredAfterFailure, 1)
 assertEqual(restoreResult.failedNotRestored, 0)
 assertEqual(restoredValue, 0)
+assertEqual(restoreOperation.applyErrorCategory, "apply_failed")
+assertEqual(restoreOperation.applyErrorCode, "lightroom_apply_failed")
+assertTrue(
+    restoreOperation.applyError:find(
+        "C:\\Users\\Person",
+        1,
+        true
+    ) == nil
+)
+assertTrue(restoreOperation.applyError:find("token=secret", 1, true) == nil)
 
 local failedRestorePhoto = {
     applyDevelopSettings = function()
@@ -723,21 +1157,132 @@ local pendingList = { pending, safeOperation }
 PendingOperation.clear(pendingList)
 assertEqual(#pendingList, 0)
 
-assertTrue(BatchPolicy.shouldRetry(500, 0, false))
-assertTrue(BatchPolicy.shouldRetry(502, 0, false))
-assertTrue(not BatchPolicy.shouldRetry(500, 1, false))
-assertTrue(not BatchPolicy.shouldRetry(502, 0, true))
+assertTrue(BatchPolicy.shouldRetry(
+    { ok = false, status = 500, category = "backend_error" },
+    0,
+    false
+))
+assertTrue(BatchPolicy.shouldRetry(
+    { ok = false, status = 502, category = "backend_error" },
+    0,
+    false
+))
+assertTrue(BatchPolicy.shouldRetry(
+    { ok = false, category = "model_timeout" },
+    0,
+    false
+))
+assertTrue(not BatchPolicy.shouldRetry(
+    { ok = false, status = 400, category = "validation_error" },
+    0,
+    false
+))
+assertTrue(not BatchPolicy.shouldRetry(
+    { ok = false, status = 500, category = "backend_error" },
+    1,
+    false
+))
+assertTrue(not BatchPolicy.shouldRetry(
+    { ok = false, status = 502, category = "backend_error" },
+    0,
+    true
+))
 
-local summary = BatchPolicy.newSummary(5)
+local summary = BatchSummary.new(5, "analyze")
 summary.analyzed = 2
 summary.skipped = 1
-BatchPolicy.addFailure(summary, "bad.nef", "failed")
-BatchPolicy.markNotProcessed(summary, 1)
+BatchSummary.addFailure(summary, "bad.nef", {
+    category = "internal_error",
+    code = "failed",
+})
+BatchSummary.markNotProcessed(summary, 1)
 assertEqual(summary.selected, 5)
 assertEqual(summary.analyzed, 2)
 assertEqual(summary.failed, 1)
 assertEqual(summary.skipped, 1)
 assertEqual(summary.notProcessed, 1)
+
+assertEqual(
+    ErrorClassifier.fromNetworkInfo({
+        error = { errorCode = "timedOut" },
+    }),
+    "model_timeout"
+)
+assertEqual(
+    ErrorClassifier.fromNetworkInfo({
+        error = { errorCode = "networkConnectionLost" },
+    }),
+    "network_error"
+)
+assertEqual(
+    ErrorClassifier.fromNetworkInfo({
+        error = { errorCode = "cannotConnectToHost" },
+    }),
+    "backend_not_running"
+)
+assertEqual(
+    ErrorClassifier.fromHttp(400, "profile_not_found"),
+    "invalid_profile"
+)
+assertEqual(
+    ErrorClassifier.fromHttp(400, "model_request_error"),
+    "validation_error"
+)
+assertEqual(ErrorClassifier.fromHttp(500, "http_error"), "backend_error")
+assertEqual(ErrorClassifier.fromHttp(502, "model_client_error"), "backend_error")
+local now = 100
+local tracker = ProgressTracker.new(4, "Analyzing", function()
+    return now
+end)
+tracker:setCurrent("photo.nef")
+assertTrue(tracker:estimatedRemainingSeconds() == nil)
+now = 110
+tracker:markCompleted(1)
+assertEqual(tracker:estimatedRemainingSeconds(), 30)
+assertEqual(ProgressTracker.formatDuration(65), "01:05")
+assertEqual(ProgressTracker.formatDuration(0), "00:00")
+assertEqual(ProgressTracker.formatDuration(5), "00:05")
+assertEqual(ProgressTracker.formatDuration(3661), "1:01:01")
+assertEqual(ProgressTracker.formatDuration(-10), "00:00")
+assertTrue(tracker:caption():find("photo.nef", 1, true) ~= nil)
+assertTrue(tracker:caption():find("1 / 4", 1, true) ~= nil)
+now = 130
+tracker:markCompleted(2)
+assertEqual(tracker:estimatedRemainingSeconds(), 30)
+tracker:markCompleted(99)
+assertEqual(tracker.completed, 4)
+assertTrue(tracker:estimatedRemainingSeconds() == nil)
+local zeroTracker = ProgressTracker.new(0, "Applying", function()
+    return 50
+end)
+zeroTracker:markCompleted(1)
+assertEqual(zeroTracker.completed, 0)
+assertTrue(zeroTracker:caption():find("Applying", 1, true) ~= nil)
+
+local safeInternal = ErrorDialog.messageFor("internal_error", {
+    raw = "<html>secret traceback</html>",
+})
+assertTrue(safeInternal:find("<html>", 1, true) == nil)
+ErrorDialog.show("backend_not_running", {
+    backendBaseUrl = "http://127.0.0.1:8005",
+})
+assertEqual(lastDialog.title, "AutoDevelop AI Backend Not Available")
+assertTrue(
+    lastDialog.message:find("http://127.0.0.1:8005", 1, true) ~= nil
+)
+
+local phaseSummary = BatchSummary.new(3, "analyze")
+BatchSummary.addFailure(phaseSummary, "one.nef", {
+    category = "network_error",
+    code = "networkConnectionLost",
+})
+BatchSummary.addFailure(phaseSummary, "two.nef", {
+    category = "invalid_response",
+    code = "malformed_json",
+})
+local categories = BatchSummary.sortedCategories(phaseSummary)
+assertEqual(categories[1], "invalid_response")
+assertEqual(categories[2], "network_error")
 
 ResultStore.clear()
 local resultPhotoKey = Utils.photoKey(mappedPhoto)

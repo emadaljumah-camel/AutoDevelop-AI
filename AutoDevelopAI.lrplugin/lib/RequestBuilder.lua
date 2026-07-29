@@ -1,13 +1,20 @@
-local Config = ModuleLoader.load("lib/Config.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
+local Preferences = ModuleLoader.load("lib/Preferences.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local RequestBuilder = {}
 
 local function buildBase(photo, previewPath, options)
     options = options or {}
-    local styleProfile = Utils.trim(options.styleProfileId)
-        or Config.DEFAULT_STYLE_PROFILE
+    local styleProfile = options.styleProfileId
+    if styleProfile == nil then
+        styleProfile = Preferences.getStyleProfileId()
+    else
+        styleProfile = Preferences.validate("styleProfileId", styleProfile)
+    end
+    if not styleProfile then
+        return nil, "The selected style profile is invalid."
+    end
     local uuidFactory = options.uuidFactory or Utils.newUuid
     local requestId = uuidFactory()
 
@@ -17,7 +24,7 @@ local function buildBase(photo, previewPath, options)
     local filename = Utils.photoFilename(photo)
 
     local request = {
-        schema_version = "1.0",
+        schema_version = Config.SCHEMA_VERSION,
         request_id = requestId,
         filename = filename,
         preview_path = previewPath,

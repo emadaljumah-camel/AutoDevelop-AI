@@ -156,8 +156,10 @@ def test_backend_configuration_uses_autodevelop_port_and_route() -> None:
     assert "http://127.0.0.1:8005" in config
     assert 'Config.DEFAULT_STYLE_PROFILE = "natural_travel"' in config
     assert "styleProfileId = Config.DEFAULT_STYLE_PROFILE" in config
-    assert 'analyze = "/autodevelop/v1/analyze"' in config
-    assert 'develop = "/autodevelop/v1/develop"' in config
+    assert 'Config.API_PREFIX = "/autodevelop/v1"' in config
+    assert 'analyze = Config.API_PREFIX .. "/analyze"' in config
+    assert 'develop = Config.API_PREFIX .. "/develop"' in config
+    assert 'health = Config.API_PREFIX .. "/health"' in config
     assert "Config.apiPaths.analyze" in client
     assert "Config.apiPaths.develop" in client
     assert "LrHttp.post(" in client
@@ -170,6 +172,7 @@ def test_requests_use_backend_contract_field_names() -> None:
     builder = _read("lib/RequestBuilder.lua")
 
     assert "schema_version" in builder
+    assert "Config.SCHEMA_VERSION" in builder
     assert "request_id" in builder
     assert "preview_path" in builder
     assert "current_settings" in builder
@@ -245,13 +248,14 @@ def test_develop_response_validation_requires_safe_contract() -> None:
 
 def test_command_is_async_sequential_and_cancellable() -> None:
     command = _read("lib/AnalyzeCommand.lua")
+    preparation = _read("lib/PreparationService.lua")
 
     assert "LrTasks.startAsyncTask(function()" in command
     assert "LrFunctionContext.callWithContext" in command
     assert "LrTasks.pcall" in command
     assert "for index, photo in ipairs(photos) do" in command
     assert "progressScope:isCanceled()" in command
-    assert "LrTasks.sleep(0.5)" in command
+    assert "LrTasks.sleep(0.5)" in preparation
     assert "startAsyncTask" not in _read("lib/ApiClient.lua")
 
 
@@ -289,10 +293,13 @@ def test_capture_time_and_gps_mapping_are_defensive() -> None:
 def test_default_style_profile_has_one_plugin_source_of_truth() -> None:
     config = _read("lib/Config.lua")
     builder = _read("lib/RequestBuilder.lua")
+    preferences = _read("lib/Preferences.lua")
 
     assert 'Config.DEFAULT_STYLE_PROFILE = "natural_travel"' in config
-    assert "Config.DEFAULT_STYLE_PROFILE" in builder
+    assert "Preferences.getStyleProfileId()" in builder
+    assert "styleProfileId = Config.DEFAULT_STYLE_PROFILE" in config
     assert '"natural_travel"' not in builder
+    assert '"natural_travel"' in preferences
 
 
 def test_only_apply_service_uses_catalog_develop_writes() -> None:
@@ -315,7 +322,7 @@ def test_only_apply_service_uses_catalog_develop_writes() -> None:
 def test_auto_develop_confirmation_precedes_catalog_application() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
 
-    backend = command.index("ApiClient.develop(request)")
+    backend = command.index("PreparationService.prepareDevelopPhoto(")
     confirmed = command.index(
         "AutoDevelopConfirmationDialog.confirm(summary)"
     )
@@ -323,6 +330,240 @@ def test_auto_develop_confirmation_precedes_catalog_application() -> None:
 
     assert backend < confirmed < applied
     assert "withWriteAccessDo" not in command
+
+
+def test_auto_develop_uses_ordered_cancellation_application_gates() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+
+    preparation_call = command.index(
+        "prepareBatch(",
+        command.index("local function runCommand("),
+    )
+    preparation_gate = command.index(
+        "local preparationDecision = ApplicationGate.evaluate({",
+        preparation_call,
+    )
+    confirmation = command.index(
+        "AutoDevelopConfirmationDialog.confirm(summary)",
+        preparation_gate,
+    )
+    confirmed_gate = command.index(
+        "local confirmedDecision = ApplicationGate.evaluate({",
+        confirmation,
+    )
+    final_gate = command.index(
+        "local finalDecision = ApplicationGate.evaluate({",
+        confirmed_gate,
+    )
+    application = command.index(
+        "ApplyService.applyBatch(catalog, operations",
+        final_gate,
+    )
+
+    assert preparation_call < preparation_gate < confirmation
+    assert confirmation < confirmed_gate < final_gate < application
+    assert "progressCancelled = preparationProgress:isCanceled()" in command
+    assert "progressCancelled = applyProgress:isCanceled()" in command
+    assert "if not finalDecision.shouldApply then" in command
+
+
+def test_auto_develop_uses_pure_operation_recorder() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+    recorder = _read("lib/BatchOperationRecorder.lua")
+
+    prepared = command.index("PreparationService.prepareDevelopPhoto(")
+    recording = command.index(
+        "BatchOperationRecorder.tryRecord({",
+        prepared,
+    )
+
+    assert prepared < recording
+    assert "operations[#operations + 1] = value" not in command
+    assert "state.operations[#state.operations + 1] = state.operation" in recorder
+    assert 'return "cancelled"' in recorder
+    assert 'return "terminal_failure"' in recorder
+    assert 'return "invalid_operation"' in recorder
+
+
+def test_cancelled_outcome_precedes_terminal_dialog() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+
+    cancelled = command.index("if preparationDecision.cancelled then")
+    terminal = command.index(
+        "elseif preparationDecision.terminalFailure then",
+        cancelled,
+    )
+    terminal_dialog = command.index(
+        "ErrorDialog.show(summary.terminalCategory, summary)",
+        terminal,
+    )
+
+    assert cancelled < terminal < terminal_dialog
+    assert "AutoDevelopConfirmationDialog.showFinal(summary, application)" in (
+        command[cancelled:terminal]
+    )
+    assert "ErrorDialog.show(" not in command[cancelled:terminal]
+
+
+def test_plugin_manager_provider_and_preferences_are_registered() -> None:
+    info = _read("Info.lua")
+    provider = _read("PluginManager.lua")
+
+    assert 'LrPluginInfoProvider = "PluginManager.lua"' in info
+    assert (PLUGIN / "PluginManager.lua").is_file()
+    assert "sectionsForTopOfDialog" in provider
+    assert "Preferences.profileChoices" in provider
+    assert "Preferences.confirmationChoices" in provider
+    assert "Preferences.loggingChoices" in provider
+    assert "BackendClient.getHealth," in provider
+    assert "baseUrl," in provider
+    assert "timeout" in provider
+    assert "LrTasks.startAsyncTask(function()" in provider
+    assert "if propertyTable.testingConnection then" in provider
+    assert "PreviewExporter" not in provider
+    assert "withWriteAccessDo" not in provider
+    assert "getTargetPhotos" not in provider
+    assert "Reset Defaults" in provider
+    assert "10-600 seconds" in provider
+    assert "applies automatically after" in provider
+
+
+def test_preferences_are_the_only_lr_prefs_boundary() -> None:
+    users = []
+    for path in PLUGIN.rglob("*.lua"):
+        source = path.read_text(encoding="utf-8")
+        if "prefsForPlugin" in source or 'import("LrPrefs")' in source:
+            users.append(path.relative_to(PLUGIN).as_posix())
+
+    assert users == ["lib/Preferences.lua"]
+    preferences = _read("lib/Preferences.lua")
+    assert "requestTimeoutSeconds = 120" in _read("lib/Config.lua")
+    assert "normalized < 10" in preferences
+    assert "normalized > 600" in preferences
+    assert "normalized % 1 ~= 0" in preferences
+    assert "Config.API_PREFIX" in preferences
+    assert "store()[key] = normalized" in preferences
+    assert "preferences[key] = value" in preferences
+
+
+def test_phase_one_error_categories_are_centralized() -> None:
+    classifier = _read("lib/ErrorClassifier.lua")
+    client = _read("lib/ApiClient.lua")
+    service = _read("lib/PreparationService.lua")
+
+    for category in (
+        "backend_not_running",
+        "invalid_profile",
+        "model_timeout",
+        "network_error",
+        "invalid_response",
+        "backend_error",
+        "validation_error",
+        "cancelled",
+        "internal_error",
+    ):
+        assert f'"{category}"' in classifier
+
+    assert "headers.error.errorCode" in client
+    assert "Validation.parseErrorResponse" in client
+    assert "retriesUsed < 1" in _read("lib/BatchPolicy.lua")
+    assert "requestFunction(request, connectionOptions)" in service
+    assert "result.requestId = request.request_id" in service
+    assert "result.filename = request.filename" in service
+
+
+def test_progress_and_confirmation_preferences_are_integrated() -> None:
+    progress = _read("lib/ProgressTracker.lua")
+    analyze = _read("lib/AnalyzeCommand.lua")
+    develop = _read("lib/AutoDevelopCommand.lua")
+    preparation = _read("lib/PreparationService.lua")
+
+    assert "Photos completed:" in progress
+    assert "Elapsed:" in progress
+    assert "Estimated remaining:" in progress
+    assert "self.completed < 1" in progress
+    assert "ProgressTracker.new(#photos" in analyze
+    assert "ProgressTracker.new(#photos" in develop
+    assert 'confirmationMode = preferences.confirmationMode' in develop
+    assert "if preparationDecision.cancelled then" in develop
+    assert "elseif preparationDecision.terminalFailure then" in develop
+    assert "operation.cropDisabled" in preparation
+    assert "application.cropApplied" in develop
+    assert "confirmation_mode=" in develop
+
+
+def test_model_identifier_is_validated_before_logs_and_summaries() -> None:
+    validation = _read("lib/Validation.lua")
+    analyze = _read("lib/AnalyzeCommand.lua")
+    preparation = _read("lib/PreparationService.lua")
+    dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
+
+    assert "Validation.validateModelIdentifier" in validation
+    assert 'value:match("^[A-Za-z]:")' in validation
+    assert 'value:match("^[A-Za-z]:[/\\\\]")' not in validation
+    assert "validatedModel" in analyze
+    assert ".. validatedModel" in analyze
+    assert "tostring(decoded.model)" not in analyze
+    assert "model = validatedModel" in preparation
+    assert "model = decoded.model" not in preparation
+    assert "Validation.validateModelIdentifier(name)" in dialog
+
+
+def test_workflow_exception_handlers_do_not_log_caught_values() -> None:
+    workflow_files = (
+        "lib/AnalyzeCommand.lua",
+        "lib/AutoDevelopCommand.lua",
+        "lib/PreparationService.lua",
+        "lib/ApplyService.lua",
+        "lib/ApiClient.lua",
+        "lib/PreviewExporter.lua",
+    )
+    forbidden = (
+        "tostring(failure)",
+        "tostring(outcome)",
+        "tostring(encodeError)",
+        "tostring(responseBody)",
+        "tostring(applyError)",
+        "tostring(writeError)",
+        "tostring(moveError)",
+        "tostring(cleanupError)",
+        "Utils.safeMessage(reason",
+        "Utils.safeMessage(previewError",
+        "Utils.safeMessage(requestError",
+        "Utils.safeMessage(decodeError",
+        "Utils.safeMessage(validationError",
+    )
+
+    for relative_path in workflow_files:
+        source = _read(relative_path)
+        for expression in forbidden:
+            assert expression not in source, (
+                f"{relative_path} exposes caught value via {expression}"
+            )
+
+
+def test_apply_service_returns_only_stable_failure_details() -> None:
+    source = _read("lib/ApplyService.lua")
+
+    assert 'operation.applyErrorCategory = "apply_failed"' in source
+    assert '"lightroom_apply_failed"' in source
+    assert 'result.writeErrorCategory = "write_access_failed"' in source
+    assert '"catalog_write_access_failed"' in source
+    assert "applyError," not in source
+    assert "writeError," not in source
+
+
+def test_ordinary_logging_does_not_emit_payloads_or_preview_paths() -> None:
+    logger = _read("lib/Logger.lua")
+    analyze = _read("lib/AnalyzeCommand.lua")
+    develop = _read("lib/AutoDevelopCommand.lua")
+
+    assert "preview_path" not in logger
+    assert "base64" not in logger
+    assert "prompt" not in logger.lower()
+    assert "encoded" not in logger
+    assert "Logger.info(encoded" not in analyze
+    assert "Logger.info(encoded" not in develop
 
 
 def test_auto_develop_progress_cleanup_precedes_scope_methods() -> None:
@@ -367,14 +608,17 @@ def test_auto_develop_progress_cleanup_precedes_scope_methods() -> None:
 def test_auto_develop_uses_two_phase_cleanup_and_no_standard_xpcall() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
     apply_service = _read("lib/ApplyService.lua")
+    preparation = _read("lib/PreparationService.lua")
 
     assert "context:addCleanupHandler" in command
-    assert "cleanupPreview(preview)" in command
+    assert "context:addCleanupHandler" in preparation
+    assert "cleanupPreview(preview)" in preparation
     assert "cleanupBatch(batchDirectory)" in command
     assert "PendingOperation.clear(operations)" in command
     assert "LrTasks.startAsyncTask(function()" in command
     assert "LrTasks.pcall" in command
     assert "xpcall" not in command
+    assert "xpcall" not in preparation
     assert "xpcall" not in apply_service
     assert "LrTasks.pcall" in apply_service
 

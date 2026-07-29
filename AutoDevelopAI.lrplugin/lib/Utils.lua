@@ -193,6 +193,8 @@ function Utils.deepCopy(value, seen)
     return copy
 end
 
+-- This function does not redact arbitrary input. Callers must use it only for
+-- content already known to be safe for display or logging.
 function Utils.safeMessage(value, fallback)
     local text = Utils.trim(tostring(value or ""))
     if not text then
@@ -203,6 +205,20 @@ function Utils.safeMessage(value, fallback)
         text = text:sub(1, 237) .. "..."
     end
     return text
+end
+
+-- This helper is intentionally limited to stable identifiers. It must not be
+-- used to transform arbitrary exception text into a log message.
+function Utils.safeErrorCode(value, fallbackCode)
+    if type(value) == "string"
+        and value:match("^[a-z][a-z0-9_%.%-]*$") then
+        return value
+    end
+    if type(fallbackCode) == "string"
+        and fallbackCode:match("^[a-z][a-z0-9_%.%-]*$") then
+        return fallbackCode
+    end
+    return "internal_error"
 end
 
 return Utils

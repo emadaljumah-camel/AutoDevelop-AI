@@ -5,17 +5,21 @@ local LrProgressScope = import("LrProgressScope")
 local LrTasks = import("LrTasks")
 
 local ApiClient = ModuleLoader.load("lib/ApiClient.lua")
-local BatchPolicy = ModuleLoader.load("lib/BatchPolicy.lua")
-local Config = ModuleLoader.load("lib/Config.lua")
+local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
+local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
 local Logger = ModuleLoader.load("lib/Logger.lua")
+local Preferences = ModuleLoader.load("lib/Preferences.lua")
+local PreparationService = ModuleLoader.load("lib/PreparationService.lua")
 local PreviewExporter = ModuleLoader.load("lib/PreviewExporter.lua")
+local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
 local RequestBuilder = ModuleLoader.load("lib/RequestBuilder.lua")
 local ResultStore = ModuleLoader.load("lib/ResultStore.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 local Validation = ModuleLoader.load("lib/Validation.lua")
 local AnalysisSummaryDialog =
     ModuleLoader.load("dialogs/AnalysisSummaryDialog.lua")
+local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
 
 local AnalyzeCommand = {}
 
@@ -26,15 +30,15 @@ local function cleanupPreview(preview)
     )
     if not ok then
         Logger.warn(
-            "Temporary preview cleanup raised an error: "
-                .. Utils.safeMessage(cleaned, "unknown cleanup error")
+            "operation=analyze_preview_cleanup category=cleanup_failed "
+                .. "code=preview_cleanup_exception"
         )
         return
     end
     if not cleaned then
         Logger.warn(
-            "Temporary preview cleanup failed: "
-                .. Utils.safeMessage(reason, "unknown cleanup error")
+            "operation=analyze_preview_cleanup category=cleanup_failed "
+                .. "code=preview_cleanup_failed"
         )
     end
 end
@@ -46,15 +50,15 @@ local function cleanupBatch(batchDirectory)
     )
     if not ok then
         Logger.warn(
-            "Batch preview cleanup raised an error: "
-                .. Utils.safeMessage(cleaned, "unknown cleanup error")
+            "operation=analyze_batch_cleanup category=cleanup_failed "
+                .. "code=batch_cleanup_exception"
         )
         return
     end
     if not cleaned then
         Logger.warn(
-            "Batch preview cleanup failed: "
-                .. Utils.safeMessage(reason, "unknown cleanup error")
+            "operation=analyze_batch_cleanup category=cleanup_failed "
+                .. "code=batch_cleanup_failed"
         )
     end
 end
@@ -65,45 +69,9 @@ local function finishProgress(progressScope)
     end)
     if not ok then
         Logger.warn(
-            "Progress cleanup failed: "
-                .. Utils.safeMessage(reason, "unknown progress error")
+            "operation=analyze_progress_cleanup category=cleanup_failed "
+                .. "code=progress_cleanup_failed"
         )
-    end
-end
-
-local function requestBackend(request, progressScope)
-    local retriesUsed = 0
-    while true do
-        if progressScope:isCanceled() then
-            return nil, "cancelled", "Analysis was cancelled."
-        end
-        local response = ApiClient.analyze(request)
-        Logger.info(
-            "Analyze HTTP request_id="
-                .. request.request_id
-                .. " filename="
-                .. request.filename
-                .. " status="
-                .. tostring(response.status or "transport-error")
-        )
-
-        if response.transportError then
-            return nil, "connection", "The AutoDevelop AI backend is unavailable."
-        end
-        if progressScope:isCanceled() then
-            return nil, "cancelled", "Analysis was cancelled."
-        end
-
-        if BatchPolicy.shouldRetry(
-            response.status,
-            retriesUsed,
-            progressScope:isCanceled()
-        ) then
-            retriesUsed = retriesUsed + 1
-            LrTasks.sleep(0.5)
-        else
-            return response
-        end
     end
 end
 
@@ -111,7 +79,9 @@ local function processPhotoBody(
     photo,
     batchDirectory,
     progressScope,
-    context
+    context,
+    preferences,
+    tracker
 )
     if not ExifMapper.isSupportedPhoto(photo) then
         return "skipped", "Videos are not supported."
@@ -124,11 +94,18 @@ local function processPhotoBody(
     )
     if not preview then
         if progressScope:isCanceled() then
-            return "cancelled", "Analysis was cancelled."
+            return "cancelled", PreparationService.failure(
+                ErrorClassifier.codes.cancelled,
+                "user_cancelled"
+            )
         end
-        return "failed", Utils.safeMessage(
-            previewError,
-            "Could not create a temporary preview."
+        Logger.warn(
+            "operation=analyze_preview_export category=internal_error "
+                .. "code=preview_export_failed"
+        )
+        return "failed", PreparationService.failure(
+            ErrorClassifier.codes.internalError,
+            "preview_export_failed"
         )
     end
     local previewCleaned = false
@@ -141,15 +118,24 @@ local function processPhotoBody(
     end)
 
     if progressScope:isCanceled() then
-        return "cancelled", "Analysis was cancelled."
+        return "cancelled", PreparationService.failure(
+            ErrorClassifier.codes.cancelled,
+            "user_cancelled"
+        )
     end
 
     local request, requestError = RequestBuilder.build(photo, preview.path, {
-        styleProfileId = Config.getStyleProfileId(),
+        styleProfileId = preferences.styleProfileId,
     })
     if not request then
-        return "failed",
-            Utils.safeMessage(requestError, "Could not build the request.")
+        Logger.warn(
+            "operation=build_analyze_request category=validation_error "
+                .. "code=request_build_failed"
+        )
+        return "failed", PreparationService.failure(
+            ErrorClassifier.codes.validationError,
+            "request_build_failed"
+        )
     end
 
     Logger.info(
@@ -159,39 +145,55 @@ local function processPhotoBody(
             .. request.filename
     )
 
-    local response, connectionOutcome, connectionReason = requestBackend(
+    local response, requestFailure = PreparationService.request(
+        "analyze",
         request,
-        progressScope
+        progressScope,
+        {
+            baseUrl = preferences.backendBaseUrl,
+            timeoutSeconds = preferences.requestTimeoutSeconds,
+        },
+        tracker
     )
     if not response then
-        return connectionOutcome, connectionReason
+        if requestFailure.category == ErrorClassifier.codes.cancelled then
+            return "cancelled", requestFailure
+        end
+        return "failed", requestFailure
+    end
+    if progressScope:isCanceled() then
+        return "cancelled", PreparationService.failure(
+            ErrorClassifier.codes.cancelled,
+            "user_cancelled"
+        )
     end
 
     local decoded, decodeError = ApiClient.decodeBody(response)
-    if response.status < 200 or response.status >= 300 then
-        local parsed = Validation.parseErrorResponse(decoded, response.status)
-        return "failed", parsed.message
-    end
     if not decoded then
         Logger.warn(
             "Analyze response JSON failure request_id="
                 .. request.request_id
-                .. " reason="
-                .. Utils.safeMessage(decodeError, "invalid JSON")
+                .. " category=invalid_response code=malformed_json"
         )
-        return "failed", "The backend returned malformed JSON."
+        return "failed", PreparationService.failure(
+            ErrorClassifier.codes.invalidResponse,
+            "malformed_json"
+        )
     end
 
-    local valid, validationError =
+    local valid, validationError, validatedModel =
         Validation.validateAnalyzeResponse(decoded, request)
     if not valid then
         Logger.warn(
             "Analyze response validation failed request_id="
                 .. request.request_id
-                .. " reason="
-                .. Utils.safeMessage(validationError, "invalid response")
+                .. " category=invalid_response "
+                .. "code=response_validation_failed"
         )
-        return "failed", validationError
+        return "failed", PreparationService.failure(
+            ErrorClassifier.codes.invalidResponse,
+            "response_validation_failed"
+        )
     end
 
     ResultStore.put(Utils.photoKey(photo), {
@@ -205,14 +207,20 @@ local function processPhotoBody(
         "Analyze request complete request_id="
             .. request.request_id
             .. " model="
-            .. tostring(decoded.model)
+            .. validatedModel
             .. " duration_ms="
             .. tostring(decoded.processing_duration_ms or "unavailable")
     )
     return "success"
 end
 
-local function processPhoto(photo, batchDirectory, progressScope)
+local function processPhoto(
+    photo,
+    batchDirectory,
+    progressScope,
+    preferences,
+    tracker
+)
     local ok, outcome, reason = LrTasks.pcall(function()
         return LrFunctionContext.callWithContext(
             "AutoDevelop AI Analyze Photo",
@@ -221,7 +229,9 @@ local function processPhoto(photo, batchDirectory, progressScope)
                     photo,
                     batchDirectory,
                     progressScope,
-                    context
+                    context,
+                    preferences,
+                    tracker
                 )
             end
         )
@@ -229,64 +239,78 @@ local function processPhoto(photo, batchDirectory, progressScope)
 
     if not ok then
         Logger.error(
-            "Unexpected per-photo analysis error: " .. tostring(outcome)
+            "operation=analyze_photo category=internal_error "
+                .. "code=unexpected_exception"
         )
-        return "failed", "An unexpected plug-in error occurred."
+        return "failed", PreparationService.failure(
+            ErrorClassifier.codes.internalError,
+            "unexpected_plugin_error"
+        )
     end
     return outcome, reason
 end
 
-local function runBatch(photos, progressScope, batchDirectory)
-    local summary = BatchPolicy.newSummary(#photos)
+local function runBatch(
+    photos,
+    progressScope,
+    batchDirectory,
+    preferences,
+    tracker
+)
+    local summary = BatchSummary.new(#photos, "analyze")
+    summary.backendBaseUrl = preferences.backendBaseUrl
+    summary.requestTimeoutSeconds = preferences.requestTimeoutSeconds
+    summary.profileId = preferences.styleProfileId
 
     for index, photo in ipairs(photos) do
         if progressScope:isCanceled() then
             summary.cancelled = true
-            BatchPolicy.markNotProcessed(summary, #photos - index + 1)
+            BatchSummary.markNotProcessed(summary, #photos - index + 1)
             break
         end
 
         local filename = Utils.photoFilename(photo)
-        progressScope:setCaption(
-            "Analyzing "
-                .. tostring(index)
-                .. " of "
-                .. tostring(#photos)
-                .. ": "
-                .. filename
-        )
+        tracker:setPhase("Preparing analysis")
+        tracker:setCurrent(filename, index)
+        progressScope:setCaption(tracker:caption())
 
         local outcome, reason = processPhoto(
             photo,
             batchDirectory,
-            progressScope
+            progressScope,
+            preferences,
+            tracker
         )
+        if progressScope:isCanceled() then
+            summary.cancelled = true
+            BatchSummary.markNotProcessed(summary, #photos - index + 1)
+            break
+        end
         if outcome == "success" then
             summary.analyzed = summary.analyzed + 1
         elseif outcome == "skipped" then
             summary.skipped = summary.skipped + 1
-            if #summary.failures < 5 then
-                summary.failures[#summary.failures + 1] = {
-                    filename = filename,
-                    reason = reason,
-                }
-            end
-        elseif outcome == "connection" then
-            BatchPolicy.addFailure(summary, filename, reason)
-            summary.backendUnavailable = true
-            BatchPolicy.markNotProcessed(summary, #photos - index)
-            progressScope:setPortionComplete(index, #photos)
-            break
         elseif outcome == "cancelled" then
             summary.cancelled = true
-            BatchPolicy.markNotProcessed(summary, #photos - index + 1)
+            BatchSummary.markNotProcessed(summary, #photos - index + 1)
             break
         else
-            BatchPolicy.addFailure(summary, filename, reason)
+            BatchSummary.addFailure(summary, filename, reason)
+            if ErrorClassifier.isTerminalForBatch(reason.category) then
+                summary.terminalCategory = reason.category
+                BatchSummary.markNotProcessed(summary, #photos - index)
+                tracker:markCompleted(index)
+                progressScope:setPortionComplete(index, #photos)
+                progressScope:setCaption(tracker:caption())
+                break
+            end
         end
+        tracker:markCompleted(index)
         progressScope:setPortionComplete(index, #photos)
+        progressScope:setCaption(tracker:caption())
     end
 
+    summary.elapsedSeconds = tracker:elapsedSeconds()
     return summary
 end
 
@@ -302,13 +326,29 @@ local function runCommand(context)
         return
     end
 
+    local preferences, _, invalidKey = Preferences.validatedSnapshot()
+    if not preferences then
+        local current = Preferences.valuesForUi()
+        ErrorDialog.show(
+            invalidKey == "styleProfileId"
+                and ErrorClassifier.codes.invalidProfile
+                or ErrorClassifier.codes.validationError,
+            {
+                backendBaseUrl = current.backendBaseUrl,
+                requestTimeoutSeconds = current.requestTimeoutSeconds,
+                profileId = current.styleProfileId,
+            }
+        )
+        return
+    end
+
     Logger.info("Analyze Selected Photos start selected=" .. tostring(#photos))
     local batchDirectory, directoryError =
         PreviewExporter.createBatchDirectory()
     if not batchDirectory then
         Logger.error(
-            "Could not create batch preview directory: "
-                .. Utils.safeMessage(directoryError, "unknown error")
+            "operation=create_analyze_preview_directory "
+                .. "category=internal_error code=preview_directory_failed"
         )
         LrDialogs.message(
             "AutoDevelop AI",
@@ -342,7 +382,14 @@ local function runCommand(context)
     context:addCleanupHandler(releaseProgress)
     progressScope:setCancelable(true)
 
-    local summary = runBatch(photos, progressScope, batchDirectory)
+    local tracker = ProgressTracker.new(#photos, "Analyzing")
+    local summary = runBatch(
+        photos,
+        progressScope,
+        batchDirectory,
+        preferences,
+        tracker
+    )
     releaseBatch()
     releaseProgress()
 
@@ -356,7 +403,11 @@ local function runCommand(context)
             .. " not_processed="
             .. tostring(summary.notProcessed)
     )
-    AnalysisSummaryDialog.show(summary)
+    if summary.terminalCategory then
+        ErrorDialog.show(summary.terminalCategory, summary)
+    else
+        AnalysisSummaryDialog.show(summary)
+    end
 end
 
 function AnalyzeCommand.start()
@@ -369,13 +420,10 @@ function AnalyzeCommand.start()
         end)
         if not ok then
             Logger.error(
-                "Analyze Selected Photos failed: " .. tostring(failure)
+                "operation=analyze_command category=internal_error "
+                    .. "code=unexpected_exception"
             )
-            LrDialogs.message(
-                "AutoDevelop AI",
-                "Analyze Selected Photos encountered an unexpected error.",
-                "critical"
-            )
+            ErrorDialog.show(ErrorClassifier.codes.internalError)
         end
     end)
 end

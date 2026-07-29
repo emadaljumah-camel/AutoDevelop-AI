@@ -1,13 +1,20 @@
 local LrDialogs = import("LrDialogs")
 
+local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
+local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
+local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
+local Validation = ModuleLoader.load("lib/Validation.lua")
 
 local AutoDevelopConfirmationDialog = {}
 
 local function modelSummary(summary)
     local names = {}
     for name in pairs(summary.models or {}) do
-        names[#names + 1] = name
+        local identifier = Validation.validateModelIdentifier(name)
+        if identifier then
+            names[#names + 1] = identifier
+        end
     end
     table.sort(names)
     if #names == 0 then
@@ -27,11 +34,17 @@ local function preparationLines(summary)
         "Skipped: " .. tostring(summary.skipped),
         "Not processed: " .. tostring(summary.notProcessed),
         "Profile: " .. Utils.safeMessage(summary.profileId, "unavailable"),
+        "Confirmation: "
+            .. Utils.safeMessage(summary.confirmationMode, "not applicable"),
         "Model: " .. modelSummary(summary),
         "Crop changes: " .. tostring(summary.cropCount),
+        "Crop recommended but disabled: "
+            .. tostring(summary.cropDisabled or 0),
         "Denoise recommended but not applied: "
             .. tostring(summary.denoiseIgnored),
         "Warnings: " .. tostring(summary.warningCount),
+        "Elapsed: "
+            .. ProgressTracker.formatDuration(summary.elapsedSeconds or 0),
     }
 end
 
@@ -79,12 +92,32 @@ function AutoDevelopConfirmationDialog.showFinal(summary, application)
         .. (summary.cancelled and "yes" or "no")
     lines[#lines + 1] = ""
     lines[#lines + 1] = "Applied: " .. tostring(application.applied or 0)
+    lines[#lines + 1] = "Crop applied: "
+        .. tostring(application.cropApplied or 0)
     lines[#lines + 1] = "Restored after failure: "
         .. tostring(application.restoredAfterFailure or 0)
     lines[#lines + 1] = "Failed and not restored: "
         .. tostring(application.failedNotRestored or 0)
     lines[#lines + 1] = "Not applied: "
         .. tostring(application.notApplied or 0)
+
+    local categories = BatchSummary.sortedCategories(summary)
+    if #categories > 0 then
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "Failure categories:"
+        for _, category in ipairs(categories) do
+            lines[#lines + 1] = "- "
+                .. ErrorDialog.details(category).title
+                .. ": "
+                .. tostring(summary.failureCategories[category])
+        end
+    end
+
+    if summary.terminalCategory and not summary.cancelled then
+        lines[#lines + 1] = ""
+        lines[#lines + 1] =
+            ErrorDialog.messageFor(summary.terminalCategory, summary)
+    end
 
     if application.writeError then
         lines[#lines + 1] = ""
