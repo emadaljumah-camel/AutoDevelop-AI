@@ -1,0 +1,52 @@
+{
+  "id": "documentary",
+  "display_name": "Documentary",
+  "description": "Realistic, restrained edits that preserve atmosphere, context, and authentic color.",
+  "version": "1.0",
+  "editing_goals": [
+    "Preserve realism and local atmosphere",
+    "Protect important highlights without flattening the scene",
+    "Keep available-light color and mood believable",
+    "Prefer subtle corrections over dramatic transformations"
+  ],
+  "cautions": [
+    "Avoid aggressive HDR appearance",
+    "Avoid crushed shadows and excessive shadow lifting",
+    "Avoid excessive saturation, clarity, texture, and dehaze",
+    "Crop only for a clear composition or leveling benefit"
+  ],
+  "slider_ranges": {
+    "Exposure2012": {"min": -0.8, "max": 0.8, "preferred": 0.0},
+    "Contrast2012": {"min": -12.0, "max": 20.0, "preferred": 6.0},
+    "Highlights2012": {"min": -55.0, "max": 8.0, "preferred": -22.0},
+    "Shadows2012": {"min": -15.0, "max": 38.0, "preferred": 14.0},
+    "Whites2012": {"min": -15.0, "max": 18.0, "preferred": 4.0},
+    "Blacks2012": {"min": -18.0, "max": 12.0, "preferred": -5.0},
+    "Texture": {"min": -8.0, "max": 16.0, "preferred": 4.0},
+    "Clarity2012": {"min": -8.0, "max": 14.0, "preferred": 3.0},
+    "Dehaze": {"min": -4.0, "max": 10.0, "preferred": 2.0},
+    "Vibrance": {"min": -8.0, "max": 20.0, "preferred": 6.0},
+    "Saturation": {"min": -10.0, "max": 8.0, "preferred": 0.0},
+    "Temperature": {"min": 3200.0, "max": 7800.0, "preferred": 5500.0},
+    "Tint": {"min": -18.0, "max": 18.0, "preferred": 0.0},
+    "CropAngle": {"min": -3.0, "max": 3.0, "preferred": 0.0}
+  },
+  "crop_policy": {
+    "allow_crop": true,
+    "allow_leveling": true,
+    "max_edge_crop": 0.08,
+    "minimum_retained_area": 0.88,
+    "maximum_absolute_angle": 3.0,
+    "minimum_confidence": 0.7,
+    "require_confidence": false,
+    "preserve_aspect_ratio": false
+  },
+  "denoise_policy": {
+    "allow_denoise": true,
+    "minimum_iso": 800,
+    "minimum_amount": 0.0,
+    "maximum_amount": 30.0,
+    "minimum_confidence": 0.65,
+    "preserve_detail": true
+  }
+}

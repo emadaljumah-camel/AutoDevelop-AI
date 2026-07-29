@@ -15,11 +15,16 @@ local PreviewExporter = ModuleLoader.load("lib/PreviewExporter.lua")
 local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
 local RequestBuilder = ModuleLoader.load("lib/RequestBuilder.lua")
 local ResultStore = ModuleLoader.load("lib/ResultStore.lua")
+local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
+local StyleRunCoordinator =
+    ModuleLoader.load("lib/StyleRunCoordinator.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 local Validation = ModuleLoader.load("lib/Validation.lua")
 local AnalysisSummaryDialog =
     ModuleLoader.load("dialogs/AnalysisSummaryDialog.lua")
 local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
+local StyleSelectionDialog =
+    ModuleLoader.load("dialogs/StyleSelectionDialog.lua")
 
 local AnalyzeCommand = {}
 
@@ -261,6 +266,8 @@ local function runBatch(
     summary.backendBaseUrl = preferences.backendBaseUrl
     summary.requestTimeoutSeconds = preferences.requestTimeoutSeconds
     summary.profileId = preferences.styleProfileId
+    summary.styleDisplayName =
+        StyleProfiles.getDisplayName(preferences.styleProfileId)
 
     for index, photo in ipairs(photos) do
         if progressScope:isCanceled() then
@@ -326,23 +333,45 @@ local function runCommand(context)
         return
     end
 
-    local preferences, _, invalidKey = Preferences.validatedSnapshot()
-    if not preferences then
-        local current = Preferences.valuesForUi()
+    local current = Preferences.valuesForUi()
+    local dialogResult =
+        StyleSelectionDialog.show(current.styleProfileId)
+    local styleRun = StyleRunCoordinator.begin({
+        dialogResult = dialogResult,
+        validateProfile = StyleProfiles.isValidId,
+        persistDefault = function(profileId)
+            return Preferences.set("styleProfileId", profileId)
+        end,
+        snapshotFactory = function(profileId)
+            return Preferences.validatedSnapshot({
+                styleProfileId = profileId,
+            })
+        end,
+    })
+    if styleRun.cancelled then
+        return
+    end
+    if styleRun.status ~= "ready" then
         ErrorDialog.show(
-            invalidKey == "styleProfileId"
+            styleRun.status == "invalid_profile"
                 and ErrorClassifier.codes.invalidProfile
                 or ErrorClassifier.codes.validationError,
             {
                 backendBaseUrl = current.backendBaseUrl,
                 requestTimeoutSeconds = current.requestTimeoutSeconds,
-                profileId = current.styleProfileId,
+                profileId = styleRun.profileId or current.styleProfileId,
             }
         )
         return
     end
+    local preferences = StyleRunCoordinator.getSnapshot(styleRun)
 
-    Logger.info("Analyze Selected Photos start selected=" .. tostring(#photos))
+    Logger.info(
+        "Analyze Selected Photos start selected="
+            .. tostring(#photos)
+            .. " profile="
+            .. styleRun.profileId
+    )
     local batchDirectory, directoryError =
         PreviewExporter.createBatchDirectory()
     if not batchDirectory then
@@ -383,13 +412,26 @@ local function runCommand(context)
     progressScope:setCancelable(true)
 
     local tracker = ProgressTracker.new(#photos, "Analyzing")
-    local summary = runBatch(
+    local preparation = StyleRunCoordinator.prepare(
+        styleRun,
         photos,
-        progressScope,
-        batchDirectory,
-        preferences,
-        tracker
+        function(runPhotos, runPreferences)
+            return runBatch(
+                runPhotos,
+                progressScope,
+                batchDirectory,
+                runPreferences,
+                tracker
+            )
+        end
     )
+    if preparation.status ~= "completed" then
+        releaseBatch()
+        releaseProgress()
+        ErrorDialog.show(ErrorClassifier.codes.internalError)
+        return
+    end
+    local summary = preparation.prepared
     releaseBatch()
     releaseProgress()
 

@@ -12,6 +12,7 @@ from autodevelop.profiles import (
 
 PROFILE_IDS = [
     "architecture",
+    "documentary",
     "landscape_impact",
     "natural_travel",
     "night",
@@ -67,12 +68,62 @@ def _write_profile(
     return path
 
 
-def test_all_six_packaged_profiles_load_successfully() -> None:
+def test_all_seven_packaged_profiles_load_successfully() -> None:
     profiles = StyleProfileLoader().list_profiles()
 
     assert [profile.id for profile in profiles] == PROFILE_IDS
     assert all(profile.version == "1.0" for profile in profiles)
     assert all(profile.slider_ranges for profile in profiles)
+
+
+def test_documentary_profile_has_conservative_supported_constraints() -> None:
+    profile = StyleProfileLoader().get_profile("documentary")
+
+    assert profile.id == "documentary"
+    assert profile.display_name == "Documentary"
+    assert profile.slider_ranges["Dehaze"].max <= 10.0
+    assert profile.slider_ranges["Saturation"].max <= 8.0
+    assert profile.slider_ranges["Texture"].max <= 16.0
+    assert profile.crop_policy.max_edge_crop <= 0.08
+    assert profile.crop_policy.minimum_retained_area >= 0.88
+    assert profile.denoise_policy.maximum_amount <= 30.0
+
+
+def test_documentary_limits_stay_within_existing_bundled_safety_envelope() -> None:
+    loader = StyleProfileLoader()
+    documentary = loader.get_profile("documentary")
+    established = [
+        loader.get_profile(profile_id)
+        for profile_id in PROFILE_IDS
+        if profile_id != "documentary"
+    ]
+
+    for name, documentary_range in documentary.slider_ranges.items():
+        established_ranges = [
+            profile.slider_ranges[name]
+            for profile in established
+            if name in profile.slider_ranges
+        ]
+        assert established_ranges
+        assert documentary_range.min >= min(
+            slider_range.min for slider_range in established_ranges
+        )
+        assert documentary_range.max <= max(
+            slider_range.max for slider_range in established_ranges
+        )
+
+    assert documentary.crop_policy.max_edge_crop <= max(
+        profile.crop_policy.max_edge_crop for profile in established
+    )
+    assert documentary.crop_policy.minimum_retained_area >= min(
+        profile.crop_policy.minimum_retained_area for profile in established
+    )
+    assert documentary.crop_policy.maximum_absolute_angle <= max(
+        profile.crop_policy.maximum_absolute_angle for profile in established
+    )
+    assert documentary.denoise_policy.maximum_amount <= max(
+        profile.denoise_policy.maximum_amount for profile in established
+    )
 
 
 def test_list_profiles_has_deterministic_alphabetical_order() -> None:

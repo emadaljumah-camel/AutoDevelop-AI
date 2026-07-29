@@ -261,6 +261,16 @@ def test_valid_nondefault_profile_is_accepted(client: TestClient) -> None:
     assert response.json()["edit_plan"]["style_profile"] == "architecture"
 
 
+def test_documentary_profile_is_accepted(client: TestClient) -> None:
+    body = _request_body()
+    body["options"]["style_profile"] = "documentary"
+
+    response = client.post("/autodevelop/v1/analyze", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["edit_plan"]["style_profile"] == "documentary"
+
+
 def test_unknown_profile_returns_versioned_error_without_fallback(
     client: TestClient,
 ) -> None:

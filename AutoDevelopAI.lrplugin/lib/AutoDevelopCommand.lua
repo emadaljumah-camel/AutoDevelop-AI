@@ -16,10 +16,15 @@ local Preferences = ModuleLoader.load("lib/Preferences.lua")
 local PreparationService = ModuleLoader.load("lib/PreparationService.lua")
 local PreviewExporter = ModuleLoader.load("lib/PreviewExporter.lua")
 local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
+local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
+local StyleRunCoordinator =
+    ModuleLoader.load("lib/StyleRunCoordinator.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 local AutoDevelopConfirmationDialog =
     ModuleLoader.load("dialogs/AutoDevelopConfirmationDialog.lua")
 local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
+local StyleSelectionDialog =
+    ModuleLoader.load("dialogs/StyleSelectionDialog.lua")
 
 local AutoDevelopCommand = {}
 
@@ -51,6 +56,7 @@ end
 local function newSummary(selected, profileId)
     local summary = BatchSummary.new(selected, "develop")
     summary.profileId = profileId
+    summary.styleDisplayName = StyleProfiles.getDisplayName(profileId)
     summary.models = {}
     summary.examples = {}
     return summary
@@ -206,21 +212,38 @@ local function runCommand(context)
         return
     end
 
-    local preferences, _, invalidKey = Preferences.validatedSnapshot()
-    if not preferences then
-        local current = Preferences.valuesForUi()
+    local current = Preferences.valuesForUi()
+    local dialogResult =
+        StyleSelectionDialog.show(current.styleProfileId)
+    local styleRun = StyleRunCoordinator.begin({
+        dialogResult = dialogResult,
+        validateProfile = StyleProfiles.isValidId,
+        persistDefault = function(profileId)
+            return Preferences.set("styleProfileId", profileId)
+        end,
+        snapshotFactory = function(profileId)
+            return Preferences.validatedSnapshot({
+                styleProfileId = profileId,
+            })
+        end,
+    })
+    if styleRun.cancelled then
+        return
+    end
+    if styleRun.status ~= "ready" then
         ErrorDialog.show(
-            invalidKey == "styleProfileId"
+            styleRun.status == "invalid_profile"
                 and ErrorClassifier.codes.invalidProfile
                 or ErrorClassifier.codes.validationError,
             {
                 backendBaseUrl = current.backendBaseUrl,
                 requestTimeoutSeconds = current.requestTimeoutSeconds,
-                profileId = current.styleProfileId,
+                profileId = styleRun.profileId or current.styleProfileId,
             }
         )
         return
     end
+    local preferences = StyleRunCoordinator.getSnapshot(styleRun)
     local summary = newSummary(#photos, preferences.styleProfileId)
     summary.backendBaseUrl = preferences.backendBaseUrl
     summary.requestTimeoutSeconds = preferences.requestTimeoutSeconds
@@ -283,15 +306,30 @@ local function runCommand(context)
     local preparationTracker =
         ProgressTracker.new(#photos, "Preparing recommendations")
 
-    prepareBatch(
+    local preparation = StyleRunCoordinator.prepare(
+        styleRun,
         photos,
-        preparationProgress,
-        batchDirectory,
-        summary,
-        operations,
-        preferences,
-        preparationTracker
+        function(runPhotos, runPreferences)
+            prepareBatch(
+                runPhotos,
+                preparationProgress,
+                batchDirectory,
+                summary,
+                operations,
+                runPreferences,
+                preparationTracker
+            )
+            return summary
+        end
     )
+    if preparation.status ~= "completed" then
+        releaseBatch()
+        releasePreparationProgress()
+        ErrorDialog.show(ErrorClassifier.codes.internalError)
+        releaseOperations()
+        return
+    end
+    summary = preparation.prepared
     local preparationDecision = ApplicationGate.evaluate({
         confirmationMode = preferences.confirmationMode,
         preparationCancelled = summary.cancelled,

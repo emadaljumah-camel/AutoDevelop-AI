@@ -282,6 +282,17 @@ def test_valid_nondefault_profile_is_authoritative(
     assert payload["develop_settings"]["Contrast2012"] == 12.0
 
 
+def test_documentary_profile_is_authoritative(client: TestClient) -> None:
+    body = _request_body()
+    body["options"]["style_profile"] = "documentary"
+
+    response = client.post("/autodevelop/v1/develop", json=body)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["edit_plan"]["style_profile"] == "documentary"
+
+
 def test_unknown_profile_returns_error_without_model_call(
     app: FastAPI,
 ) -> None:

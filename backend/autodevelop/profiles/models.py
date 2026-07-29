@@ -125,6 +125,8 @@ class StyleProfile(_ProfileModel):
         pattern=r"^[a-z][a-z0-9_]*$",
         description="Stable lowercase profile identifier.",
     )
+    # These display fields remain required in JSON for schema and backward
+    # compatibility. For registered built-ins, registry metadata is authoritative.
     display_name: NonBlankString = Field(
         description="Human-readable profile name.",
     )

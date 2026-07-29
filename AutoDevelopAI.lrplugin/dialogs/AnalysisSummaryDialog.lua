@@ -14,6 +14,9 @@ local function summaryText(summary)
         "Failed: " .. tostring(summary.failed),
         "Skipped: " .. tostring(summary.skipped),
         "Not processed: " .. tostring(summary.notProcessed),
+        "Style: "
+            .. Utils.safeMessage(summary.styleDisplayName, "unavailable"),
+        "Profile ID: " .. Utils.safeMessage(summary.profileId, "unavailable"),
         "Cancelled: " .. (summary.cancelled and "yes" or "no"),
         "Elapsed: "
             .. ProgressTracker.formatDuration(summary.elapsedSeconds or 0),

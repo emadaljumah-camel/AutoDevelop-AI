@@ -50,14 +50,22 @@ def test_plugin_manager_populates_all_required_properties() -> None:
 
 def test_popup_choices_use_ordered_getters_and_exact_labels() -> None:
     preferences = _read("lib/Preferences.lua")
+    styles = _read("lib/StyleProfiles.lua")
 
-    expected_items = (
+    expected_styles = (
         ("Natural Travel", "natural_travel"),
-        ("Stock Neutral", "stock_neutral"),
         ("Landscape Impact", "landscape_impact"),
         ("Architecture", "architecture"),
+        ("Stock Neutral", "stock_neutral"),
         ("Portrait", "portrait"),
         ("Night", "night"),
+        ("Documentary", "documentary"),
+    )
+    for title, value in expected_styles:
+        assert f'id = "{value}"' in styles
+        assert f'displayName = "{title}"' in styles
+
+    expected_preference_items = (
         ("Always", "always"),
         ("Never", "never"),
         ("Error", "error"),
@@ -65,9 +73,11 @@ def test_popup_choices_use_ordered_getters_and_exact_labels() -> None:
         ("Info", "info"),
         ("Debug", "debug"),
     )
-    for title, value in expected_items:
+    for title, value in expected_preference_items:
         item = f'{{ title = "{title}", value = "{value}" }}'
         assert item in preferences
+
+    assert "StyleProfiles.getChoices()" in preferences
 
     for getter in (
         "getStyleProfileChoices",

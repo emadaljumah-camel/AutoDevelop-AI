@@ -11,6 +11,9 @@ local logged = {
     debug = {},
 }
 local lastDialog = nil
+local lastPropertyTable = nil
+local modalDialogResult = "ok"
+local modalDialogMutator = nil
 
 _G._PLUGIN = {
     path = "AutoDevelopAI.lrplugin",
@@ -67,6 +70,58 @@ _G.import = function(name)
                     style = style,
                 }
             end,
+            presentModalDialog = function(options)
+                if modalDialogMutator then
+                    modalDialogMutator(options, lastPropertyTable)
+                end
+                return modalDialogResult
+            end,
+        }
+    end
+    if name == "LrBinding" then
+        return {
+            makePropertyTable = function()
+                local properties = {
+                    _observers = {},
+                }
+                function properties:addObserver(key, observer)
+                    self._observers[key] = observer
+                end
+                lastPropertyTable = properties
+                return properties
+            end,
+        }
+    end
+    if name == "LrFunctionContext" then
+        return {
+            callWithContext = function(_, fn)
+                return fn({})
+            end,
+        }
+    end
+    if name == "LrView" then
+        local factory = {}
+        function factory:control_spacing()
+            return 1
+        end
+        for _, method in ipairs({
+            "column",
+            "row",
+            "static_text",
+            "popup_menu",
+            "checkbox",
+        }) do
+            factory[method] = function(_, specification)
+                return specification
+            end
+        end
+        return {
+            bind = function(key)
+                return { key = key }
+            end,
+            osFactory = function()
+                return factory
+            end,
         }
     end
     if name == "LrTasks" then
@@ -105,6 +160,11 @@ local Utils = ModuleLoader.load("lib/Utils.lua")
 local Config = ModuleLoader.load("lib/Config.lua")
 local Json = ModuleLoader.load("lib/Json.lua")
 local Preferences = ModuleLoader.load("lib/Preferences.lua")
+local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
+local StyleRunCoordinator =
+    ModuleLoader.load("lib/StyleRunCoordinator.lua")
+local StyleSelectionDialog =
+    ModuleLoader.load("dialogs/StyleSelectionDialog.lua")
 local PluginManagerController =
     ModuleLoader.load("lib/PluginManagerController.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
@@ -534,6 +594,7 @@ local request = assert(RequestBuilder.build(
     mappedPhoto,
     "D:\\Temp\\AutoDevelopAI\\preview.jpg",
     {
+        styleProfileId = "natural_travel",
         uuidFactory = function()
             return "12345678-1234-4abc-8abc-1234567890ab"
         end,
@@ -543,9 +604,20 @@ assertEqual(request.schema_version, "1.0")
 assertEqual(request.options.style_profile, "natural_travel")
 assertEqual(request.current_settings.Exposure2012, 0)
 assertEqual(request.preview_path, "D:\\Temp\\AutoDevelopAI\\preview.jpg")
-assertEqual(Config.DEFAULT_STYLE_PROFILE, "natural_travel")
+assertEqual(StyleProfiles.getDefaultId(), "natural_travel")
+assertTrue(
+    RequestBuilder.build(mappedPhoto, "D:\\Temp\\missing-style.jpg", {
+        uuidFactory = function()
+            return "12345678-1234-4abc-8abc-1234567890ab"
+        end,
+    }) == nil,
+    "request building must require an explicit style"
+)
 fakePreferences.styleProfileId = nil
-assertEqual(Preferences.getStyleProfileId(), Config.DEFAULT_STYLE_PROFILE)
+assertEqual(
+    Preferences.getStyleProfileId(),
+    StyleProfiles.getDefaultId()
+)
 fakePreferences.styleProfileId = "architecture"
 assertEqual(Preferences.getStyleProfileId(), "architecture")
 
@@ -656,19 +728,266 @@ assertEqual(defaults.confirmationMode, "always")
 assertEqual(defaults.loggingLevel, "info")
 
 local profileChoices = Preferences.getStyleProfileChoices()
-assertEqual(#profileChoices, 6)
+assertEqual(#profileChoices, 7)
 assertEqual(profileChoices[1].title, "Natural Travel")
 assertEqual(profileChoices[1].value, "natural_travel")
-assertEqual(profileChoices[2].value, "stock_neutral")
-assertEqual(profileChoices[3].value, "landscape_impact")
-assertEqual(profileChoices[4].value, "architecture")
+assertEqual(profileChoices[2].value, "landscape_impact")
+assertEqual(profileChoices[3].value, "architecture")
+assertEqual(profileChoices[4].value, "stock_neutral")
 assertEqual(profileChoices[5].value, "portrait")
 assertEqual(profileChoices[6].value, "night")
+assertEqual(profileChoices[7].value, "documentary")
 profileChoices[1].title = "Mutated"
 assertEqual(
     Preferences.getStyleProfileChoices()[1].title,
     "Natural Travel",
     "choice getters must return defensive copies"
+)
+
+assertEqual(StyleProfiles.getDefaultId(), "natural_travel")
+assertEqual(StyleProfiles.getDisplayName("documentary"), "Documentary")
+assertTrue(StyleProfiles.getDescription("documentary") ~= nil)
+assertTrue(StyleProfiles.isValidId("architecture"))
+assertTrue(not StyleProfiles.isValidId("unknown"))
+assertTrue(StyleProfiles.getById("unknown") == nil)
+local initialStyle, invalidStored =
+    StyleProfiles.resolveInitialSelection("portrait")
+assertEqual(initialStyle, "portrait")
+assertEqual(invalidStored, false)
+initialStyle, invalidStored =
+    StyleProfiles.resolveInitialSelection("removed_profile")
+assertEqual(initialStyle, "natural_travel")
+assertEqual(invalidStored, true)
+local copiedStyle = StyleProfiles.getById("natural_travel")
+copiedStyle.displayName = "Mutated"
+assertEqual(
+    StyleProfiles.getDisplayName("natural_travel"),
+    "Natural Travel",
+    "style metadata getters must return defensive copies"
+)
+
+fakePreferences.styleProfileId = "natural_travel"
+modalDialogResult = "cancel"
+modalDialogMutator = nil
+local cancelledDialogResult =
+    StyleSelectionDialog.show("natural_travel")
+assertEqual(cancelledDialogResult.confirmed, false)
+assertEqual(fakePreferences.styleProfileId, "natural_travel")
+
+modalDialogResult = "ok"
+modalDialogMutator = function(_, properties)
+    properties.selectedProfileId = "documentary"
+    properties._observers.selectedProfileId()
+    properties.rememberAsDefault = false
+end
+local documentaryDialogResult =
+    StyleSelectionDialog.show("natural_travel")
+assertEqual(documentaryDialogResult.confirmed, true)
+assertEqual(documentaryDialogResult.profileId, "documentary")
+assertEqual(documentaryDialogResult.rememberAsDefault, false)
+assertEqual(
+    lastPropertyTable.selectedDescription,
+    StyleProfiles.getDescription("documentary")
+)
+assertEqual(
+    fakePreferences.styleProfileId,
+    "natural_travel",
+    "per-run selection must not persist when remember is off"
+)
+
+modalDialogMutator = function(_, properties)
+    properties.selectedProfileId = "architecture"
+    properties._observers.selectedProfileId()
+    properties.rememberAsDefault = true
+end
+local rememberedDialogResult =
+    StyleSelectionDialog.show("natural_travel")
+assertEqual(rememberedDialogResult.profileId, "architecture")
+assertEqual(rememberedDialogResult.rememberAsDefault, true)
+assertEqual(
+    fakePreferences.styleProfileId,
+    "natural_travel",
+    "the UI-only dialog must not persist preferences"
+)
+
+modalDialogMutator = function(_, properties)
+    properties.selectedProfileId = "documentary"
+    properties._observers.selectedProfileId()
+end
+modalDialogResult = "cancel"
+StyleSelectionDialog.show("removed_profile")
+assertEqual(lastPropertyTable.selectedProfileId, "documentary")
+assertTrue(lastPropertyTable.invalidStoredProfileMessage ~= "")
+assertTrue(
+    lastPropertyTable.invalidStoredProfileMessage:find(
+        "Choose a style for this run.",
+        1,
+        true
+    ) ~= nil,
+    "invalid-profile notice must remain accurate after selection changes"
+)
+assertTrue(
+    lastPropertyTable.invalidStoredProfileMessage:find(
+        "Natural Travel is selected",
+        1,
+        true
+    ) == nil,
+    "invalid-profile notice must not claim a stale selection"
+)
+assertEqual(
+    fakePreferences.styleProfileId,
+    "natural_travel",
+    "invalid stored profile fallback must not persist silently"
+)
+modalDialogMutator = nil
+modalDialogResult = "ok"
+
+local function beginStyleRun(dialogResult, persistDefault, snapshotFactory)
+    return StyleRunCoordinator.begin({
+        dialogResult = dialogResult,
+        validateProfile = StyleProfiles.isValidId,
+        persistDefault = persistDefault or function()
+            return true
+        end,
+        snapshotFactory = snapshotFactory or function(profileId)
+            return {
+                styleProfileId = profileId,
+                backendBaseUrl = "http://127.0.0.1:8005",
+            }
+        end,
+    })
+end
+
+local analyzePreparationCalls = 0
+local analyzeCancelled = beginStyleRun({
+    confirmed = false,
+})
+local analyzeCancelPreparation = StyleRunCoordinator.prepare(
+    analyzeCancelled,
+    { "analyze-photo" },
+    function()
+        analyzePreparationCalls = analyzePreparationCalls + 1
+        return true
+    end
+)
+assertEqual(analyzeCancelled.status, "cancelled")
+assertEqual(analyzeCancelPreparation.status, "cancelled")
+assertEqual(analyzePreparationCalls, 0)
+
+local developPreparationCalls = 0
+local developCancelled = beginStyleRun({
+    confirmed = false,
+})
+StyleRunCoordinator.prepare(
+    developCancelled,
+    { "develop-photo" },
+    function()
+        developPreparationCalls = developPreparationCalls + 1
+        return true
+    end
+)
+assertEqual(developPreparationCalls, 0)
+
+local persistedProfiles = {}
+local documentaryRun = beginStyleRun(
+    {
+        confirmed = true,
+        profileId = "documentary",
+        rememberAsDefault = false,
+    },
+    function(profileId)
+        persistedProfiles[#persistedProfiles + 1] = profileId
+        return true
+    end,
+    function()
+        return {
+            styleProfileId = "night",
+            backendBaseUrl = "http://127.0.0.1:8005",
+        }
+    end
+)
+assertEqual(documentaryRun.status, "ready")
+assertEqual(#persistedProfiles, 0)
+local receivedProfiles = {}
+local photos = { "one", "two", "three" }
+local documentaryPreparation = StyleRunCoordinator.prepare(
+    documentaryRun,
+    photos,
+    function(runPhotos, snapshot)
+        for index = 1, #runPhotos do
+            receivedProfiles[index] = snapshot.styleProfileId
+        end
+        snapshot.styleProfileId = "mutated"
+        return #runPhotos
+    end
+)
+assertEqual(documentaryPreparation.status, "completed")
+assertEqual(documentaryPreparation.prepared, 3)
+for index = 1, #photos do
+    assertEqual(receivedProfiles[index], "documentary")
+end
+assertEqual(
+    StyleRunCoordinator.getSnapshot(documentaryRun).styleProfileId,
+    "documentary",
+    "preparation callback must not mutate the run snapshot"
+)
+
+local invalidPreparationCalls = 0
+local invalidRun = beginStyleRun({
+    confirmed = true,
+    profileId = "unknown",
+})
+StyleRunCoordinator.prepare(
+    invalidRun,
+    { "photo" },
+    function()
+        invalidPreparationCalls = invalidPreparationCalls + 1
+        return true
+    end
+)
+assertEqual(invalidRun.status, "invalid_profile")
+assertEqual(invalidPreparationCalls, 0)
+
+local rememberCalls = 0
+local rememberedRun = beginStyleRun(
+    {
+        confirmed = true,
+        profileId = "architecture",
+        rememberAsDefault = true,
+    },
+    function(profileId)
+        rememberCalls = rememberCalls + 1
+        assertEqual(profileId, "architecture")
+        return true
+    end
+)
+assertEqual(rememberedRun.status, "ready")
+assertEqual(rememberCalls, 1)
+
+local emptyPreparationCalls = 0
+local emptyResult = StyleRunCoordinator.prepare(
+    documentaryRun,
+    {},
+    function()
+        emptyPreparationCalls = emptyPreparationCalls + 1
+        return true
+    end
+)
+assertEqual(emptyResult.status, "empty")
+assertEqual(emptyResult.photoCount, 0)
+assertEqual(emptyPreparationCalls, 0)
+
+local failedPreparation = StyleRunCoordinator.prepare(
+    documentaryRun,
+    { "photo" },
+    function()
+        return nil, "private preparation detail"
+    end
+)
+assertEqual(failedPreparation.status, "preparation_failed")
+assertTrue(
+    failedPreparation.failure == nil,
+    "raw preparation failure must not be retained"
 )
 
 local confirmationChoices = Preferences.getConfirmationChoices()

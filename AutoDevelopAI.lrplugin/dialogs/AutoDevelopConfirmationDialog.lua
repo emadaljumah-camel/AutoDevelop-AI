@@ -33,7 +33,9 @@ local function preparationLines(summary)
         "Failed: " .. tostring(summary.failed),
         "Skipped: " .. tostring(summary.skipped),
         "Not processed: " .. tostring(summary.notProcessed),
-        "Profile: " .. Utils.safeMessage(summary.profileId, "unavailable"),
+        "Style: "
+            .. Utils.safeMessage(summary.styleDisplayName, "unavailable"),
+        "Profile ID: " .. Utils.safeMessage(summary.profileId, "unavailable"),
         "Confirmation: "
             .. Utils.safeMessage(summary.confirmationMode, "not applicable"),
         "Model: " .. modelSummary(summary),

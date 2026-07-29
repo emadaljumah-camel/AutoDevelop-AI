@@ -1,6 +1,6 @@
 local Config = ModuleLoader.load("lib/Config.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
-local Preferences = ModuleLoader.load("lib/Preferences.lua")
+local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local RequestBuilder = {}
@@ -8,12 +8,7 @@ local RequestBuilder = {}
 local function buildBase(photo, previewPath, options)
     options = options or {}
     local styleProfile = options.styleProfileId
-    if styleProfile == nil then
-        styleProfile = Preferences.getStyleProfileId()
-    else
-        styleProfile = Preferences.validate("styleProfileId", styleProfile)
-    end
-    if not styleProfile then
+    if not StyleProfiles.isValidId(styleProfile) then
         return nil, "The selected style profile is invalid."
     end
     local uuidFactory = options.uuidFactory or Utils.newUuid

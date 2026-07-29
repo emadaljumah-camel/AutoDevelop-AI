@@ -154,8 +154,6 @@ def test_backend_configuration_uses_autodevelop_port_and_route() -> None:
     client = _read("lib/ApiClient.lua")
 
     assert "http://127.0.0.1:8005" in config
-    assert 'Config.DEFAULT_STYLE_PROFILE = "natural_travel"' in config
-    assert "styleProfileId = Config.DEFAULT_STYLE_PROFILE" in config
     assert 'Config.API_PREFIX = "/autodevelop/v1"' in config
     assert 'analyze = Config.API_PREFIX .. "/analyze"' in config
     assert 'develop = Config.API_PREFIX .. "/develop"' in config
@@ -294,12 +292,88 @@ def test_default_style_profile_has_one_plugin_source_of_truth() -> None:
     config = _read("lib/Config.lua")
     builder = _read("lib/RequestBuilder.lua")
     preferences = _read("lib/Preferences.lua")
+    styles = _read("lib/StyleProfiles.lua")
 
-    assert 'Config.DEFAULT_STYLE_PROFILE = "natural_travel"' in config
-    assert "Preferences.getStyleProfileId()" in builder
-    assert "styleProfileId = Config.DEFAULT_STYLE_PROFILE" in config
+    assert '"natural_travel"' not in config
+    assert '"natural_travel"' not in preferences
     assert '"natural_travel"' not in builder
-    assert '"natural_travel"' in preferences
+    assert "Preferences.getStyleProfileId()" not in builder
+    assert "StyleProfiles.isValidId(styleProfile)" in builder
+    assert "StyleProfiles.getChoices()" in preferences
+    assert "StyleProfiles.getDefaultId()" in preferences
+    assert 'local defaultId = "natural_travel"' in styles
+
+
+def test_style_dialog_precedes_all_processing_in_both_commands() -> None:
+    for command_name in ("AnalyzeCommand.lua", "AutoDevelopCommand.lua"):
+        source = _read(f"lib/{command_name}")
+        command = source[source.index("local function runCommand") :]
+        dialog = command.index("StyleSelectionDialog.show(")
+
+        assert dialog < command.index("PreviewExporter.createBatchDirectory()")
+        assert dialog < command.index("LrProgressScope({")
+
+
+def test_style_dialog_has_no_processing_or_catalog_side_effects() -> None:
+    dialog = _read("dialogs/StyleSelectionDialog.lua")
+
+    assert 'import("LrBinding")' in dialog
+    assert "LrBinding.makePropertyTable(context)" in dialog
+    assert "LrDialogs.presentModalDialog({" in dialog
+    assert "LrView.bind" in dialog
+    assert "ApiClient" not in dialog
+    assert "BackendClient" not in dialog
+    assert "PreviewExporter" not in dialog
+    assert "withWriteAccessDo" not in dialog
+    assert "applyDevelopSettings" not in dialog
+    assert "getRawMetadata" not in dialog
+    assert "getFormattedMetadata" not in dialog
+    assert "LrTasks.sleep" not in dialog
+    assert "Preferences" not in dialog
+
+
+def test_commands_use_pure_style_run_coordinator() -> None:
+    coordinator = _read("lib/StyleRunCoordinator.lua")
+
+    for command_name in ("AnalyzeCommand.lua", "AutoDevelopCommand.lua"):
+        command = _read(f"lib/{command_name}")
+        assert 'ModuleLoader.load("lib/StyleRunCoordinator.lua")' in command
+        assert "StyleRunCoordinator.begin({" in command
+        assert "StyleRunCoordinator.prepare(" in command
+
+    for forbidden in (
+        "LrDialogs",
+        "LrProgressScope",
+        "PreviewExporter",
+        "ApiClient",
+        "BackendClient",
+        "withWriteAccessDo",
+        "applyDevelopSettings",
+        "LrTasks.sleep",
+        "pcall(",
+        "xpcall(",
+    ):
+        assert forbidden not in coordinator
+
+
+def test_commands_pass_one_explicit_run_profile_to_request_builders() -> None:
+    analyze = _read("lib/AnalyzeCommand.lua")
+    develop = _read("lib/PreparationService.lua")
+    builder = _read("lib/RequestBuilder.lua")
+
+    assert "styleProfileId = preferences.styleProfileId" in analyze
+    assert "styleProfileId = preferences.styleProfileId" in develop
+    assert "Preferences" not in builder
+    assert "options.styleProfileId" in builder
+
+
+def test_style_summaries_include_display_name_and_stable_id() -> None:
+    analyze_dialog = _read("dialogs/AnalysisSummaryDialog.lua")
+    develop_dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
+
+    for dialog in (analyze_dialog, develop_dialog):
+        assert '"Style: "' in dialog
+        assert '"Profile ID: "' in dialog
 
 
 def test_only_apply_service_uses_catalog_develop_writes() -> None:

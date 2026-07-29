@@ -1,18 +1,19 @@
 local LrPrefs = import("LrPrefs")
 
 local Config = ModuleLoader.load("lib/Config.lua")
+local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local Preferences = {}
 
-local profileChoices = {
-    { title = "Natural Travel", value = "natural_travel" },
-    { title = "Stock Neutral", value = "stock_neutral" },
-    { title = "Landscape Impact", value = "landscape_impact" },
-    { title = "Architecture", value = "architecture" },
-    { title = "Portrait", value = "portrait" },
-    { title = "Night", value = "night" },
-}
+local function defaultValues()
+    local defaults = {}
+    for key, value in pairs(Config.defaults) do
+        defaults[key] = value
+    end
+    defaults.styleProfileId = StyleProfiles.getDefaultId()
+    return defaults
+end
 
 local confirmationChoices = {
     { title = "Always", value = "always" },
@@ -25,11 +26,6 @@ local loggingChoices = {
     { title = "Info", value = "info" },
     { title = "Debug", value = "debug" },
 }
-
-local profileIds = {}
-for _, choice in ipairs(profileChoices) do
-    profileIds[choice.value] = true
-end
 
 local confirmationModes = {
     always = true,
@@ -77,8 +73,8 @@ end
 
 local function validateStyleProfileId(value)
     local normalized = Utils.trim(value)
-    if not normalized or not profileIds[normalized] then
-        return nil, "Select one of the six built-in style profiles."
+    if not normalized or not StyleProfiles.isValidId(normalized) then
+        return nil, "Select one of the seven built-in style profiles."
     end
     return normalized
 end
@@ -135,7 +131,7 @@ local validators = {
 
 function Preferences.initializeDefaults()
     local preferences = store()
-    for key, value in pairs(Config.defaults) do
+    for key, value in pairs(defaultValues()) do
         if preferences[key] == nil then
             preferences[key] = value
         end
@@ -160,7 +156,7 @@ function Preferences.set(key, value)
 end
 
 function Preferences.get(key)
-    local default = Config.defaults[key]
+    local default = defaultValues()[key]
     if default == nil then
         return nil, "Unknown preference: " .. tostring(key)
     end
@@ -215,7 +211,7 @@ local function copyChoices(choices)
 end
 
 function Preferences.getStyleProfileChoices()
-    return copyChoices(profileChoices)
+    return StyleProfiles.getChoices()
 end
 
 function Preferences.getConfirmationChoices()
@@ -233,7 +229,7 @@ end
 function Preferences.valuesForUi()
     local preferences = store()
     local values = {}
-    for key, default in pairs(Config.defaults) do
+    for key, default in pairs(defaultValues()) do
         local value = preferences[key]
         if value == nil then
             value = default
@@ -243,10 +239,19 @@ function Preferences.valuesForUi()
     return values
 end
 
-function Preferences.validatedSnapshot()
+function Preferences.validatedSnapshot(overrides)
+    overrides = overrides or {}
     local snapshot = {}
-    for key in pairs(Config.defaults) do
-        local value, reason = Preferences.get(key)
+    local defaults = defaultValues()
+    for key in pairs(defaults) do
+        local rawValue = overrides[key]
+        if rawValue == nil then
+            rawValue = store()[key]
+        end
+        if rawValue == nil then
+            rawValue = defaults[key]
+        end
+        local value, reason = Preferences.validate(key, rawValue)
         if value == nil then
             return nil, reason, key
         end
@@ -257,7 +262,7 @@ end
 
 function Preferences.resetDefaults()
     local preferences = store()
-    for key, value in pairs(Config.defaults) do
+    for key, value in pairs(defaultValues()) do
         preferences[key] = value
     end
     return Preferences.valuesForUi()

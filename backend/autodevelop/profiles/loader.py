@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from autodevelop.profiles.models import StyleProfile
+from autodevelop.profiles.registry import get_style
 
 _PROFILE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -108,6 +109,16 @@ class StyleProfileLoader:
         if profile.id != path.stem:
             raise ProfileValidationError(
                 f"{path}: id: expected '{path.stem}', found '{profile.id}'"
+            )
+        registered_style = get_style(profile.id)
+        if registered_style is not None:
+            # Canonicalize built-in display metadata before caching. Editing goals,
+            # cautions, slider ranges, policies, and all other behavior stay JSON-derived.
+            profile = profile.model_copy(
+                update={
+                    "display_name": registered_style.display_name,
+                    "description": registered_style.description,
+                }
             )
         return profile
 

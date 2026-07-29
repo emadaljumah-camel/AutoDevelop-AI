@@ -1,12 +1,10 @@
 local Config = {}
 
-Config.DEFAULT_STYLE_PROFILE = "natural_travel"
 Config.API_PREFIX = "/autodevelop/v1"
 Config.SCHEMA_VERSION = "1.0"
 
 Config.defaults = {
     backendBaseUrl = "http://127.0.0.1:8005",
-    styleProfileId = Config.DEFAULT_STYLE_PROFILE,
     requestTimeoutSeconds = 120,
     applyCrop = true,
     confirmationMode = "always",
