@@ -16,15 +16,16 @@ local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
 local RequestBuilder = ModuleLoader.load("lib/RequestBuilder.lua")
 local ResultStore = ModuleLoader.load("lib/ResultStore.lua")
 local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
-local StyleRunCoordinator =
-    ModuleLoader.load("lib/StyleRunCoordinator.lua")
+local RunSettingsCoordinator =
+    ModuleLoader.load("lib/RunSettingsCoordinator.lua")
+local ModelProfiles = ModuleLoader.load("lib/ModelProfiles.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 local Validation = ModuleLoader.load("lib/Validation.lua")
 local AnalysisSummaryDialog =
     ModuleLoader.load("dialogs/AnalysisSummaryDialog.lua")
 local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
-local StyleSelectionDialog =
-    ModuleLoader.load("dialogs/StyleSelectionDialog.lua")
+local RunSettingsDialog =
+    ModuleLoader.load("dialogs/RunSettingsDialog.lua")
 
 local AnalyzeCommand = {}
 
@@ -131,6 +132,7 @@ local function processPhotoBody(
 
     local request, requestError = RequestBuilder.build(photo, preview.path, {
         styleProfileId = preferences.styleProfileId,
+        modelProfileId = preferences.modelProfileId,
     })
     if not request then
         Logger.warn(
@@ -186,7 +188,7 @@ local function processPhotoBody(
         )
     end
 
-    local valid, validationError, validatedModel =
+    local valid, validationError, validatedModel, resolvedModel =
         Validation.validateAnalyzeResponse(decoded, request)
     if not valid then
         Logger.warn(
@@ -216,7 +218,10 @@ local function processPhotoBody(
             .. " duration_ms="
             .. tostring(decoded.processing_duration_ms or "unavailable")
     )
-    return "success"
+    return "success", {
+        model = validatedModel,
+        resolvedModel = resolvedModel,
+    }
 end
 
 local function processPhoto(
@@ -268,6 +273,10 @@ local function runBatch(
     summary.profileId = preferences.styleProfileId
     summary.styleDisplayName =
         StyleProfiles.getDisplayName(preferences.styleProfileId)
+    summary.modelId = preferences.modelProfileId
+    summary.modelDisplayName =
+        ModelProfiles.getDisplayName(preferences.modelProfileId)
+    summary.resolvedModels = {}
 
     for index, photo in ipairs(photos) do
         if progressScope:isCanceled() then
@@ -295,6 +304,9 @@ local function runBatch(
         end
         if outcome == "success" then
             summary.analyzed = summary.analyzed + 1
+            if type(reason) == "table" and reason.resolvedModel then
+                summary.resolvedModels[reason.resolvedModel] = true
+            end
         elseif outcome == "skipped" then
             summary.skipped = summary.skipped + 1
         elseif outcome == "cancelled" then
@@ -335,16 +347,24 @@ local function runCommand(context)
 
     local current = Preferences.valuesForUi()
     local dialogResult =
-        StyleSelectionDialog.show(current.styleProfileId)
-    local styleRun = StyleRunCoordinator.begin({
+        RunSettingsDialog.show(
+            current.styleProfileId,
+            current.modelProfileId
+        )
+    local styleRun = RunSettingsCoordinator.begin({
         dialogResult = dialogResult,
         validateProfile = StyleProfiles.isValidId,
-        persistDefault = function(profileId)
+        validateModel = ModelProfiles.isSelectableId,
+        persistProfileDefault = function(profileId)
             return Preferences.set("styleProfileId", profileId)
         end,
-        snapshotFactory = function(profileId)
+        persistModelDefault = function(modelId)
+            return Preferences.set("modelProfileId", modelId)
+        end,
+        snapshotFactory = function(profileId, modelId)
             return Preferences.validatedSnapshot({
                 styleProfileId = profileId,
+                modelProfileId = modelId,
             })
         end,
     })
@@ -364,7 +384,7 @@ local function runCommand(context)
         )
         return
     end
-    local preferences = StyleRunCoordinator.getSnapshot(styleRun)
+    local preferences = RunSettingsCoordinator.getSnapshot(styleRun)
 
     Logger.info(
         "Analyze Selected Photos start selected="
@@ -412,7 +432,7 @@ local function runCommand(context)
     progressScope:setCancelable(true)
 
     local tracker = ProgressTracker.new(#photos, "Analyzing")
-    local preparation = StyleRunCoordinator.prepare(
+    local preparation = RunSettingsCoordinator.prepare(
         styleRun,
         photos,
         function(runPhotos, runPreferences)

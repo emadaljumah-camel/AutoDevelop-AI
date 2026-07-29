@@ -3,6 +3,9 @@ local ErrorClassifier = {}
 ErrorClassifier.codes = {
     backendNotRunning = "backend_not_running",
     invalidProfile = "invalid_profile",
+    modelNotFound = "model_not_found",
+    modelUnavailable = "model_unavailable",
+    modelNotConfigured = "model_not_configured",
     modelTimeout = "model_timeout",
     networkError = "network_error",
     invalidResponse = "invalid_response",
@@ -45,6 +48,25 @@ function ErrorClassifier.fromHttp(status, backendCode)
     if backendCode == "model_request_error" then
         return ErrorClassifier.codes.validationError
     end
+    if backendCode == "model_not_found" then
+        return ErrorClassifier.codes.modelNotFound
+    end
+    if backendCode == "model_unavailable" then
+        return ErrorClassifier.codes.modelUnavailable
+    end
+    if backendCode == "model_not_configured" then
+        return ErrorClassifier.codes.modelNotConfigured
+    end
+    if backendCode == "provider_timeout" then
+        return ErrorClassifier.codes.modelTimeout
+    end
+    if backendCode == "provider_unavailable" then
+        return ErrorClassifier.codes.backendNotRunning
+    end
+    if backendCode == "invalid_model_response"
+        or backendCode == "inference_failed" then
+        return ErrorClassifier.codes.invalidResponse
+    end
     if backendCode == "model_response_error"
         or backendCode == "invalid_response_metadata" then
         return ErrorClassifier.codes.invalidResponse
@@ -61,6 +83,9 @@ end
 function ErrorClassifier.isTerminalForBatch(category)
     return category == ErrorClassifier.codes.backendNotRunning
         or category == ErrorClassifier.codes.invalidProfile
+        or category == ErrorClassifier.codes.modelNotFound
+        or category == ErrorClassifier.codes.modelUnavailable
+        or category == ErrorClassifier.codes.modelNotConfigured
 end
 
 function ErrorClassifier.isRetryable(result)

@@ -16,6 +16,7 @@ function PendingOperation.new(values)
         denoiseRecommended = values.denoiseRecommended == true,
         warnings = Utils.deepCopy(values.warnings or {}),
         model = values.model,
+        resolvedModel = values.resolvedModel,
         processingDurationMs = values.processingDurationMs,
         applicationStatus = "pending",
     }

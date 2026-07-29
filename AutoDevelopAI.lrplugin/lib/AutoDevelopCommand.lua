@@ -17,14 +17,15 @@ local PreparationService = ModuleLoader.load("lib/PreparationService.lua")
 local PreviewExporter = ModuleLoader.load("lib/PreviewExporter.lua")
 local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
 local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
-local StyleRunCoordinator =
-    ModuleLoader.load("lib/StyleRunCoordinator.lua")
+local ModelProfiles = ModuleLoader.load("lib/ModelProfiles.lua")
+local RunSettingsCoordinator =
+    ModuleLoader.load("lib/RunSettingsCoordinator.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 local AutoDevelopConfirmationDialog =
     ModuleLoader.load("dialogs/AutoDevelopConfirmationDialog.lua")
 local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
-local StyleSelectionDialog =
-    ModuleLoader.load("dialogs/StyleSelectionDialog.lua")
+local RunSettingsDialog =
+    ModuleLoader.load("dialogs/RunSettingsDialog.lua")
 
 local AutoDevelopCommand = {}
 
@@ -53,11 +54,14 @@ local function finishProgress(progressScope)
     end
 end
 
-local function newSummary(selected, profileId)
+local function newSummary(selected, profileId, modelId)
     local summary = BatchSummary.new(selected, "develop")
     summary.profileId = profileId
     summary.styleDisplayName = StyleProfiles.getDisplayName(profileId)
+    summary.modelId = modelId
+    summary.modelDisplayName = ModelProfiles.getDisplayName(modelId)
     summary.models = {}
+    summary.resolvedModels = {}
     summary.examples = {}
     return summary
 end
@@ -139,6 +143,9 @@ local function prepareBatch(
             summary.warningCount =
                 summary.warningCount + #(value.warnings or {})
             summary.models[value.model] = true
+            if value.resolvedModel then
+                summary.resolvedModels[value.resolvedModel] = true
+            end
             if #summary.examples < 5 then
                 summary.examples[#summary.examples + 1] = {
                     filename = value.filename,
@@ -214,16 +221,24 @@ local function runCommand(context)
 
     local current = Preferences.valuesForUi()
     local dialogResult =
-        StyleSelectionDialog.show(current.styleProfileId)
-    local styleRun = StyleRunCoordinator.begin({
+        RunSettingsDialog.show(
+            current.styleProfileId,
+            current.modelProfileId
+        )
+    local styleRun = RunSettingsCoordinator.begin({
         dialogResult = dialogResult,
         validateProfile = StyleProfiles.isValidId,
-        persistDefault = function(profileId)
+        validateModel = ModelProfiles.isSelectableId,
+        persistProfileDefault = function(profileId)
             return Preferences.set("styleProfileId", profileId)
         end,
-        snapshotFactory = function(profileId)
+        persistModelDefault = function(modelId)
+            return Preferences.set("modelProfileId", modelId)
+        end,
+        snapshotFactory = function(profileId, modelId)
             return Preferences.validatedSnapshot({
                 styleProfileId = profileId,
+                modelProfileId = modelId,
             })
         end,
     })
@@ -243,8 +258,12 @@ local function runCommand(context)
         )
         return
     end
-    local preferences = StyleRunCoordinator.getSnapshot(styleRun)
-    local summary = newSummary(#photos, preferences.styleProfileId)
+    local preferences = RunSettingsCoordinator.getSnapshot(styleRun)
+    local summary = newSummary(
+        #photos,
+        preferences.styleProfileId,
+        preferences.modelProfileId
+    )
     summary.backendBaseUrl = preferences.backendBaseUrl
     summary.requestTimeoutSeconds = preferences.requestTimeoutSeconds
     summary.confirmationMode = preferences.confirmationMode
@@ -306,7 +325,7 @@ local function runCommand(context)
     local preparationTracker =
         ProgressTracker.new(#photos, "Preparing recommendations")
 
-    local preparation = StyleRunCoordinator.prepare(
+    local preparation = RunSettingsCoordinator.prepare(
         styleRun,
         photos,
         function(runPhotos, runPreferences)

@@ -8,16 +8,23 @@ from fastapi.responses import JSONResponse
 
 from autodevelop.api.dependencies import (
     get_model_client,
+    get_model_resolver,
+    get_runtime_settings,
     get_safety_validator,
     get_style_profile_loader,
 )
 from autodevelop.api.exception_handlers import error_response
+from autodevelop.api.model_errors import model_error_response
+from autodevelop.api.model_selection import resolve_model_request
+from autodevelop.config import Settings
 from autodevelop.model_clients import (
     ModelClient,
     ModelClientError,
     ModelRequestError,
     ModelResponseError,
+    ModelResolver,
 )
+from autodevelop.model_clients.response_validation import validate_model_response
 from autodevelop.models import (
     DevelopRequest,
     DevelopResponse,
@@ -34,46 +41,6 @@ from autodevelop.validation import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["develop"])
-
-
-def _model_name(response: object) -> str:
-    candidate = getattr(response, "model", None)
-    if isinstance(candidate, str) and candidate.strip():
-        return candidate
-    return "unknown"
-
-
-def _validate_model_response_metadata(
-    request: DevelopRequest,
-    response: object,
-) -> DevelopResponse:
-    """Reject structurally invalid or mismatched upstream responses."""
-
-    if not isinstance(response, DevelopResponse):
-        raise ModelResponseError(
-            "Model client returned an unexpected response type.",
-            model_name=_model_name(response),
-        )
-
-    mismatched_fields: list[str] = []
-    if response.schema_version != "1.0":
-        mismatched_fields.append("schema_version")
-    if response.request_id != request.request_id:
-        mismatched_fields.append("request_id")
-    if response.filename != request.filename:
-        mismatched_fields.append("filename")
-    if response.status != "success":
-        mismatched_fields.append("status")
-    if response.model is None or not response.model.strip():
-        mismatched_fields.append("model")
-
-    if mismatched_fields:
-        raise ModelResponseError(
-            "Model response metadata is invalid.",
-            model_name=_model_name(response),
-            code="invalid_response_metadata",
-        )
-    return response
 
 
 def _warning_key(warning: ProcessingWarning) -> tuple[str, str, str | None, str]:
@@ -151,6 +118,7 @@ def _build_final_response(
             validation_result.issues,
         ),
         model=raw_response.model,
+        resolved_model=raw_response.resolved_model,
         processing_duration_ms=raw_response.processing_duration_ms,
     )
 
@@ -171,11 +139,17 @@ def _build_final_response(
             "model": ErrorResponse,
             "description": "Model client or model response failure.",
         },
+        504: {
+            "model": ErrorResponse,
+            "description": "Inference provider timeout.",
+        },
     },
 )
 async def develop_photo(
     request: DevelopRequest,
     model_client: Annotated[ModelClient, Depends(get_model_client)],
+    model_resolver: Annotated[ModelResolver, Depends(get_model_resolver)],
+    settings: Annotated[Settings, Depends(get_runtime_settings)],
     profile_loader: Annotated[
         StyleProfileLoader,
         Depends(get_style_profile_loader),
@@ -212,7 +186,7 @@ async def develop_photo(
             retryable=False,
         )
     except Exception:
-        logger.exception(
+        logger.error(
             "Unexpected Develop profile lookup failure request_id=%s filename=%s",
             request.request_id,
             request.filename,
@@ -226,49 +200,54 @@ async def develop_photo(
         )
 
     try:
+        selection = resolve_model_request(
+            request,
+            settings=settings,
+            resolver=model_resolver,
+        )
+        request = selection.request
+        resolution = selection.resolution
+        logger.info(
+            (
+                "Develop model selected request_id=%s filename=%s model=%s "
+                "model_source=%s provider=%s"
+            ),
+            request.request_id,
+            request.filename,
+            request.model,
+            selection.source,
+            resolution.definition.provider,
+        )
         raw_response = await model_client.develop(request)
-        raw_response = _validate_model_response_metadata(request, raw_response)
-    except ModelRequestError:
+        raw_response = validate_model_response(
+            request,
+            raw_response,
+            expected_type=DevelopResponse,
+            expected_resolved_model=resolution.resolved_model,
+        )
+    except ModelRequestError as exc:
         logger.warning(
             "Develop model request rejected request_id=%s filename=%s",
             request.request_id,
             request.filename,
         )
-        return error_response(
-            request,
-            status_code=status.HTTP_400_BAD_REQUEST,
-            code="model_request_error",
-            message="The model client rejected the develop request.",
-            retryable=False,
-        )
-    except ModelResponseError:
+        return model_error_response(request, exc)
+    except ModelResponseError as exc:
         logger.warning(
             "Develop model response invalid request_id=%s filename=%s",
             request.request_id,
             request.filename,
         )
-        return error_response(
-            request,
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            code="model_response_error",
-            message="The model client returned an invalid develop response.",
-            retryable=True,
-        )
-    except ModelClientError:
+        return model_error_response(request, exc)
+    except ModelClientError as exc:
         logger.warning(
             "Develop model client failure request_id=%s filename=%s",
             request.request_id,
             request.filename,
         )
-        return error_response(
-            request,
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            code="model_client_error",
-            message="The model client could not complete the develop request.",
-            retryable=True,
-        )
+        return model_error_response(request, exc)
     except Exception:
-        logger.exception(
+        logger.error(
             "Unexpected Develop model failure request_id=%s filename=%s",
             request.request_id,
             request.filename,
@@ -293,7 +272,7 @@ async def develop_photo(
             validation_result,
         )
     except Exception:
-        logger.exception(
+        logger.error(
             "Develop safety validation failed request_id=%s filename=%s",
             request.request_id,
             request.filename,
@@ -309,12 +288,18 @@ async def develop_photo(
     logger.info(
         (
             "Develop request complete request_id=%s filename=%s profile=%s "
-            "model=%s validation_issues=%d crop_rejected=%s clamped=%d removed=%d"
+            "model=%s provider=%s resolved_model=%s outcome=%s duration_ms=%s "
+            "validation_issues=%d "
+            "crop_rejected=%s clamped=%d removed=%d"
         ),
         request.request_id,
         request.filename,
         profile_id,
         raw_response.model,
+        resolution.definition.provider,
+        raw_response.resolved_model,
+        raw_response.status,
+        raw_response.processing_duration_ms,
         len(validation_result.issues),
         "crop" in validation_result.rejected_fields,
         len(validation_result.clamped_fields),

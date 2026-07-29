@@ -51,6 +51,7 @@ def _request_body(**changes: Any) -> dict[str, Any]:
         "schema_version": "1.0",
         "request_id": REQUEST_ID,
         "filename": "Landscape_Test.NEF",
+        "model": "gemma",
         "preview_path": "not-read.jpg",
         "exif": {"iso": 1600},
         "options": {
@@ -70,7 +71,7 @@ def _raw_response(
     crop: CropRecommendation | None = None,
     denoise: DenoiseRecommendation | None = None,
     warnings: list[ProcessingWarning] | None = None,
-    model: str | None = "recording-model",
+    model: str | None = None,
 ) -> DevelopResponse:
     return DevelopResponse(
         schema_version="1.0",
@@ -87,7 +88,13 @@ def _raw_response(
         crop=crop,
         denoise=denoise,
         warnings=warnings or [],
-        model=model,
+        model=model or request.model,
+        resolved_model={
+            "gemma": "gemma-4-31b",
+            "qwen": "qwen_qwen3-vl-32b-instruct",
+            "gpt_oss": "gpt-oss",
+            "gemini": "gemini-2.5-flash",
+        }[request.model or "gemma"],
         processing_duration_ms=17,
     )
 
@@ -98,7 +105,8 @@ def app(tmp_path: Path) -> FastAPI:
         Settings(
             _env_file=None,
             log_path=tmp_path / "autodevelop.log",
-        )
+        ),
+        model_client=FakeModelClient(),
     )
 
 
@@ -262,7 +270,8 @@ def test_valid_request_uses_real_fake_client_and_validator(
     assert payload["request_id"] == REQUEST_ID
     assert payload["filename"] == "Landscape_Test.NEF"
     assert payload["schema_version"] == "1.0"
-    assert payload["model"] == "fake-autodevelop-v1"
+    assert payload["model"] == "gemma"
+    assert payload["resolved_model"] == "gemma-4-31b"
     assert payload["processing_duration_ms"] == 1
     assert payload["edit_plan"]["style_profile"] == "natural_travel"
     assert payload["develop_settings"]["Exposure2012"] == 0.1
@@ -289,8 +298,37 @@ def test_documentary_profile_is_authoritative(client: TestClient) -> None:
     response = client.post("/autodevelop/v1/develop", json=body)
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["edit_plan"]["style_profile"] == "documentary"
+    assert response.json()["edit_plan"]["style_profile"] == "documentary"
+
+
+@pytest.mark.parametrize("model_id", ["gemma", "qwen", "gpt_oss"])
+def test_develop_accepts_selectable_local_models(
+    client: TestClient,
+    model_id: str,
+) -> None:
+    response = client.post(
+        "/autodevelop/v1/develop",
+        json=_request_body(model=model_id),
+    )
+    assert response.status_code == 200
+    assert response.json()["model"] == model_id
+
+
+@pytest.mark.parametrize(
+    ("model_id", "code"),
+    [("claude", "model_unavailable"), ("unknown", "model_not_found")],
+)
+def test_develop_rejects_invalid_model_selection(
+    client: TestClient,
+    model_id: str,
+    code: str,
+) -> None:
+    response = client.post(
+        "/autodevelop/v1/develop",
+        json=_request_body(model=model_id),
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == code
 
 
 def test_unknown_profile_returns_error_without_model_call(
@@ -578,11 +616,11 @@ def test_model_and_validator_warnings_merge_deterministically_without_duplicates
 @pytest.mark.parametrize(
     ("change", "expected_code"),
     [
-        ({"request_id": UUID(OTHER_REQUEST_ID)}, "model_response_error"),
-        ({"filename": "Different.NEF"}, "model_response_error"),
-        ({"schema_version": "2.0"}, "model_response_error"),
-        ({"status": "partial"}, "model_response_error"),
-        ({"model": None}, "model_response_error"),
+        ({"request_id": UUID(OTHER_REQUEST_ID)}, "invalid_model_response"),
+        ({"filename": "Different.NEF"}, "invalid_model_response"),
+        ({"schema_version": "2.0"}, "invalid_model_response"),
+        ({"status": "partial"}, "invalid_model_response"),
+        ({"model": None}, "invalid_model_response"),
     ],
 )
 def test_invalid_model_metadata_returns_502(
@@ -615,7 +653,7 @@ def test_unexpected_model_response_type_returns_502(app: FastAPI) -> None:
         response = client.post("/autodevelop/v1/develop", json=_request_body())
 
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "model_response_error"
+    assert response.json()["error"]["code"] == "invalid_model_response"
 
 
 @pytest.mark.parametrize(

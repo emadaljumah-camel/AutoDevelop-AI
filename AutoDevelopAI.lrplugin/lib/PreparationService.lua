@@ -233,6 +233,7 @@ local function prepareDevelopPhotoBody(
         preview.path,
         {
             styleProfileId = preferences.styleProfileId,
+            modelProfileId = preferences.modelProfileId,
             includeCrop = true,
             includeDenoise = true,
             preserveCurrentAdjustments = true,
@@ -379,6 +380,7 @@ local function prepareDevelopPhotoBody(
         denoiseRecommended = denoiseRecommended,
         warnings = Utils.deepCopy(decoded.warnings or {}),
         model = validatedModel,
+        resolvedModel = decoded.resolved_model,
         processingDurationMs = decoded.processing_duration_ms,
     })
     operation.cropDisabled = cropDisabled

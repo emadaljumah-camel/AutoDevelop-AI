@@ -10,6 +10,7 @@ from autodevelop import __version__
 from autodevelop.api.router import api_router
 from autodevelop.config import Settings, get_settings
 from autodevelop.logging_config import configure_logging
+from autodevelop.model_clients import ModelClient, ModelResolver, ModelService
 from autodevelop.profiles import StyleProfileLoader
 from autodevelop.validation import SafetyValidator
 
@@ -22,6 +23,8 @@ def create_app(
     *,
     profile_loader: StyleProfileLoader | None = None,
     safety_validator: SafetyValidator | None = None,
+    model_client: ModelClient | None = None,
+    model_resolver: ModelResolver | None = None,
 ) -> FastAPI:
     """Create the AutoDevelop AI ASGI application."""
 
@@ -30,6 +33,10 @@ def create_app(
         profile_loader if profile_loader is not None else StyleProfileLoader()
     )
     application_safety_validator = safety_validator or SafetyValidator()
+    application_model_resolver = model_resolver or ModelResolver(resolved_settings)
+    application_model_service = model_client or ModelService(
+        application_model_resolver, application_profile_loader
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -44,6 +51,8 @@ def create_app(
             raise
         application.state.style_profile_loader = application_profile_loader
         application.state.safety_validator = application_safety_validator
+        application.state.model_service = application_model_service
+        application.state.model_resolver = application_model_resolver
         yield
 
     application = FastAPI(

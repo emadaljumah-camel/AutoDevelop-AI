@@ -2,6 +2,7 @@ local LrPrefs = import("LrPrefs")
 
 local Config = ModuleLoader.load("lib/Config.lua")
 local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
+local ModelProfiles = ModuleLoader.load("lib/ModelProfiles.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local Preferences = {}
@@ -12,6 +13,7 @@ local function defaultValues()
         defaults[key] = value
     end
     defaults.styleProfileId = StyleProfiles.getDefaultId()
+    defaults.modelProfileId = ModelProfiles.getDefaultId()
     return defaults
 end
 
@@ -79,6 +81,14 @@ local function validateStyleProfileId(value)
     return normalized
 end
 
+local function validateModelProfileId(value)
+    local normalized = Utils.trim(value)
+    if not normalized or not ModelProfiles.isSelectableId(normalized) then
+        return nil, "Select an available AI model."
+    end
+    return normalized
+end
+
 local function validateRequestTimeoutSeconds(value)
     local normalized = value
     if not Utils.isFiniteNumber(normalized)
@@ -121,6 +131,7 @@ end
 local validators = {
     backendBaseUrl = validateBackendBaseUrl,
     styleProfileId = validateStyleProfileId,
+    modelProfileId = validateModelProfileId,
     requestTimeoutSeconds = validateRequestTimeoutSeconds,
     applyCrop = function(value)
         return validateBoolean(value, "Apply crop")
@@ -175,6 +186,10 @@ function Preferences.getStyleProfileId()
     return Preferences.get("styleProfileId")
 end
 
+function Preferences.getModelProfileId()
+    return Preferences.get("modelProfileId")
+end
+
 function Preferences.getRequestTimeoutSeconds()
     return Preferences.get("requestTimeoutSeconds")
 end
@@ -212,6 +227,10 @@ end
 
 function Preferences.getStyleProfileChoices()
     return StyleProfiles.getChoices()
+end
+
+function Preferences.getModelProfileChoices()
+    return ModelProfiles.getSelectableChoices()
 end
 
 function Preferences.getConfirmationChoices()

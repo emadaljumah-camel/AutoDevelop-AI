@@ -5,6 +5,7 @@ local PluginManagerController = {}
 local preferenceKeys = {
     "backendBaseUrl",
     "styleProfileId",
+    "modelProfileId",
     "applyCrop",
     "confirmationMode",
     "loggingLevel",
@@ -13,6 +14,7 @@ local preferenceKeys = {
 local getters = {
     backendBaseUrl = Preferences.getBackendBaseUrl,
     styleProfileId = Preferences.getStyleProfileId,
+    modelProfileId = Preferences.getModelProfileId,
     applyCrop = Preferences.getApplyCrop,
     confirmationMode = Preferences.getConfirmationMode,
     loggingLevel = Preferences.getLoggingLevel,

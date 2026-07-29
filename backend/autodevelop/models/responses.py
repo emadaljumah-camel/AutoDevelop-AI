@@ -61,9 +61,11 @@ class _ProcessingResponseBase(_ResponseBase):
         default_factory=list,
         description="Nonfatal processing warnings.",
     )
-    model: str | None = Field(
-        default=None,
-        description="Optional model identifier used for processing.",
+    model: NonBlankString = Field(
+        description="Stable model registry ID used for processing.",
+    )
+    resolved_model: NonBlankString = Field(
+        description="Configured provider model identifier used for inference.",
     )
     processing_duration_ms: NonNegativeInteger | None = Field(
         default=None,
@@ -118,7 +120,8 @@ class AnalyzeResponse(_ProcessingResponseBase):
                         "reason": "Noise is minimal.",
                     },
                     "warnings": [],
-                    "model": "local-vision-model",
+                    "model": "gemma",
+                    "resolved_model": "gemma-4-31b",
                     "processing_duration_ms": 842,
                 }
             ]
@@ -205,7 +208,8 @@ class DevelopResponse(_ProcessingResponseBase):
                         "reason": "Noise is not significant.",
                     },
                     "warnings": [],
-                    "model": "local-vision-model",
+                    "model": "qwen",
+                    "resolved_model": "qwen_qwen3-vl-32b-instruct",
                     "processing_duration_ms": 1094,
                 }
             ]

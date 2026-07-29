@@ -37,6 +37,7 @@ def _request_body(**changes: Any) -> dict[str, Any]:
         "schema_version": "1.0",
         "request_id": REQUEST_ID,
         "filename": "Landscape_Test.NEF",
+        "model": "gemma",
         "preview_path": "not-read.jpg",
         "options": {
             "style_profile": "natural_travel",
@@ -54,7 +55,8 @@ def app(tmp_path: Path) -> FastAPI:
         Settings(
             _env_file=None,
             log_path=tmp_path / "autodevelop.log",
-        )
+        ),
+        model_client=FakeModelClient(),
     )
 
 
@@ -65,7 +67,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 
 class RecordingModelClient(ModelClient):
-    def __init__(self, *, model_name: str = "injected-model") -> None:
+    def __init__(self, *, model_name: str = "gemma-4-31b") -> None:
         self.model_name = model_name
         self.awaited = False
         self.request_before: dict[str, Any] | None = None
@@ -103,6 +105,16 @@ class RaisingModelClient(ModelClient):
         profile: StyleProfile,
     ) -> DevelopResponse:
         raise NotImplementedError
+
+
+class MismatchedAnalyzeModelClient(RecordingModelClient):
+    def __init__(self, change: dict[str, object]) -> None:
+        super().__init__()
+        self.change = change
+
+    async def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
+        response = await super().analyze(request)
+        return response.model_copy(update=self.change)
 
 
 class RecordingProfileLoader:
@@ -145,6 +157,7 @@ def test_lifespan_initializes_and_reuses_one_profile_loader(
             log_path=tmp_path / "autodevelop.log",
         ),
         profile_loader=loader,
+        model_client=FakeModelClient(),
     )
 
     with TestClient(application) as test_client:
@@ -175,7 +188,8 @@ def test_analyze_requests_use_no_filesystem_after_startup(
         Settings(
             _env_file=None,
             log_path=tmp_path / "autodevelop.log",
-        )
+        ),
+        model_client=FakeModelClient(),
     )
 
     with TestClient(application) as test_client:
@@ -243,7 +257,8 @@ def test_valid_preview_request_returns_complete_success(
     assert payload["request_id"] == REQUEST_ID
     assert payload["filename"] == "Landscape_Test.NEF"
     assert payload["schema_version"] == "1.0"
-    assert payload["model"] == "fake-autodevelop-v1"
+    assert payload["model"] == "gemma"
+    assert payload["resolved_model"] == "gemma-4-31b"
     assert payload["processing_duration_ms"] == 1
     assert payload["edit_plan"]["style_profile"] == "natural_travel"
     assert payload["analysis"]["scene_type"] == "landscape"
@@ -269,6 +284,69 @@ def test_documentary_profile_is_accepted(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["edit_plan"]["style_profile"] == "documentary"
+
+
+@pytest.mark.parametrize("model_id", ["gemma", "qwen", "gpt_oss"])
+def test_selectable_local_models_are_explicitly_accepted(
+    client: TestClient,
+    model_id: str,
+) -> None:
+    response = client.post(
+        "/autodevelop/v1/analyze",
+        json=_request_body(model=model_id),
+    )
+    assert response.status_code == 200
+    assert response.json()["model"] == model_id
+
+
+@pytest.mark.parametrize(
+    ("model_id", "code"),
+    [("claude", "model_unavailable"), ("unknown", "model_not_found")],
+)
+def test_invalid_model_selection_is_structured(
+    client: TestClient,
+    model_id: str,
+    code: str,
+) -> None:
+    response = client.post(
+        "/autodevelop/v1/analyze",
+        json=_request_body(model=model_id),
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == code
+
+
+def test_gemini_requires_configuration_and_is_accepted_when_configured(
+    tmp_path: Path,
+) -> None:
+    unconfigured = create_app(
+        Settings(_env_file=None, log_path=tmp_path / "unconfigured.log"),
+        model_client=FakeModelClient(),
+    )
+    with TestClient(unconfigured) as test_client:
+        response = test_client.post(
+            "/autodevelop/v1/analyze",
+            json=_request_body(model="gemini"),
+        )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "model_not_configured"
+
+    configured = create_app(
+        Settings(
+            _env_file=None,
+            log_path=tmp_path / "configured.log",
+            gemini_api_key="secret",
+        ),
+        model_client=FakeModelClient(model_name="gemini-2.5-flash"),
+    )
+    with TestClient(configured) as test_client:
+        response = test_client.post(
+            "/autodevelop/v1/analyze",
+            json=_request_body(model="gemini"),
+        )
+    assert response.status_code == 200
+    assert response.json()["model"] == "gemini"
+    assert response.json()["resolved_model"] == "gemini-2.5-flash"
 
 
 def test_unknown_profile_returns_versioned_error_without_fallback(
@@ -332,7 +410,8 @@ def test_model_client_dependency_override_is_awaited(
     )
 
     assert response.status_code == 200
-    assert response.json()["model"] == "injected-model"
+    assert response.json()["model"] == "gemma"
+    assert response.json()["resolved_model"] == "gemma-4-31b"
     assert model_client.awaited is True
 
 
@@ -350,6 +429,50 @@ def test_route_does_not_mutate_request(
     assert response.status_code == 200
     assert body == body_before
     assert model_client.request_before == model_client.request_after
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"schema_version": "2.0"},
+        {"request_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"},
+        {"filename": "Different.NEF"},
+        {"model": "qwen"},
+        {"resolved_model": "different-provider-model"},
+    ],
+)
+def test_analyze_rejects_mismatched_response_identity(
+    app: FastAPI,
+    change: dict[str, object],
+) -> None:
+    app.dependency_overrides[get_model_client] = lambda: MismatchedAnalyzeModelClient(
+        change
+    )
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/autodevelop/v1/analyze",
+            json=_request_body(),
+        )
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "invalid_model_response"
+
+
+def test_analyze_identity_failure_does_not_expose_or_log_bad_value(
+    app: FastAPI,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "secret-provider-value"
+    app.dependency_overrides[get_model_client] = lambda: MismatchedAnalyzeModelClient(
+        {"resolved_model": secret}
+    )
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/autodevelop/v1/analyze",
+            json=_request_body(),
+        )
+    assert response.status_code == 502
+    assert secret not in response.text
+    assert secret not in caplog.text
 
 
 @pytest.mark.parametrize(

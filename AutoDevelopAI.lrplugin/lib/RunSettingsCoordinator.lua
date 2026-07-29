@@ -1,4 +1,4 @@
-local StyleRunCoordinator = {}
+local RunSettingsCoordinator = {}
 
 local function copySnapshot(snapshot)
     local copied = {}
@@ -15,7 +15,7 @@ local function outcome(status, fields)
     return result
 end
 
-function StyleRunCoordinator.begin(options)
+function RunSettingsCoordinator.begin(options)
     options = options or {}
     local dialogResult = options.dialogResult
     if type(dialogResult) ~= "table"
@@ -24,16 +24,30 @@ function StyleRunCoordinator.begin(options)
     end
 
     local profileId = dialogResult.profileId
+    local modelId = dialogResult.modelId
     if type(options.validateProfile) ~= "function"
         or not options.validateProfile(profileId) then
         return outcome("invalid_profile")
     end
+    if type(options.validateModel) ~= "function"
+        or not options.validateModel(modelId) then
+        return outcome("invalid_model", { modelId = modelId })
+    end
 
-    if dialogResult.rememberAsDefault == true then
-        if type(options.persistDefault) ~= "function"
-            or not options.persistDefault(profileId) then
+    if dialogResult.rememberProfileAsDefault == true then
+        if type(options.persistProfileDefault) ~= "function"
+            or not options.persistProfileDefault(profileId) then
             return outcome("preference_save_failed", {
                 profileId = profileId,
+            })
+        end
+    end
+    if dialogResult.rememberModelAsDefault == true then
+        if type(options.persistModelDefault) ~= "function"
+            or not options.persistModelDefault(modelId) then
+            return outcome("preference_save_failed", {
+                profileId = profileId,
+                modelId = modelId,
             })
         end
     end
@@ -44,7 +58,7 @@ function StyleRunCoordinator.begin(options)
         })
     end
     local snapshot, _, invalidKey =
-        options.snapshotFactory(profileId)
+        options.snapshotFactory(profileId, modelId)
     if type(snapshot) ~= "table" then
         return outcome("invalid_preferences", {
             profileId = profileId,
@@ -54,22 +68,25 @@ function StyleRunCoordinator.begin(options)
 
     snapshot = copySnapshot(snapshot)
     snapshot.styleProfileId = profileId
+    snapshot.modelProfileId = modelId
     return outcome("ready", {
         profileId = profileId,
+        modelId = modelId,
         _snapshot = snapshot,
     })
 end
 
-function StyleRunCoordinator.getSnapshot(run)
+function RunSettingsCoordinator.getSnapshot(run)
     if type(run) ~= "table" or run.status ~= "ready" then
         return nil
     end
     local snapshot = copySnapshot(run._snapshot)
     snapshot.styleProfileId = run.profileId
+    snapshot.modelProfileId = run.modelId
     return snapshot
 end
 
-function StyleRunCoordinator.prepare(run, photos, prepareBatch)
+function RunSettingsCoordinator.prepare(run, photos, prepareBatch)
     if type(run) ~= "table" or run.status ~= "ready" then
         return outcome(
             type(run) == "table" and run.status or "invalid_run",
@@ -91,7 +108,7 @@ function StyleRunCoordinator.prepare(run, photos, prepareBatch)
         })
     end
 
-    local snapshot = StyleRunCoordinator.getSnapshot(run)
+    local snapshot = RunSettingsCoordinator.getSnapshot(run)
     local prepared = prepareBatch(photos, snapshot)
     if prepared == nil then
         return outcome("preparation_failed", {
@@ -106,4 +123,4 @@ function StyleRunCoordinator.prepare(run, photos, prepareBatch)
     })
 end
 
-return StyleRunCoordinator
+return RunSettingsCoordinator

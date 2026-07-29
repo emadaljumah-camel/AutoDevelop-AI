@@ -75,7 +75,7 @@ def test_fake_client_implements_model_client_interface() -> None:
 def test_default_constructor_values() -> None:
     client = FakeModelClient()
 
-    assert client.model_name == "fake-autodevelop-v1"
+    assert client.model_name is None
     assert client.scenario == "auto"
 
 
@@ -94,8 +94,28 @@ def test_analyze_preserves_metadata_and_fixed_response_values() -> None:
     assert response.request_id == request.request_id
     assert response.filename == request.filename
     assert response.schema_version == "1.0"
-    assert response.model == "custom-fake"
+    assert response.model == "gemma"
+    assert response.resolved_model == "custom-fake"
     assert response.processing_duration_ms == 1
+
+
+def test_fake_client_records_stable_model_style_filename_and_count() -> None:
+    request = _analyze_request(filename="Recorded.NEF").model_copy(
+        update={"model": "qwen"}
+    )
+    client = FakeModelClient(model_name="configured-qwen")
+
+    asyncio.run(client.analyze(request))
+
+    assert client.invocation_count == 1
+    assert client.invocations == [
+        {
+            "model": "qwen",
+            "resolved_model": "configured-qwen",
+            "style_profile": "natural_travel",
+            "filename": "Recorded.NEF",
+        }
+    ]
 
 
 def test_develop_preserves_metadata_and_fixed_response_values(
@@ -110,7 +130,8 @@ def test_develop_preserves_metadata_and_fixed_response_values(
     assert response.request_id == request.request_id
     assert response.filename == request.filename
     assert response.schema_version == "1.0"
-    assert response.model == "custom-fake"
+    assert response.model == "gemma"
+    assert response.resolved_model == "custom-fake"
     assert response.processing_duration_ms == 1
 
 

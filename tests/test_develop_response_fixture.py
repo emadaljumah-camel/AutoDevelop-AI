@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from autodevelop.config import Settings
 from autodevelop.main import create_app
+from autodevelop.model_clients import FakeModelClient
 
 
 FIXTURE_PATH = (
@@ -22,12 +23,14 @@ def test_representative_fixture_matches_current_develop_response(
         Settings(
             _env_file=None,
             log_path=tmp_path / "autodevelop.log",
-        )
+        ),
+        model_client=FakeModelClient(),
     )
     request = {
         "schema_version": "1.0",
         "request_id": fixture["request_id"],
         "filename": fixture["filename"],
+        "model": "gpt_oss",
         "preview_path": "not-read.jpg",
         "exif": {"iso": 800},
         "options": {

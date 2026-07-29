@@ -30,3 +30,31 @@ class ModelResponseError(ModelClientError):
     """The model client produced or was asked to produce an invalid response."""
 
     default_code = "model_response_error"
+
+
+class ModelNotFoundError(ModelRequestError):
+    default_code = "model_not_found"
+
+
+class ModelUnavailableError(ModelRequestError):
+    default_code = "model_unavailable"
+
+
+class ModelNotConfiguredError(ModelRequestError):
+    default_code = "model_not_configured"
+
+
+class ProviderUnavailableError(ModelClientError):
+    default_code = "provider_unavailable"
+
+
+class ProviderTimeoutError(ModelClientError):
+    default_code = "provider_timeout"
+
+
+class InferenceFailedError(ModelClientError):
+    default_code = "inference_failed"
+
+
+class InvalidModelResponseError(ModelResponseError):
+    default_code = "invalid_model_response"

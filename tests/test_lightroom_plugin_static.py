@@ -308,14 +308,14 @@ def test_style_dialog_precedes_all_processing_in_both_commands() -> None:
     for command_name in ("AnalyzeCommand.lua", "AutoDevelopCommand.lua"):
         source = _read(f"lib/{command_name}")
         command = source[source.index("local function runCommand") :]
-        dialog = command.index("StyleSelectionDialog.show(")
+        dialog = command.index("RunSettingsDialog.show(")
 
         assert dialog < command.index("PreviewExporter.createBatchDirectory()")
         assert dialog < command.index("LrProgressScope({")
 
 
 def test_style_dialog_has_no_processing_or_catalog_side_effects() -> None:
-    dialog = _read("dialogs/StyleSelectionDialog.lua")
+    dialog = _read("dialogs/RunSettingsDialog.lua")
 
     assert 'import("LrBinding")' in dialog
     assert "LrBinding.makePropertyTable(context)" in dialog
@@ -333,13 +333,36 @@ def test_style_dialog_has_no_processing_or_catalog_side_effects() -> None:
 
 
 def test_commands_use_pure_style_run_coordinator() -> None:
-    coordinator = _read("lib/StyleRunCoordinator.lua")
+    coordinator = _read("lib/RunSettingsCoordinator.lua")
 
     for command_name in ("AnalyzeCommand.lua", "AutoDevelopCommand.lua"):
         command = _read(f"lib/{command_name}")
-        assert 'ModuleLoader.load("lib/StyleRunCoordinator.lua")' in command
-        assert "StyleRunCoordinator.begin({" in command
-        assert "StyleRunCoordinator.prepare(" in command
+        assert 'ModuleLoader.load("lib/RunSettingsCoordinator.lua")' in command
+        assert "RunSettingsCoordinator.begin({" in command
+        assert "RunSettingsCoordinator.prepare(" in command
+
+
+def test_phase3_model_selection_is_explicit_and_side_effect_free() -> None:
+    registry = _read("lib/ModelProfiles.lua")
+    dialog = _read("dialogs/RunSettingsDialog.lua")
+    builder = _read("lib/RequestBuilder.lua")
+    coordinator = _read("lib/RunSettingsCoordinator.lua")
+
+    for model_id in ("gemma", "qwen", "gpt_oss", "gemini", "claude"):
+        assert f'id = "{model_id}"' in registry
+    assert 'defaultId = "gemma"' in registry
+    assert "ModelProfiles.getSelectableChoices()" in dialog
+    assert "Claude — Future" in dialog
+    assert "request.model = modelProfile" not in builder
+    assert "model = modelProfile" in builder
+    assert "snapshot.modelProfileId = modelId" in coordinator
+    for forbidden in (
+        "LrHttp",
+        "PreviewExporter",
+        "withWriteAccessDo",
+        "catalog:with",
+    ):
+        assert forbidden not in dialog
 
     for forbidden in (
         "LrDialogs",

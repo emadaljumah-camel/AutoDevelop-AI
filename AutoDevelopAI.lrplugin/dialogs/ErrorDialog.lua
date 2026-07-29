@@ -16,6 +16,21 @@ local messages = {
         text = "The selected style profile is not available. Open Plug-in "
             .. "Manager and select a valid style profile.",
     },
+    model_not_found = {
+        title = "Unknown AI Model",
+        text = "The selected AI model is not registered on the AutoDevelop "
+            .. "AI backend. Choose another model in the run settings.",
+    },
+    model_unavailable = {
+        title = "AI Model Unavailable",
+        text = "The selected AI model is not available in this version. "
+            .. "Claude support is planned for a future release.",
+    },
+    model_not_configured = {
+        title = "AI Model Not Configured",
+        text = "The selected AI model is not configured on the AutoDevelop "
+            .. "AI backend. Gemini requires backend API-key configuration.",
+    },
     model_timeout = {
         title = "AutoDevelop AI Timed Out",
         text = "The model did not respond before the configured timeout. "

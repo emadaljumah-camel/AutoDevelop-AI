@@ -70,7 +70,8 @@ ANALYZE_RESPONSE_DATA = {
             "severity": "info",
         }
     ],
-    "model": "local-vision-model",
+    "model": "gemma",
+    "resolved_model": "local-vision-model",
     "processing_duration_ms": 842,
 }
 
@@ -114,10 +115,10 @@ ERROR_RESPONSE_DATA = {
 }
 
 PUBLIC_SCHEMA_HASHES = {
-    AnalyzeRequest: "397ddadc2a8ebdb4caef77e7b2cfae7f9fd58fca41720f34b03c5664265cf4b5",
-    DevelopRequest: "994f9ddcfc239b8ae70a807eb492db5c032bd80cfabcf800136e498688655bd5",
-    AnalyzeResponse: "32ab982614241b37892011d44a95d36b31370727c757ee5d748b187112ef171a",
-    DevelopResponse: "8eb6c5d6504a7198da4c395d8c468521cb660883a05ff23d9d7d03a34470b0e9",
+    AnalyzeRequest: "94fa1c653f611c9e901f8c895ac4d3a89eed4f4df50d51a95a611692b659d5c4",
+    DevelopRequest: "b26191450b41d48348d355f383ef15ce812b498defb0c8f31ea54ba2b000d007",
+    AnalyzeResponse: "589256af69b8280a1331b65a7b8b9fb9f7afaedc998e90f8063e01cf4862846d",
+    DevelopResponse: "c156d566f92dc850fca4be44ed8d202dafa0d3f174a25d8bb6edc5e7443d3bcd",
     ErrorResponse: "527d0bbd9b728522f146a539d44bc433c39e7988db3926cda467ce9cdec9994e",
 }
 
@@ -486,12 +487,16 @@ def test_processing_response_warning_lists_are_not_shared(
         request_id=REQUEST_ID,
         filename="first.NEF",
         status="success",
+        model="gemma",
+        resolved_model="gemma-4-31b",
     )
     second = model_type(
         schema_version="1.0",
         request_id=REQUEST_ID,
         filename="second.NEF",
         status="success",
+        model="gemma",
+        resolved_model="gemma-4-31b",
     )
 
     first.warnings.append(

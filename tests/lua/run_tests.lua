@@ -162,9 +162,10 @@ local Json = ModuleLoader.load("lib/Json.lua")
 local Preferences = ModuleLoader.load("lib/Preferences.lua")
 local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
 local StyleRunCoordinator =
-    ModuleLoader.load("lib/StyleRunCoordinator.lua")
+    ModuleLoader.load("lib/RunSettingsCoordinator.lua")
 local StyleSelectionDialog =
-    ModuleLoader.load("dialogs/StyleSelectionDialog.lua")
+    ModuleLoader.load("dialogs/RunSettingsDialog.lua")
+local ModelProfiles = ModuleLoader.load("lib/ModelProfiles.lua")
 local PluginManagerController =
     ModuleLoader.load("lib/PluginManagerController.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
@@ -595,6 +596,7 @@ local request = assert(RequestBuilder.build(
     "D:\\Temp\\AutoDevelopAI\\preview.jpg",
     {
         styleProfileId = "natural_travel",
+        modelProfileId = "gemma",
         uuidFactory = function()
             return "12345678-1234-4abc-8abc-1234567890ab"
         end,
@@ -602,6 +604,7 @@ local request = assert(RequestBuilder.build(
 ))
 assertEqual(request.schema_version, "1.0")
 assertEqual(request.options.style_profile, "natural_travel")
+assertEqual(request.model, "gemma")
 assertEqual(request.current_settings.Exposure2012, 0)
 assertEqual(request.preview_path, "D:\\Temp\\AutoDevelopAI\\preview.jpg")
 assertEqual(StyleProfiles.getDefaultId(), "natural_travel")
@@ -626,18 +629,21 @@ local configured = assert(RequestBuilder.build(
     "D:\\Temp\\preview.jpg",
     {
         styleProfileId = "architecture",
+        modelProfileId = "qwen",
         uuidFactory = function()
             return "22345678-1234-4abc-8abc-1234567890ab"
         end,
     }
 ))
 assertEqual(configured.options.style_profile, "architecture")
+assertEqual(configured.model, "qwen")
 
 local developRequest = assert(RequestBuilder.buildDevelop(
     mappedPhoto,
     "D:\\Temp\\develop-preview.jpg",
     {
         styleProfileId = "portrait",
+        modelProfileId = "gpt_oss",
         includeCrop = true,
         includeDenoise = true,
         uuidFactory = function()
@@ -646,6 +652,7 @@ local developRequest = assert(RequestBuilder.buildDevelop(
     }
 ))
 assertEqual(developRequest.options.style_profile, "portrait")
+assertEqual(developRequest.model, "gpt_oss")
 assertEqual(developRequest.options.include_crop, true)
 assertEqual(developRequest.options.include_denoise, true)
 assertEqual(developRequest.options.dry_run, false)
@@ -655,6 +662,7 @@ assertEqual(Config.defaults.backendBaseUrl, "http://127.0.0.1:8005")
 assertEqual(Config.SCHEMA_VERSION, "1.0")
 fakePreferences.backendBaseUrl = nil
 fakePreferences.styleProfileId = nil
+fakePreferences.modelProfileId = nil
 fakePreferences.requestTimeoutSeconds = nil
 fakePreferences.applyCrop = nil
 fakePreferences.confirmationMode = nil
@@ -765,12 +773,23 @@ assertEqual(
     "Natural Travel",
     "style metadata getters must return defensive copies"
 )
+local modelChoices = ModelProfiles.getChoices()
+assertEqual(#modelChoices, 5)
+assertEqual(modelChoices[1].value, "gemma")
+assertEqual(modelChoices[5].value, "claude")
+assertEqual(#ModelProfiles.getSelectableChoices(), 4)
+assertEqual(ModelProfiles.getDefaultId(), "gemma")
+assertTrue(ModelProfiles.isSelectableId("gemma"))
+assertTrue(not ModelProfiles.isSelectableId("claude"))
+local copiedModel = ModelProfiles.getById("gemma")
+copiedModel.displayName = "Mutated"
+assertEqual(ModelProfiles.getDisplayName("gemma"), "Gemma")
 
 fakePreferences.styleProfileId = "natural_travel"
 modalDialogResult = "cancel"
 modalDialogMutator = nil
 local cancelledDialogResult =
-    StyleSelectionDialog.show("natural_travel")
+    StyleSelectionDialog.show("natural_travel", "gemma")
 assertEqual(cancelledDialogResult.confirmed, false)
 assertEqual(fakePreferences.styleProfileId, "natural_travel")
 
@@ -778,13 +797,18 @@ modalDialogResult = "ok"
 modalDialogMutator = function(_, properties)
     properties.selectedProfileId = "documentary"
     properties._observers.selectedProfileId()
-    properties.rememberAsDefault = false
+    properties.selectedModelId = "qwen"
+    properties._observers.selectedModelId()
+    properties.rememberProfileAsDefault = false
+    properties.rememberModelAsDefault = false
 end
 local documentaryDialogResult =
-    StyleSelectionDialog.show("natural_travel")
+    StyleSelectionDialog.show("natural_travel", "gemma")
 assertEqual(documentaryDialogResult.confirmed, true)
 assertEqual(documentaryDialogResult.profileId, "documentary")
-assertEqual(documentaryDialogResult.rememberAsDefault, false)
+assertEqual(documentaryDialogResult.modelId, "qwen")
+assertEqual(documentaryDialogResult.rememberProfileAsDefault, false)
+assertEqual(documentaryDialogResult.rememberModelAsDefault, false)
 assertEqual(
     lastPropertyTable.selectedDescription,
     StyleProfiles.getDescription("documentary")
@@ -798,12 +822,14 @@ assertEqual(
 modalDialogMutator = function(_, properties)
     properties.selectedProfileId = "architecture"
     properties._observers.selectedProfileId()
-    properties.rememberAsDefault = true
+    properties.rememberProfileAsDefault = true
+    properties.rememberModelAsDefault = true
 end
 local rememberedDialogResult =
-    StyleSelectionDialog.show("natural_travel")
+    StyleSelectionDialog.show("natural_travel", "gemma")
 assertEqual(rememberedDialogResult.profileId, "architecture")
-assertEqual(rememberedDialogResult.rememberAsDefault, true)
+assertEqual(rememberedDialogResult.rememberProfileAsDefault, true)
+assertEqual(rememberedDialogResult.rememberModelAsDefault, true)
 assertEqual(
     fakePreferences.styleProfileId,
     "natural_travel",
@@ -815,7 +841,7 @@ modalDialogMutator = function(_, properties)
     properties._observers.selectedProfileId()
 end
 modalDialogResult = "cancel"
-StyleSelectionDialog.show("removed_profile")
+StyleSelectionDialog.show("removed_profile", "removed_model")
 assertEqual(lastPropertyTable.selectedProfileId, "documentary")
 assertTrue(lastPropertyTable.invalidStoredProfileMessage ~= "")
 assertTrue(
@@ -843,15 +869,23 @@ modalDialogMutator = nil
 modalDialogResult = "ok"
 
 local function beginStyleRun(dialogResult, persistDefault, snapshotFactory)
+    if dialogResult.confirmed and dialogResult.modelId == nil then
+        dialogResult.modelId = "gemma"
+    end
     return StyleRunCoordinator.begin({
         dialogResult = dialogResult,
         validateProfile = StyleProfiles.isValidId,
-        persistDefault = persistDefault or function()
+        validateModel = ModelProfiles.isSelectableId,
+        persistProfileDefault = persistDefault or function()
             return true
         end,
-        snapshotFactory = snapshotFactory or function(profileId)
+        persistModelDefault = function()
+            return true
+        end,
+        snapshotFactory = snapshotFactory or function(profileId, modelId)
             return {
                 styleProfileId = profileId,
+                modelProfileId = modelId,
                 backendBaseUrl = "http://127.0.0.1:8005",
             }
         end,
@@ -893,7 +927,9 @@ local documentaryRun = beginStyleRun(
     {
         confirmed = true,
         profileId = "documentary",
-        rememberAsDefault = false,
+        modelId = "qwen",
+        rememberProfileAsDefault = false,
+        rememberModelAsDefault = false,
     },
     function(profileId)
         persistedProfiles[#persistedProfiles + 1] = profileId
@@ -909,6 +945,7 @@ local documentaryRun = beginStyleRun(
 assertEqual(documentaryRun.status, "ready")
 assertEqual(#persistedProfiles, 0)
 local receivedProfiles = {}
+local receivedModels = {}
 local photos = { "one", "two", "three" }
 local documentaryPreparation = StyleRunCoordinator.prepare(
     documentaryRun,
@@ -916,6 +953,7 @@ local documentaryPreparation = StyleRunCoordinator.prepare(
     function(runPhotos, snapshot)
         for index = 1, #runPhotos do
             receivedProfiles[index] = snapshot.styleProfileId
+            receivedModels[index] = snapshot.modelProfileId
         end
         snapshot.styleProfileId = "mutated"
         return #runPhotos
@@ -925,6 +963,7 @@ assertEqual(documentaryPreparation.status, "completed")
 assertEqual(documentaryPreparation.prepared, 3)
 for index = 1, #photos do
     assertEqual(receivedProfiles[index], "documentary")
+    assertEqual(receivedModels[index], "qwen")
 end
 assertEqual(
     StyleRunCoordinator.getSnapshot(documentaryRun).styleProfileId,
@@ -953,7 +992,8 @@ local rememberedRun = beginStyleRun(
     {
         confirmed = true,
         profileId = "architecture",
-        rememberAsDefault = true,
+        modelId = "gemma",
+        rememberProfileAsDefault = true,
     },
     function(profileId)
         rememberCalls = rememberCalls + 1
@@ -1116,7 +1156,8 @@ local successfulResponse = {
     filename = request.filename,
     analysis = {},
     edit_plan = {},
-    model = "fake-autodevelop-v1",
+    model = "gemma",
+    resolved_model = "fake-autodevelop-v1",
 }
 assertTrue(Validation.validateAnalyzeResponse(successfulResponse, request))
 local invalidAnalyzeModel = Utils.deepCopy(successfulResponse)
@@ -1200,7 +1241,8 @@ local developResponse = {
     filename = developRequest.filename,
     analysis = {},
     edit_plan = {},
-    model = "fake-autodevelop-v1",
+    model = "gpt_oss",
+    resolved_model = "fake-autodevelop-v1",
     processing_duration_ms = 3,
     develop_settings = {
         Exposure2012 = 0,
@@ -1245,7 +1287,7 @@ local wireValid, wireValidationError, wireModel =
         developRequest
     )
 assertTrue(wireValid, wireValidationError)
-assertEqual(wireModel, "fake-autodevelop-v1")
+assertEqual(wireModel, "gpt_oss")
 assertEqual(#wireDevelopResponse.warnings, 0)
 assertEqual(wireDevelopResponse.crop.recommended, false)
 assertTrue(wireDevelopResponse.crop.left == nil)
@@ -1304,6 +1346,7 @@ local wireOperation = PendingOperation.new({
         wireDevelopResponse.denoise.recommended == true,
     warnings = wireDevelopResponse.warnings,
     model = wireModel,
+    resolvedModel = wireDevelopResponse.resolved_model,
     processingDurationMs =
         wireDevelopResponse.processing_duration_ms,
 })
@@ -1327,7 +1370,7 @@ if wireRecordStatus == "recorded" then
 end
 assertEqual(wireSummary.ready, 1)
 assertEqual(
-    wireSummary.models["fake-autodevelop-v1"],
+    wireSummary.models["gpt_oss"],
     true
 )
 

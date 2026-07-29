@@ -303,7 +303,7 @@ class FakeModelClient(ModelClient):
     def __init__(
         self,
         *,
-        model_name: str = "fake-autodevelop-v1",
+        model_name: str | None = None,
         scenario: str = "auto",
     ) -> None:
         if scenario not in _SUPPORTED_SCENARIOS:
@@ -314,11 +314,13 @@ class FakeModelClient(ModelClient):
             )
         self.model_name = model_name
         self.scenario = scenario
+        self.invocations: list[dict[str, str]] = []
 
     async def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
         """Return deterministic analysis for a validated request."""
 
         scenario = self._select_scenario(request)
+        self._record(request)
         self._raise_for_invalid_output(scenario)
         return AnalyzeResponse(
             schema_version="1.0",
@@ -337,7 +339,8 @@ class FakeModelClient(ModelClient):
                 request.exif.iso,
             ),
             warnings=[],
-            model=self.model_name,
+            model=request.model or "gemma",
+            resolved_model=self._resolved_model(request),
             processing_duration_ms=1,
         )
 
@@ -349,6 +352,7 @@ class FakeModelClient(ModelClient):
         """Return deterministic raw develop recommendations."""
 
         scenario = self._select_scenario(request)
+        self._record(request)
         self._raise_for_invalid_output(scenario)
         profile_id = (
             profile.id if profile is not None else request.options.style_profile
@@ -370,7 +374,8 @@ class FakeModelClient(ModelClient):
                 request.exif.iso,
             ),
             warnings=[],
-            model=self.model_name,
+            model=request.model or "gemma",
+            resolved_model=self._resolved_model(request),
             processing_duration_ms=1,
         )
 
@@ -393,9 +398,37 @@ class FakeModelClient(ModelClient):
         if scenario == "invalid_output":
             raise ModelResponseError(
                 "Fake model scenario requested invalid output.",
-                model_name=self.model_name,
+                model_name=self.model_name or "fake-autodevelop-v1",
                 code="invalid_fake_output",
             )
+
+    def _record(self, request: AnalyzeRequest | DevelopRequest) -> None:
+        stable_model = request.model or "gemma"
+        self.invocations.append(
+            {
+                "model": stable_model,
+                "resolved_model": self._resolved_model(request),
+                "style_profile": request.options.style_profile,
+                "filename": request.filename,
+            }
+        )
+
+    @property
+    def invocation_count(self) -> int:
+        return len(self.invocations)
+
+    def _resolved_model(
+        self,
+        request: AnalyzeRequest | DevelopRequest,
+    ) -> str:
+        if self.model_name is not None:
+            return self.model_name
+        return {
+            "gemma": "gemma-4-31b",
+            "qwen": "qwen_qwen3-vl-32b-instruct",
+            "gpt_oss": "gpt-oss",
+            "gemini": "gemini-2.5-flash",
+        }.get(request.model or "gemma", "fake-autodevelop-v1")
 
     @staticmethod
     def _build_analysis(scenario: str) -> TechnicalAnalysis:

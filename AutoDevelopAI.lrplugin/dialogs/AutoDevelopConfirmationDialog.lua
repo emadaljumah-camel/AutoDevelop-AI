@@ -26,6 +26,18 @@ local function modelSummary(summary)
     return "mixed: " .. table.concat(names, ", ")
 end
 
+local function resolvedModelSummary(summary)
+    local names = {}
+    for name in pairs(summary.resolvedModels or {}) do
+        local identifier = Validation.validateModelIdentifier(name)
+        if identifier then
+            names[#names + 1] = identifier
+        end
+    end
+    table.sort(names)
+    return #names > 0 and table.concat(names, ", ") or "unavailable"
+end
+
 local function preparationLines(summary)
     return {
         "Selected: " .. tostring(summary.selected),
@@ -38,7 +50,10 @@ local function preparationLines(summary)
         "Profile ID: " .. Utils.safeMessage(summary.profileId, "unavailable"),
         "Confirmation: "
             .. Utils.safeMessage(summary.confirmationMode, "not applicable"),
-        "Model: " .. modelSummary(summary),
+        "Model: "
+            .. Utils.safeMessage(summary.modelDisplayName, "unavailable"),
+        "Model ID: " .. Utils.safeMessage(summary.modelId, modelSummary(summary)),
+        "Resolved model: " .. resolvedModelSummary(summary),
         "Crop changes: " .. tostring(summary.cropCount),
         "Crop recommended but disabled: "
             .. tostring(summary.cropDisabled or 0),

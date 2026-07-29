@@ -16,6 +16,7 @@ local share = LrView.share
 local observedKeys = {
     "backendBaseUrl",
     "styleProfileId",
+    "modelProfileId",
     "requestTimeoutText",
     "applyCrop",
     "confirmationMode",
@@ -178,6 +179,20 @@ return {
                                 Preferences.getStyleProfileChoices(),
                         })
                     ),
+
+                    preferenceRow(
+                        factory,
+                        "Default Model",
+                        factory:popup_menu({
+                            value = bind("modelProfileId"),
+                            items =
+                                Preferences.getModelProfileChoices(),
+                        })
+                    ),
+                    factory:static_text({
+                        title = "Claude — Future",
+                        fill_horizontal = 1,
+                    }),
 
                     preferenceRow(
                         factory,

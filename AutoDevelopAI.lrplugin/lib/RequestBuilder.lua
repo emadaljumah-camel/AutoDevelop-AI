@@ -1,6 +1,7 @@
 local Config = ModuleLoader.load("lib/Config.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
 local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
+local ModelProfiles = ModuleLoader.load("lib/ModelProfiles.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local RequestBuilder = {}
@@ -10,6 +11,10 @@ local function buildBase(photo, previewPath, options)
     local styleProfile = options.styleProfileId
     if not StyleProfiles.isValidId(styleProfile) then
         return nil, "The selected style profile is invalid."
+    end
+    local modelProfile = options.modelProfileId
+    if not ModelProfiles.isSelectableId(modelProfile) then
+        return nil, "The selected model is invalid or unavailable."
     end
     local uuidFactory = options.uuidFactory or Utils.newUuid
     local requestId = uuidFactory()
@@ -23,6 +28,7 @@ local function buildBase(photo, previewPath, options)
         schema_version = Config.SCHEMA_VERSION,
         request_id = requestId,
         filename = filename,
+        model = modelProfile,
         preview_path = previewPath,
         exif = ExifMapper.mapExif(photo),
         current_settings = ExifMapper.mapDevelopSettings(photo),

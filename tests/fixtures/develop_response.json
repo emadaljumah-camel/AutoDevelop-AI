@@ -44,7 +44,8 @@
     "reason": "Denoise is not needed for this fake scenario."
   },
   "warnings": [],
-  "model": "fake-autodevelop-v1",
+  "model": "gpt_oss",
+  "resolved_model": "gpt-oss",
   "processing_duration_ms": 1,
   "develop_settings": {
     "Exposure2012": 0.0,

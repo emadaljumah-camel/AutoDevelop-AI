@@ -2,15 +2,29 @@
 
 from fastapi import Request
 
-from autodevelop.model_clients import FakeModelClient, ModelClient
+from autodevelop.model_clients import ModelClient
+from autodevelop.model_clients import ModelResolver
+from autodevelop.config import Settings
 from autodevelop.profiles import StyleProfileLoader
 from autodevelop.validation import SafetyValidator
 
 
-async def get_model_client() -> ModelClient:
-    """Return the configured model client for one API request."""
+async def get_model_client(request: Request) -> ModelClient:
+    """Return the application-scoped provider-neutral model service."""
 
-    return FakeModelClient()
+    return request.app.state.model_service
+
+
+async def get_model_resolver(request: Request) -> ModelResolver:
+    """Return the application-scoped stateless model resolver."""
+
+    return request.app.state.model_resolver
+
+
+async def get_runtime_settings(request: Request) -> Settings:
+    """Return the validated application-scoped runtime settings."""
+
+    return request.app.state.settings
 
 
 async def get_style_profile_loader(request: Request) -> StyleProfileLoader:

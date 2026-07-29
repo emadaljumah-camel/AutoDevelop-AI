@@ -26,6 +26,15 @@ class _PhotoRequest(TransportModel):
     filename: NonBlankString = Field(
         description="Non-blank original photo filename.",
     )
+    model: NonBlankString | None = Field(
+        default=None,
+        description=(
+            "Stable model registry ID selected by the caller. Omitted legacy "
+            "Version 1 requests use the backend's configured default model at "
+            "the API boundary. Explicit null is invalid; current Lightroom "
+            "clients always send a non-blank model ID."
+        ),
+    )
     preview_path: NonBlankString | None = Field(
         default=None,
         description="Optional preview path; existence is not checked here.",
@@ -66,6 +75,7 @@ class AnalyzeRequest(_PhotoRequest):
                     "schema_version": "1.0",
                     "request_id": "11111111-1111-4111-8111-111111111111",
                     "filename": "DSC_0001.NEF",
+                    "model": "gemma",
                     "preview_path": "temp/DSC_0001.jpg",
                     "exif": {"iso": 400, "aperture": 8.0},
                 }
@@ -84,6 +94,7 @@ class DevelopRequest(_PhotoRequest):
                     "schema_version": "1.0",
                     "request_id": "22222222-2222-4222-8222-222222222222",
                     "filename": "DSC_0002.NEF",
+                    "model": "qwen",
                     "preview_base64": "/9j/4AAQSkZJRgABAQ...",
                     "options": {
                         "style_profile": "natural_travel",

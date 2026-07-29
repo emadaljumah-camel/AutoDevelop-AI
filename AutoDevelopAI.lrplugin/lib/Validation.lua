@@ -14,6 +14,7 @@ local developResponseFields = {
     denoise = true,
     warnings = true,
     model = true,
+    resolved_model = true,
     processing_duration_ms = true,
     develop_settings = true,
 }
@@ -163,7 +164,15 @@ function Validation.validateAnalyzeResponse(response, request)
     if not modelIdentifier then
         return false, "Response model identifier was invalid."
     end
-    return true, nil, modelIdentifier
+    if modelIdentifier ~= request.model then
+        return false, "Response model did not match the request."
+    end
+    local resolvedModel =
+        Validation.validateModelIdentifier(response.resolved_model)
+    if not resolvedModel then
+        return false, "Response resolved_model was invalid."
+    end
+    return true, nil, modelIdentifier, resolvedModel
 end
 
 function Validation.validateDevelopResponse(response, request)
@@ -191,6 +200,14 @@ function Validation.validateDevelopResponse(response, request)
     if not modelIdentifier then
         return false, "Response model identifier was invalid."
     end
+    if modelIdentifier ~= request.model then
+        return false, "Response model did not match the request."
+    end
+    local resolvedModel =
+        Validation.validateModelIdentifier(response.resolved_model)
+    if not resolvedModel then
+        return false, "Response resolved_model was invalid."
+    end
     if type(response.develop_settings) ~= "table" then
         return false, "Response develop_settings was missing."
     end
@@ -203,7 +220,7 @@ function Validation.validateDevelopResponse(response, request)
     if not validateWarnings(response.warnings) then
         return false, "Response warnings were invalid."
     end
-    return true, nil, modelIdentifier
+    return true, nil, modelIdentifier, resolvedModel
 end
 
 function Validation.parseErrorResponse(decoded, httpStatus)

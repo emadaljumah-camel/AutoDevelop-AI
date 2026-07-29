@@ -12,6 +12,14 @@ from autodevelop.models.common import (
     TechnicalAnalysis,
 )
 from autodevelop.models.requests import AnalyzeRequest, DevelopRequest
+from autodevelop.models.capabilities import ModelCapability, ModelsResponse
+from autodevelop.models.registry import (
+    DEFAULT_MODEL_ID,
+    ModelDefinition,
+    get_model_definition,
+    is_known_model_id,
+    list_model_definitions,
+)
 from autodevelop.models.responses import (
     AnalyzeResponse,
     DevelopResponse,
@@ -22,6 +30,7 @@ from autodevelop.models.responses import (
 __all__ = [
     "AnalyzeRequest",
     "AnalyzeResponse",
+    "DEFAULT_MODEL_ID",
     "CropRecommendation",
     "CurrentDevelopSettings",
     "DenoiseRecommendation",
@@ -31,8 +40,14 @@ __all__ = [
     "EditPlan",
     "ErrorDetail",
     "ErrorResponse",
+    "ModelDefinition",
+    "ModelCapability",
+    "ModelsResponse",
     "PhotoExif",
     "ProcessingOptions",
     "ProcessingWarning",
     "TechnicalAnalysis",
+    "get_model_definition",
+    "is_known_model_id",
+    "list_model_definitions",
 ]

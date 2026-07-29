@@ -17,10 +17,20 @@ local function summaryText(summary)
         "Style: "
             .. Utils.safeMessage(summary.styleDisplayName, "unavailable"),
         "Profile ID: " .. Utils.safeMessage(summary.profileId, "unavailable"),
+        "Model: "
+            .. Utils.safeMessage(summary.modelDisplayName, "unavailable"),
+        "Model ID: " .. Utils.safeMessage(summary.modelId, "unavailable"),
         "Cancelled: " .. (summary.cancelled and "yes" or "no"),
         "Elapsed: "
             .. ProgressTracker.formatDuration(summary.elapsedSeconds or 0),
     }
+    local resolved = {}
+    for identifier in pairs(summary.resolvedModels or {}) do
+        resolved[#resolved + 1] = identifier
+    end
+    table.sort(resolved)
+    lines[#lines + 1] = "Resolved model: "
+        .. (#resolved > 0 and table.concat(resolved, ", ") or "unavailable")
 
     local categories = BatchSummary.sortedCategories(summary)
     if #categories > 0 then
