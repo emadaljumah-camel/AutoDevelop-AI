@@ -2,11 +2,16 @@
 
 from fastapi.responses import JSONResponse
 
-from autodevelop.models import AnalyzeRequest, ErrorDetail, ErrorResponse
+from autodevelop.models import (
+    AnalyzeRequest,
+    DevelopRequest,
+    ErrorDetail,
+    ErrorResponse,
+)
 
 
 def error_response(
-    request: AnalyzeRequest,
+    request: AnalyzeRequest | DevelopRequest,
     *,
     status_code: int,
     code: str,

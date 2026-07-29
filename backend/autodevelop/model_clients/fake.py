@@ -344,19 +344,22 @@ class FakeModelClient(ModelClient):
     async def develop(
         self,
         request: DevelopRequest,
-        profile: StyleProfile,
+        profile: StyleProfile | None = None,
     ) -> DevelopResponse:
         """Return deterministic raw develop recommendations."""
 
         scenario = self._select_scenario(request)
         self._raise_for_invalid_output(scenario)
+        profile_id = (
+            profile.id if profile is not None else request.options.style_profile
+        )
         return DevelopResponse(
             schema_version="1.0",
             request_id=request.request_id,
             filename=request.filename,
             status="success",
             analysis=self._build_analysis(scenario),
-            edit_plan=self._build_edit_plan(scenario, profile.id),
+            edit_plan=self._build_edit_plan(scenario, profile_id),
             develop_settings=DevelopSettings.model_validate(
                 _DEVELOP_SETTINGS[scenario]
             ),

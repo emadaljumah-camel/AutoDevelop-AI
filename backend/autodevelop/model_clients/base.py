@@ -8,7 +8,6 @@ from autodevelop.models import (
     DevelopRequest,
     DevelopResponse,
 )
-from autodevelop.profiles import StyleProfile
 
 
 class ModelClient(ABC):
@@ -22,6 +21,5 @@ class ModelClient(ABC):
     async def develop(
         self,
         request: DevelopRequest,
-        profile: StyleProfile,
     ) -> DevelopResponse:
-        """Produce raw model recommendations for one photo and style profile."""
+        """Produce raw model recommendations for one photo request."""

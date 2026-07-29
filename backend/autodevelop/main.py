@@ -11,6 +11,7 @@ from autodevelop.api.router import api_router
 from autodevelop.config import Settings, get_settings
 from autodevelop.logging_config import configure_logging
 from autodevelop.profiles import StyleProfileLoader
+from autodevelop.validation import SafetyValidator
 
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     profile_loader: StyleProfileLoader | None = None,
+    safety_validator: SafetyValidator | None = None,
 ) -> FastAPI:
     """Create the AutoDevelop AI ASGI application."""
 
@@ -27,6 +29,7 @@ def create_app(
     application_profile_loader = (
         profile_loader if profile_loader is not None else StyleProfileLoader()
     )
+    application_safety_validator = safety_validator or SafetyValidator()
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -40,6 +43,7 @@ def create_app(
             logger.exception("Failed to initialize AutoDevelop AI style profiles.")
             raise
         application.state.style_profile_loader = application_profile_loader
+        application.state.safety_validator = application_safety_validator
         yield
 
     application = FastAPI(
