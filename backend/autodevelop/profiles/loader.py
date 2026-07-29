@@ -52,6 +52,17 @@ class StyleProfileLoader:
         self._cache[profile_id] = profile
         return self._copy_profile(profile)
 
+    def get_cached_profile(self, profile_id: str) -> StyleProfile:
+        """Return a defensive copy from the initialized cache only."""
+
+        try:
+            profile = self._cache[profile_id]
+        except KeyError:
+            raise ProfileNotFoundError(
+                f"Style profile not found: {profile_id}"
+            ) from None
+        return self._copy_profile(profile)
+
     def list_profiles(self) -> list[StyleProfile]:
         """Return all profiles in deterministic alphabetical ID order."""
 
