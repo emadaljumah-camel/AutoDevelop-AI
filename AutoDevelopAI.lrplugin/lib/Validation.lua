@@ -1,3 +1,4 @@
+local Json = ModuleLoader.load("lib/Json.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local Validation = {}
@@ -30,6 +31,10 @@ local function validUnitNumber(value)
     return Utils.isFiniteNumber(value) and value >= 0 and value <= 1
 end
 
+local function isAbsent(value)
+    return value == nil or value == Json.null
+end
+
 function Validation.validateModelIdentifier(value)
     if type(value) ~= "string"
         or #value < 1
@@ -57,16 +62,18 @@ function Validation.validateModelIdentifier(value)
 end
 
 local function validateCrop(crop)
-    if crop == nil then
+    if isAbsent(crop) then
         return true
     end
     if type(crop) ~= "table" or type(crop.recommended) ~= "boolean" then
         return false
     end
-    if crop.confidence ~= nil and not validUnitNumber(crop.confidence) then
+    if not isAbsent(crop.confidence)
+        and not validUnitNumber(crop.confidence) then
         return false
     end
-    if crop.angle ~= nil and not Utils.isFiniteNumber(crop.angle) then
+    if not isAbsent(crop.angle)
+        and not Utils.isFiniteNumber(crop.angle) then
         return false
     end
     if not crop.recommended then
@@ -82,17 +89,18 @@ local function validateCrop(crop)
 end
 
 local function validateDenoise(denoise)
-    if denoise == nil then
+    if isAbsent(denoise) then
         return true
     end
     if type(denoise) ~= "table"
         or type(denoise.recommended) ~= "boolean" then
         return false
     end
-    if denoise.amount ~= nil and not Utils.isFiniteNumber(denoise.amount) then
+    if not isAbsent(denoise.amount)
+        and not Utils.isFiniteNumber(denoise.amount) then
         return false
     end
-    return denoise.confidence == nil
+    return isAbsent(denoise.confidence)
         or validUnitNumber(denoise.confidence)
 end
 

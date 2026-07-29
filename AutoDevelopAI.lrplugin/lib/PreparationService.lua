@@ -18,6 +18,20 @@ local Validation = ModuleLoader.load("lib/Validation.lua")
 
 local PreparationService = {}
 
+local function markLifecycle(lifecycle, stage)
+    lifecycle.stage = stage
+    Logger.info(stage)
+end
+
+local function logStageFailure(stage, category)
+    Logger.warn(
+        "stage="
+            .. tostring(stage or "post_response")
+            .. " category="
+            .. tostring(category or ErrorClassifier.codes.internalError)
+    )
+end
+
 function PreparationService.failure(category, code)
     return {
         ok = false,
@@ -25,6 +39,15 @@ function PreparationService.failure(category, code)
         code = code or "operation_failed",
         retryable = false,
     }
+end
+
+local function stagedFailure(category, code, lifecycle)
+    local failure = PreparationService.failure(category, code)
+    failure.stage = Utils.safeErrorCode(
+        lifecycle and lifecycle.stage,
+        "develop_preparation_entry"
+    )
+    return failure
 end
 
 function PreparationService.request(
@@ -150,8 +173,10 @@ local function prepareDevelopPhotoBody(
     progressScope,
     context,
     preferences,
-    tracker
+    tracker,
+    lifecycle
 )
+    markLifecycle(lifecycle, "develop_preparation_started")
     if not ExifMapper.isSupportedPhoto(photo) then
         return "skipped", "Videos are not supported."
     end
@@ -162,6 +187,7 @@ local function prepareDevelopPhotoBody(
         )
     end
 
+    markLifecycle(lifecycle, "preview_export_started")
     local preview, previewError = PreviewExporter.exportPhoto(
         photo,
         batchDirectory,
@@ -174,15 +200,16 @@ local function prepareDevelopPhotoBody(
                 "user_cancelled"
             )
         end
-        Logger.warn(
-            "operation=develop_preview_export category=internal_error "
-                .. "code=preview_export_failed"
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.internalError
         )
         return "failed", PreparationService.failure(
             ErrorClassifier.codes.internalError,
             "preview_export_failed"
         )
     end
+    markLifecycle(lifecycle, "preview_export_completed")
 
     local previewCleaned = false
     context:addCleanupHandler(function()
@@ -200,6 +227,7 @@ local function prepareDevelopPhotoBody(
         )
     end
 
+    markLifecycle(lifecycle, "request_build_started")
     local request, requestError = RequestBuilder.buildDevelop(
         photo,
         preview.path,
@@ -211,16 +239,18 @@ local function prepareDevelopPhotoBody(
         }
     )
     if not request then
-        Logger.warn(
-            "operation=build_develop_request category=validation_error "
-                .. "code=request_build_failed"
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.validationError
         )
         return "failed", PreparationService.failure(
             ErrorClassifier.codes.validationError,
             "request_build_failed"
         )
     end
+    markLifecycle(lifecycle, "request_build_completed")
 
+    markLifecycle(lifecycle, "api_request_started")
     local response, requestFailure = PreparationService.request(
         "develop",
         request,
@@ -235,8 +265,10 @@ local function prepareDevelopPhotoBody(
         if requestFailure.category == ErrorClassifier.codes.cancelled then
             return "cancelled", requestFailure
         end
+        logStageFailure(lifecycle.stage, requestFailure.category)
         return "failed", requestFailure
     end
+    markLifecycle(lifecycle, "api_response_received")
     if progressScope:isCanceled() then
         return "cancelled", PreparationService.failure(
             ErrorClassifier.codes.cancelled,
@@ -244,36 +276,42 @@ local function prepareDevelopPhotoBody(
         )
     end
 
+    markLifecycle(lifecycle, "json_decode_started")
     local decoded, decodeError = ApiClient.decodeBody(response)
     if not decoded then
-        Logger.warn(
-            "Develop response JSON failure request_id="
-                .. request.request_id
-                .. " category=invalid_response code=malformed_json"
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.invalidResponse
         )
         return "failed", PreparationService.failure(
             ErrorClassifier.codes.invalidResponse,
             "malformed_json"
         )
     end
+    markLifecycle(lifecycle, "json_decode_completed")
 
+    markLifecycle(lifecycle, "response_validation_started")
     local valid, validationError, validatedModel =
         Validation.validateDevelopResponse(decoded, request)
     if not valid then
-        Logger.warn(
-            "Develop response validation failed request_id="
-                .. request.request_id
-                .. " category=invalid_response "
-                .. "code=response_validation_failed"
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.invalidResponse
         )
         return "failed", PreparationService.failure(
             ErrorClassifier.codes.invalidResponse,
             "response_validation_failed"
         )
     end
+    markLifecycle(lifecycle, "response_validation_completed")
 
+    markLifecycle(lifecycle, "develop_mapping_started")
     local currentSettings = currentDevelopSettings(photo)
     if not currentSettings then
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.internalError
+        )
         return "failed", PreparationService.failure(
             ErrorClassifier.codes.internalError,
             "current_settings_unavailable"
@@ -284,11 +322,15 @@ local function prepareDevelopPhotoBody(
         decoded.develop_settings,
         currentSettings
     )
+    markLifecycle(lifecycle, "develop_mapping_completed")
+
+    markLifecycle(lifecycle, "crop_mapping_started")
     local mappedCrop = CropMapper.map(
         decoded.crop,
         preferences.applyCrop,
         currentSettings
     )
+    markLifecycle(lifecycle, "crop_mapping_completed")
     local cropDisabled = preferences.applyCrop == false
         and type(decoded.crop) == "table"
         and decoded.crop.recommended == true
@@ -309,11 +351,16 @@ local function prepareDevelopPhotoBody(
         }
     end
 
+    markLifecycle(lifecycle, "pending_operation_build_started")
     local originalSettings = ApplyService.captureOriginal(
         currentSettings,
         mappedSettings
     )
     if countSettings(originalSettings) ~= settingCount then
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.internalError
+        )
         return "failed", PreparationService.failure(
             ErrorClassifier.codes.internalError,
             "original_settings_unavailable"
@@ -335,6 +382,7 @@ local function prepareDevelopPhotoBody(
         processingDurationMs = decoded.processing_duration_ms,
     })
     operation.cropDisabled = cropDisabled
+    markLifecycle(lifecycle, "pending_operation_build_completed")
     if progressScope:isCanceled() then
         PendingOperation.clear({ operation })
         return "cancelled", PreparationService.failure(
@@ -352,32 +400,53 @@ function PreparationService.prepareDevelopPhoto(
     preferences,
     tracker
 )
-    local ok, outcome, value = LrTasks.pcall(function()
+    local lifecycle = {
+        stage = "develop_preparation_entry",
+    }
+    local ok, result = LrTasks.pcall(function()
         return LrFunctionContext.callWithContext(
             "AutoDevelop AI Prepare Photo",
             function(context)
-                return prepareDevelopPhotoBody(
+                local outcome, value = prepareDevelopPhotoBody(
                     photo,
                     batchDirectory,
                     progressScope,
                     context,
                     preferences,
-                    tracker
+                    tracker,
+                    lifecycle
                 )
+                return {
+                    outcome = outcome,
+                    value = value,
+                }
             end
         )
     end)
     if not ok then
-        Logger.error(
-            "operation=prepare_develop_photo category=internal_error "
-                .. "code=unexpected_exception"
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.internalError
         )
-        return "failed", PreparationService.failure(
+        return "failed", stagedFailure(
             ErrorClassifier.codes.internalError,
-            "unexpected_plugin_error"
+            "unexpected_plugin_error",
+            lifecycle
         )
     end
-    return outcome, value
+    if type(result) ~= "table"
+        or type(result.outcome) ~= "string" then
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.internalError
+        )
+        return "failed", stagedFailure(
+            ErrorClassifier.codes.internalError,
+            "invalid_preparation_result",
+            lifecycle
+        )
+    end
+    return result.outcome, result.value
 end
 
 return PreparationService

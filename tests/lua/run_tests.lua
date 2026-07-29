@@ -103,7 +103,10 @@ end
 local ModuleLoader = require("ModuleLoader")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 local Config = ModuleLoader.load("lib/Config.lua")
+local Json = ModuleLoader.load("lib/Json.lua")
 local Preferences = ModuleLoader.load("lib/Preferences.lua")
+local PluginManagerController =
+    ModuleLoader.load("lib/PluginManagerController.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
 local RequestBuilder = ModuleLoader.load("lib/RequestBuilder.lua")
 local Validation = ModuleLoader.load("lib/Validation.lua")
@@ -627,7 +630,7 @@ assertTrue(Preferences.set("requestTimeoutSeconds", 9) == nil)
 assertTrue(Preferences.set("requestTimeoutSeconds", 601) == nil)
 assertTrue(Preferences.set("requestTimeoutSeconds", 10.5) == nil)
 assertTrue(Preferences.set("requestTimeoutSeconds", "120") == nil)
-for _, choice in ipairs(Preferences.profileChoices) do
+for _, choice in ipairs(Preferences.getStyleProfileChoices()) do
     assertEqual(
         Preferences.set("styleProfileId", choice.value),
         choice.value
@@ -651,6 +654,130 @@ assertEqual(defaults.requestTimeoutSeconds, 120)
 assertEqual(defaults.applyCrop, true)
 assertEqual(defaults.confirmationMode, "always")
 assertEqual(defaults.loggingLevel, "info")
+
+local profileChoices = Preferences.getStyleProfileChoices()
+assertEqual(#profileChoices, 6)
+assertEqual(profileChoices[1].title, "Natural Travel")
+assertEqual(profileChoices[1].value, "natural_travel")
+assertEqual(profileChoices[2].value, "stock_neutral")
+assertEqual(profileChoices[3].value, "landscape_impact")
+assertEqual(profileChoices[4].value, "architecture")
+assertEqual(profileChoices[5].value, "portrait")
+assertEqual(profileChoices[6].value, "night")
+profileChoices[1].title = "Mutated"
+assertEqual(
+    Preferences.getStyleProfileChoices()[1].title,
+    "Natural Travel",
+    "choice getters must return defensive copies"
+)
+
+local confirmationChoices = Preferences.getConfirmationChoices()
+assertEqual(#confirmationChoices, 2)
+assertEqual(confirmationChoices[1].title, "Always")
+assertEqual(confirmationChoices[1].value, "always")
+assertEqual(confirmationChoices[2].title, "Never")
+assertEqual(confirmationChoices[2].value, "never")
+
+local loggingChoices = Preferences.getLoggingChoices()
+assertEqual(#loggingChoices, 4)
+assertEqual(loggingChoices[1].title, "Error")
+assertEqual(loggingChoices[1].value, "error")
+assertEqual(loggingChoices[2].title, "Warning")
+assertEqual(loggingChoices[2].value, "warning")
+assertEqual(loggingChoices[3].title, "Info")
+assertEqual(loggingChoices[3].value, "info")
+assertEqual(loggingChoices[4].title, "Debug")
+assertEqual(loggingChoices[4].value, "debug")
+
+for _, text in ipairs({ "100", "120", "600" }) do
+    assertEqual(
+        Preferences.validateRequestTimeoutText(text),
+        tonumber(text)
+    )
+end
+for _, text in ipairs({
+    "",
+    "9",
+    "601",
+    "10.5",
+    "1 20",
+    " 120 ",
+    "NaN",
+    "Infinity",
+}) do
+    assertTrue(Preferences.validateRequestTimeoutText(text) == nil)
+end
+
+local managerProperties = {}
+PluginManagerController.populate(managerProperties)
+assertEqual(managerProperties.backendBaseUrl, defaults.backendBaseUrl)
+assertEqual(managerProperties.styleProfileId, defaults.styleProfileId)
+assertEqual(managerProperties.requestTimeoutText, "120")
+assertEqual(managerProperties.applyCrop, defaults.applyCrop)
+assertEqual(
+    managerProperties.confirmationMode,
+    defaults.confirmationMode
+)
+assertEqual(managerProperties.loggingLevel, defaults.loggingLevel)
+assertEqual(managerProperties.connectionState, "idle")
+assertEqual(managerProperties.connectionStatusText, "Not tested")
+assertEqual(managerProperties.connectionTestRunning, false)
+assertEqual(managerProperties.canTestConnection, true)
+assertEqual(managerProperties.validationMessage, "")
+
+managerProperties.requestTimeoutText = "601"
+local invalidManagerSettings =
+    PluginManagerController.validateAndSave(managerProperties)
+assertTrue(invalidManagerSettings == nil)
+assertEqual(
+    fakePreferences.requestTimeoutSeconds,
+    120,
+    "invalid timeout text must preserve the stored timeout"
+)
+managerProperties.requestTimeoutText = "120"
+local validManagerSettings =
+    assert(PluginManagerController.validateAndSave(managerProperties))
+assertEqual(validManagerSettings.requestTimeoutSeconds, 120)
+
+local connectedOutcome =
+    PluginManagerController.classifyConnectionResult(
+        true,
+        { ok = true }
+    )
+assertEqual(connectedOutcome.state, "connected")
+assertEqual(connectedOutcome.text, "Connected")
+local stoppedOutcome =
+    PluginManagerController.classifyConnectionResult(
+        true,
+        { ok = false, category = "backend_not_running" }
+    )
+assertEqual(stoppedOutcome.state, "backend_not_running")
+assertEqual(stoppedOutcome.text, "Backend not running")
+local timeoutOutcome =
+    PluginManagerController.classifyConnectionResult(
+        true,
+        { ok = false, category = "model_timeout" }
+    )
+assertEqual(timeoutOutcome.state, "timeout")
+assertEqual(timeoutOutcome.text, "Timed out")
+local invalidResponseOutcome =
+    PluginManagerController.classifyConnectionResult(
+        true,
+        { ok = false, category = "invalid_response" }
+    )
+assertEqual(invalidResponseOutcome.state, "invalid_response")
+assertEqual(invalidResponseOutcome.text, "Invalid response")
+local networkOutcome =
+    PluginManagerController.classifyConnectionResult(
+        true,
+        { ok = false, category = "network_error" }
+    )
+assertEqual(networkOutcome.state, "network_error")
+assertEqual(networkOutcome.text, "Network error")
+local internalOutcome =
+    PluginManagerController.classifyConnectionResult(false, nil)
+assertEqual(internalOutcome.state, "internal_error")
+assertTrue(internalOutcome.text:find("failed safely", 1, true) ~= nil)
 
 fakePreferences.loggingLevel = "error"
 Logger.info("suppressed info")
@@ -784,6 +911,148 @@ local developResponse = {
 }
 assertTrue(
     Validation.validateDevelopResponse(developResponse, developRequest)
+)
+
+local fixtureFile = assert(io.open(
+    "tests/fixtures/develop_response.json",
+    "rb"
+))
+local fixtureJson = fixtureFile:read("*a")
+fixtureFile:close()
+local wireDevelopResponse = assert(Json.decode(fixtureJson))
+local wireValid, wireValidationError, wireModel =
+    Validation.validateDevelopResponse(
+        wireDevelopResponse,
+        developRequest
+    )
+assertTrue(wireValid, wireValidationError)
+assertEqual(wireModel, "fake-autodevelop-v1")
+assertEqual(#wireDevelopResponse.warnings, 0)
+assertEqual(wireDevelopResponse.crop.recommended, false)
+assertTrue(wireDevelopResponse.crop.left == nil)
+assertEqual(wireDevelopResponse.denoise.recommended, false)
+assertTrue(wireDevelopResponse.denoise.amount == nil)
+
+local wireCurrentSettings = {
+    Exposure2012 = 0,
+    Contrast2012 = 0,
+    Highlights2012 = 0,
+    Shadows2012 = 0,
+    Whites2012 = 0,
+    Blacks2012 = 0,
+    Texture = 0,
+    Clarity2012 = 0,
+    Dehaze = 0,
+    Vibrance = 0,
+    Saturation = 0,
+    Temperature = 5500,
+    Tint = 0,
+    CropLeft = 0,
+    CropRight = 1,
+    CropTop = 0,
+    CropBottom = 1,
+    CropAngle = 0,
+}
+local wireMappedSettings = DevelopSettingsMapper.map(
+    wireDevelopResponse.develop_settings,
+    wireCurrentSettings
+)
+assertEqual(wireMappedSettings.Exposure2012, 0)
+assertEqual(wireMappedSettings.Highlights2012, -5)
+assertEqual(wireMappedSettings.Vibrance, 3)
+assertTrue(wireMappedSettings.Temperature == nil)
+assertTrue(
+    CropMapper.map(
+        wireDevelopResponse.crop,
+        true,
+        wireCurrentSettings
+    ) == nil
+)
+local wireOriginalSettings = ApplyService.captureOriginal(
+    wireCurrentSettings,
+    wireMappedSettings
+)
+local wireOperation = PendingOperation.new({
+    photo = mappedPhoto,
+    photoKey = Utils.photoKey(mappedPhoto),
+    filename = wireDevelopResponse.filename,
+    requestId = wireDevelopResponse.request_id,
+    profileId = developRequest.options.style_profile,
+    originalSettings = wireOriginalSettings,
+    mappedSettings = wireMappedSettings,
+    cropIncluded = false,
+    denoiseRecommended =
+        wireDevelopResponse.denoise.recommended == true,
+    warnings = wireDevelopResponse.warnings,
+    model = wireModel,
+    processingDurationMs =
+        wireDevelopResponse.processing_duration_ms,
+})
+local wireOperations = {}
+local wireRecordStatus = BatchOperationRecorder.tryRecord({
+    cancelled = false,
+    terminalFailure = false,
+    preparationResult = "ready",
+    operation = wireOperation,
+    operations = wireOperations,
+})
+assertEqual(wireRecordStatus, "recorded")
+assertEqual(#wireOperations, 1)
+local wireSummary = {
+    ready = 0,
+    models = {},
+}
+if wireRecordStatus == "recorded" then
+    wireSummary.ready = wireSummary.ready + 1
+    wireSummary.models[wireOperation.model] = true
+end
+assertEqual(wireSummary.ready, 1)
+assertEqual(
+    wireSummary.models["fake-autodevelop-v1"],
+    true
+)
+
+local wireUnknownTopLevel = Utils.deepCopy(wireDevelopResponse)
+wireUnknownTopLevel.validation_metadata = {}
+assertTrue(
+    not Validation.validateDevelopResponse(
+        wireUnknownTopLevel,
+        developRequest
+    )
+)
+local wireIncompleteCrop = Utils.deepCopy(wireDevelopResponse)
+wireIncompleteCrop.crop.recommended = true
+wireIncompleteCrop.crop.left = 0.1
+assertTrue(
+    not Validation.validateDevelopResponse(
+        wireIncompleteCrop,
+        developRequest
+    )
+)
+local wireUnsafeModel = Utils.deepCopy(wireDevelopResponse)
+wireUnsafeModel.model = "https://user:secret@example.test/model"
+assertTrue(
+    not Validation.validateDevelopResponse(
+        wireUnsafeModel,
+        developRequest
+    )
+)
+local wireUnknownSetting = Utils.deepCopy(wireDevelopResponse)
+wireUnknownSetting.develop_settings.UnsafeSetting = 99
+local wireAllowListed = DevelopSettingsMapper.map(
+    wireUnknownSetting.develop_settings,
+    wireCurrentSettings
+)
+assertTrue(wireAllowListed.UnsafeSetting == nil)
+
+local nullOptionalDevelop = Utils.deepCopy(developResponse)
+nullOptionalDevelop.crop = Json.null
+nullOptionalDevelop.denoise = Json.null
+assertTrue(
+    Validation.validateDevelopResponse(
+        nullOptionalDevelop,
+        developRequest
+    )
 )
 local developInvalidModel = Utils.deepCopy(developResponse)
 developInvalidModel.model = "../../secret"
@@ -1284,6 +1553,68 @@ local categories = BatchSummary.sortedCategories(phaseSummary)
 assertEqual(categories[1], "invalid_response")
 assertEqual(categories[2], "network_error")
 
+local diagnosticSummary = BatchSummary.new(1, "develop")
+diagnosticSummary.profileId = "natural_travel"
+diagnosticSummary.confirmationMode = "always"
+diagnosticSummary.models = {}
+diagnosticSummary.examples = {}
+BatchSummary.addFailure(diagnosticSummary, "photo.nef", {
+    category = "internal_error",
+    code = "preview_export_failed",
+    stage = "preview_export_started",
+})
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(diagnosticSummary, {
+    applied = 0,
+})
+assertTrue(
+    lastDialog.message:find(
+        "Diagnostic code: preview_export_failed",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    lastDialog.message:find(
+        "Diagnostic stage: preview_export_started",
+        1,
+        true
+    ) ~= nil
+)
+
+local unsafeDiagnosticSummary = BatchSummary.new(1, "develop")
+unsafeDiagnosticSummary.profileId = "natural_travel"
+unsafeDiagnosticSummary.confirmationMode = "always"
+unsafeDiagnosticSummary.models = {}
+unsafeDiagnosticSummary.examples = {}
+BatchSummary.addFailure(unsafeDiagnosticSummary, "photo.nef", {
+    category = "internal_error",
+    code = "C:\\Users\\Person\\private.lua?token=secret",
+    stage = "https://user:secret@example.test/private",
+})
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(
+    unsafeDiagnosticSummary,
+    { applied = 0 }
+)
+assertTrue(
+    lastDialog.message:find(
+        "Diagnostic code: internal_error",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    lastDialog.message:find(
+        "Diagnostic stage: internal_error",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(lastDialog.message:find("Users", 1, true) == nil)
+assertTrue(lastDialog.message:find("token", 1, true) == nil)
+assertTrue(lastDialog.message:find("example.test", 1, true) == nil)
+
 ResultStore.clear()
 local resultPhotoKey = Utils.photoKey(mappedPhoto)
 assertEqual(resultPhotoKey, "local:7")
@@ -1301,7 +1632,6 @@ assertEqual(
 ResultStore.remove(resultPhotoKey)
 assertEqual(ResultStore.count(), 0)
 
-local Json = ModuleLoader.load("lib/Json.lua")
 local encoded = assert(Json.encode(request))
 assertTrue(
     encoded:find("D:\\\\Temp", 1, true) ~= nil,

@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "request_id": "33345678-1234-4abc-8abc-1234567890ab",
+  "filename": "Mapped.NEF",
+  "status": "success",
+  "analysis": {
+    "scene_type": "general",
+    "main_subject": "general scene",
+    "lighting": "even light",
+    "exposure_assessment": "balanced",
+    "white_balance_assessment": "neutral",
+    "dynamic_range": "moderate",
+    "noise_level": "low",
+    "horizon_status": "level",
+    "visible_people": 0,
+    "has_faces": false,
+    "has_sky": false,
+    "confidence": 0.95
+  },
+  "edit_plan": {
+    "style_profile": "natural_travel",
+    "goals": [
+      "Maintain balanced tone",
+      "Keep color natural"
+    ],
+    "cautions": [
+      "Avoid unnecessary contrast"
+    ]
+  },
+  "crop": {
+    "recommended": false,
+    "left": null,
+    "right": null,
+    "top": null,
+    "bottom": null,
+    "angle": null,
+    "confidence": 0.95,
+    "reason": "No crop change is needed for this fake scenario."
+  },
+  "denoise": {
+    "recommended": false,
+    "amount": null,
+    "confidence": 0.9,
+    "reason": "Denoise is not needed for this fake scenario."
+  },
+  "warnings": [],
+  "model": "fake-autodevelop-v1",
+  "processing_duration_ms": 1,
+  "develop_settings": {
+    "Exposure2012": 0.0,
+    "Contrast2012": 0.0,
+    "Highlights2012": -5.0,
+    "Shadows2012": 5.0,
+    "Whites2012": 0.0,
+    "Blacks2012": 0.0,
+    "Texture": 0.0,
+    "Clarity2012": 0.0,
+    "Dehaze": 0.0,
+    "Vibrance": 3.0,
+    "Saturation": 0.0,
+    "Temperature": null,
+    "Tint": null,
+    "CropLeft": null,
+    "CropRight": null,
+    "CropTop": null,
+    "CropBottom": null,
+    "CropAngle": null
+  }
+}

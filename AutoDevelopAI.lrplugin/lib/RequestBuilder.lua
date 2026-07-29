@@ -1,3 +1,4 @@
+local Config = ModuleLoader.load("lib/Config.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
 local Preferences = ModuleLoader.load("lib/Preferences.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")

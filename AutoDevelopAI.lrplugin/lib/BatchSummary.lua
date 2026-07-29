@@ -1,3 +1,5 @@
+local Utils = ModuleLoader.load("lib/Utils.lua")
+
 local BatchSummary = {}
 
 function BatchSummary.new(selected, kind, startedAt)
@@ -32,10 +34,14 @@ function BatchSummary.addFailure(summary, filename, failure)
     summary.failureCategories[category] =
         (summary.failureCategories[category] or 0) + 1
     if #summary.failures < 5 then
+        local stage = type(failure) == "table"
+            and failure.stage or nil
         summary.failures[#summary.failures + 1] = {
             filename = filename,
             category = category,
             code = type(failure) == "table" and failure.code or nil,
+            stage = type(stage) == "string"
+                and Utils.safeErrorCode(stage, "internal_error") or nil,
         }
     end
 end

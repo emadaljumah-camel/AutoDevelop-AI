@@ -1,95 +1,126 @@
 require "ModuleLoader.lua"
 
+local LrBinding = import("LrBinding")
 local LrTasks = import("LrTasks")
 local LrView = import("LrView")
 
 local BackendClient = ModuleLoader.load("lib/BackendClient.lua")
+local Logger = ModuleLoader.load("lib/Logger.lua")
+local PluginManagerController =
+    ModuleLoader.load("lib/PluginManagerController.lua")
 local Preferences = ModuleLoader.load("lib/Preferences.lua")
 
 local bind = LrView.bind
+local share = LrView.share
 
-local preferenceKeys = {
+local observedKeys = {
     "backendBaseUrl",
     "styleProfileId",
-    "requestTimeoutSeconds",
+    "requestTimeoutText",
     "applyCrop",
     "confirmationMode",
     "loggingLevel",
 }
 
-local function loadValues(propertyTable)
-    propertyTable._loadingPreferences = true
-    local values = Preferences.valuesForUi()
-    for _, key in ipairs(preferenceKeys) do
-        propertyTable[key] = values[key]
-        local _, reason = Preferences.validate(key, values[key])
-        propertyTable[key .. "Validation"] = reason or ""
-    end
-    if propertyTable.connectionStatus == nil then
-        propertyTable.connectionStatus = "Not tested"
-    end
-    if propertyTable.testingConnection == nil then
-        propertyTable.testingConnection = false
-    end
-    propertyTable._loadingPreferences = false
+local function loadValues(properties)
+    properties._loadingPreferences = true
+    PluginManagerController.populate(properties)
+    properties._loadingPreferences = false
 end
 
-local function observePreference(propertyTable, key)
-    propertyTable:addObserver(key, function(_, _, value)
-        if propertyTable._loadingPreferences then
+local function observePreference(properties, key)
+    properties:addObserver(key, function()
+        if properties._loadingPreferences then
             return
         end
-        local _, reason = Preferences.set(key, value)
-        propertyTable[key .. "Validation"] = reason or ""
+        PluginManagerController.saveField(properties, key)
     end)
 end
 
-local function testConnection(propertyTable)
-    if propertyTable.testingConnection then
+local function setPropertySafely(properties, key, value)
+    return LrTasks.pcall(function()
+        properties[key] = value
+    end)
+end
+
+local function logConnectionResult(category)
+    if category == "internal_error" then
+        Logger.debug(
+            "plugin_manager_test_connection_failed "
+                .. "category=internal_error"
+        )
         return
     end
-    local baseUrl, urlError =
-        Preferences.validate("backendBaseUrl", propertyTable.backendBaseUrl)
-    local timeout, timeoutError = Preferences.validate(
-        "requestTimeoutSeconds",
-        propertyTable.requestTimeoutSeconds
+    Logger.debug(
+        "plugin_manager_test_connection_completed category="
+            .. category
     )
-    if not baseUrl or not timeout then
-        propertyTable.connectionStatus =
-            urlError or timeoutError or "Preferences are invalid."
+end
+
+local function testConnection(properties)
+    if properties.connectionTestRunning then
         return
     end
 
-    propertyTable.testingConnection = true
-    propertyTable.connectionStatus = "Testing connection..."
+    local settings, reason =
+        PluginManagerController.validateAndSave(properties)
+    if not settings then
+        properties.connectionState = "invalid_settings"
+        properties.connectionStatusText =
+            "Invalid settings: " .. reason
+        return
+    end
+
+    properties.connectionTestRunning = true
+    properties.canTestConnection = false
+    properties.connectionState = "testing"
+    properties.connectionStatusText = "Testing…"
+    Logger.debug("plugin_manager_test_connection_started")
+
     LrTasks.startAsyncTask(function()
         local callOk, result = LrTasks.pcall(
             BackendClient.getHealth,
-            baseUrl,
-            timeout
+            settings.backendBaseUrl,
+            settings.requestTimeoutSeconds
         )
-        if callOk and result and result.ok then
-            propertyTable.connectionStatus = "Connected - "
-                .. result.service
-                .. " "
-                .. result.version
-        elseif callOk and result
-            and result.category == "model_timeout" then
-            propertyTable.connectionStatus = "Timed out"
-        elseif callOk and result
-            and (result.category == "backend_not_running"
-                or result.category == "network_error") then
-            propertyTable.connectionStatus = "Backend not running"
-        else
-            propertyTable.connectionStatus = "Invalid response"
+        local classified, outcome = LrTasks.pcall(
+            PluginManagerController.classifyConnectionResult,
+            callOk,
+            result
+        )
+        if not classified then
+            outcome = {
+                state = "internal_error",
+                text = "Connection test failed safely. "
+                    .. "Check the plug-in log.",
+                category = "internal_error",
+            }
         end
-        propertyTable.testingConnection = false
+
+        -- Reset each guard independently even if another UI update fails.
+        setPropertySafely(
+            properties,
+            "connectionTestRunning",
+            false
+        )
+        setPropertySafely(properties, "canTestConnection", true)
+        setPropertySafely(
+            properties,
+            "connectionState",
+            outcome.state
+        )
+        setPropertySafely(
+            properties,
+            "connectionStatusText",
+            outcome.text
+        )
+        logConnectionResult(outcome.category)
     end)
 end
 
-local function validationText(factory, key)
+local function validationText(factory)
     return factory:static_text({
-        title = bind(key .. "Validation"),
+        title = bind("validationMessage"),
         fill_horizontal = 1,
     })
 end
@@ -99,7 +130,7 @@ local function preferenceRow(factory, label, control)
         spacing = factory:control_spacing(),
         factory:static_text({
             title = label,
-            width = 150,
+            width = share("autodevelop_plugin_manager_label_width"),
         }),
         control,
     })
@@ -109,8 +140,11 @@ return {
     startDialog = function(propertyTable)
         Preferences.initializeDefaults()
         loadValues(propertyTable)
-        for _, key in ipairs(preferenceKeys) do
-            observePreference(propertyTable, key)
+        if not propertyTable._observersInstalled then
+            for _, key in ipairs(observedKeys) do
+                observePreference(propertyTable, key)
+            end
+            propertyTable._observersInstalled = true
         end
     end,
 
@@ -118,9 +152,10 @@ return {
         return {
             {
                 title = "AutoDevelop AI",
-                synopsis = bind("connectionStatus"),
+                synopsis = bind("connectionStatusText"),
 
                 factory:column({
+                    bind_to_object = propertyTable,
                     spacing = factory:control_spacing(),
                     fill_horizontal = 1,
 
@@ -133,29 +168,26 @@ return {
                             width_in_chars = 36,
                         })
                     ),
-                    validationText(factory, "backendBaseUrl"),
 
                     preferenceRow(
                         factory,
                         "Style profile",
                         factory:popup_menu({
                             value = bind("styleProfileId"),
-                            items = Preferences.profileChoices,
+                            items =
+                                Preferences.getStyleProfileChoices(),
                         })
                     ),
-                    validationText(factory, "styleProfileId"),
 
                     preferenceRow(
                         factory,
                         "Request timeout (10-600 seconds)",
                         factory:edit_field({
-                            value = bind("requestTimeoutSeconds"),
+                            value = bind("requestTimeoutText"),
+                            width_in_chars = 6,
                             immediate = true,
-                            width_in_digits = 4,
-                            precision = 0,
                         })
                     ),
-                    validationText(factory, "requestTimeoutSeconds"),
 
                     preferenceRow(
                         factory,
@@ -165,19 +197,18 @@ return {
                             value = bind("applyCrop"),
                         })
                     ),
-                    validationText(factory, "applyCrop"),
 
                     preferenceRow(
                         factory,
                         "Confirmation",
                         factory:popup_menu({
                             value = bind("confirmationMode"),
-                            items = Preferences.confirmationChoices,
+                            items =
+                                Preferences.getConfirmationChoices(),
                         })
                     ),
-                    validationText(factory, "confirmationMode"),
                     factory:static_text({
-                        title = "Never ask applies automatically after "
+                        title = "Never applies automatically after "
                             .. "preparation without showing the batch "
                             .. "confirmation.",
                         fill_horizontal = 1,
@@ -188,15 +219,17 @@ return {
                         "Logging",
                         factory:popup_menu({
                             value = bind("loggingLevel"),
-                            items = Preferences.loggingChoices,
+                            items = Preferences.getLoggingChoices(),
                         })
                     ),
-                    validationText(factory, "loggingLevel"),
+
+                    validationText(factory),
 
                     factory:row({
                         spacing = factory:control_spacing(),
                         factory:push_button({
                             title = "Test Connection",
+                            enabled = bind("canTestConnection"),
                             action = function()
                                 testConnection(propertyTable)
                             end,
@@ -204,17 +237,32 @@ return {
                         factory:push_button({
                             title = "Reset Defaults",
                             action = function()
-                                if propertyTable.testingConnection then
-                                    propertyTable.connectionStatus =
-                                        "Wait for the connection test to finish."
+                                if propertyTable.connectionTestRunning then
+                                    propertyTable.connectionStatusText =
+                                        "Wait for the connection test "
+                                        .. "to finish."
                                     return
                                 end
+                                propertyTable._loadingPreferences = true
                                 Preferences.resetDefaults()
-                                loadValues(propertyTable)
+                                PluginManagerController.populate(
+                                    propertyTable
+                                )
+                                propertyTable._loadingPreferences = false
                             end,
                         }),
+                    }),
+
+                    factory:row({
+                        spacing = factory:control_spacing(),
                         factory:static_text({
-                            title = bind("connectionStatus"),
+                            title = "Status:",
+                            width = share(
+                                "autodevelop_plugin_manager_label_width"
+                            ),
+                        }),
+                        factory:static_text({
+                            title = bind("connectionStatusText"),
                             fill_horizontal = 1,
                         }),
                     }),

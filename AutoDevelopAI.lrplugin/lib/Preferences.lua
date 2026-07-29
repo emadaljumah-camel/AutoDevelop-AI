@@ -5,7 +5,7 @@ local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local Preferences = {}
 
-Preferences.profileChoices = {
+local profileChoices = {
     { title = "Natural Travel", value = "natural_travel" },
     { title = "Stock Neutral", value = "stock_neutral" },
     { title = "Landscape Impact", value = "landscape_impact" },
@@ -14,20 +14,20 @@ Preferences.profileChoices = {
     { title = "Night", value = "night" },
 }
 
-Preferences.confirmationChoices = {
-    { title = "Always ask", value = "always" },
-    { title = "Never ask", value = "never" },
+local confirmationChoices = {
+    { title = "Always", value = "always" },
+    { title = "Never", value = "never" },
 }
 
-Preferences.loggingChoices = {
-    { title = "Errors only", value = "error" },
-    { title = "Warnings and errors", value = "warning" },
-    { title = "Information", value = "info" },
+local loggingChoices = {
+    { title = "Error", value = "error" },
+    { title = "Warning", value = "warning" },
+    { title = "Info", value = "info" },
     { title = "Debug", value = "debug" },
 }
 
 local profileIds = {}
-for _, choice in ipairs(Preferences.profileChoices) do
+for _, choice in ipairs(profileChoices) do
     profileIds[choice.value] = true
 end
 
@@ -92,6 +92,13 @@ local function validateRequestTimeoutSeconds(value)
         return nil, "Request timeout must be a whole number from 10 to 600."
     end
     return normalized
+end
+
+local function validateRequestTimeoutText(value)
+    if type(value) ~= "string" or not value:match("^%d+$") then
+        return nil, "Request timeout must be integer text from 10 to 600."
+    end
+    return validateRequestTimeoutSeconds(tonumber(value))
 end
 
 local function validateBoolean(value, label)
@@ -194,6 +201,33 @@ function Preferences.getRuntimeLoggingLevel()
         return Config.defaults.loggingLevel
     end
     return level
+end
+
+local function copyChoices(choices)
+    local copied = {}
+    for index, choice in ipairs(choices) do
+        copied[index] = {
+            title = choice.title,
+            value = choice.value,
+        }
+    end
+    return copied
+end
+
+function Preferences.getStyleProfileChoices()
+    return copyChoices(profileChoices)
+end
+
+function Preferences.getConfirmationChoices()
+    return copyChoices(confirmationChoices)
+end
+
+function Preferences.getLoggingChoices()
+    return copyChoices(loggingChoices)
+end
+
+function Preferences.validateRequestTimeoutText(value)
+    return validateRequestTimeoutText(value)
 end
 
 function Preferences.valuesForUi()

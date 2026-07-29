@@ -111,6 +111,22 @@ function AutoDevelopConfirmationDialog.showFinal(summary, application)
                 .. ": "
                 .. tostring(summary.failureCategories[category])
         end
+        local firstFailure = summary.failures
+            and summary.failures[1] or nil
+        if firstFailure then
+            lines[#lines + 1] = "Diagnostic code: "
+                .. Utils.safeErrorCode(
+                    firstFailure.code,
+                    "internal_error"
+                )
+            if firstFailure.stage then
+                lines[#lines + 1] = "Diagnostic stage: "
+                    .. Utils.safeErrorCode(
+                        firstFailure.stage,
+                        "internal_error"
+                    )
+            end
+        end
     end
 
     if summary.terminalCategory and not summary.cancelled then

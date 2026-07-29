@@ -412,14 +412,14 @@ def test_plugin_manager_provider_and_preferences_are_registered() -> None:
     assert 'LrPluginInfoProvider = "PluginManager.lua"' in info
     assert (PLUGIN / "PluginManager.lua").is_file()
     assert "sectionsForTopOfDialog" in provider
-    assert "Preferences.profileChoices" in provider
-    assert "Preferences.confirmationChoices" in provider
-    assert "Preferences.loggingChoices" in provider
+    assert "Preferences.getStyleProfileChoices()" in provider
+    assert "Preferences.getConfirmationChoices()" in provider
+    assert "Preferences.getLoggingChoices()" in provider
     assert "BackendClient.getHealth," in provider
-    assert "baseUrl," in provider
-    assert "timeout" in provider
+    assert "settings.backendBaseUrl," in provider
+    assert "settings.requestTimeoutSeconds" in provider
     assert "LrTasks.startAsyncTask(function()" in provider
-    assert "if propertyTable.testingConnection then" in provider
+    assert "if properties.connectionTestRunning then" in provider
     assert "PreviewExporter" not in provider
     assert "withWriteAccessDo" not in provider
     assert "getTargetPhotos" not in provider
@@ -446,6 +446,13 @@ def test_preferences_are_the_only_lr_prefs_boundary() -> None:
     assert "preferences[key] = value" in preferences
 
 
+def test_request_builder_imports_every_referenced_project_module() -> None:
+    builder = _read("lib/RequestBuilder.lua")
+
+    assert 'local Config = ModuleLoader.load("lib/Config.lua")' in builder
+    assert "schema_version = Config.SCHEMA_VERSION" in builder
+
+
 def test_phase_one_error_categories_are_centralized() -> None:
     classifier = _read("lib/ErrorClassifier.lua")
     client = _read("lib/ApiClient.lua")
@@ -470,6 +477,77 @@ def test_phase_one_error_categories_are_centralized() -> None:
     assert "requestFunction(request, connectionOptions)" in service
     assert "result.requestId = request.request_id" in service
     assert "result.filename = request.filename" in service
+
+
+def test_develop_post_response_lifecycle_markers_are_safe_and_ordered() -> None:
+    service = _read("lib/PreparationService.lua")
+    markers = (
+        "develop_preparation_started",
+        "preview_export_started",
+        "preview_export_completed",
+        "request_build_started",
+        "request_build_completed",
+        "api_request_started",
+        "api_response_received",
+        "json_decode_started",
+        "json_decode_completed",
+        "response_validation_started",
+        "response_validation_completed",
+        "develop_mapping_started",
+        "develop_mapping_completed",
+        "crop_mapping_started",
+        "crop_mapping_completed",
+        "pending_operation_build_started",
+        "pending_operation_build_completed",
+    )
+
+    positions = [service.index(f'"{marker}"') for marker in markers]
+    assert positions == sorted(positions)
+    assert '"stage="' in service
+    assert '" category="' in service
+    assert "Logger.warn(decodeError" not in service
+    assert "Logger.warn(validationError" not in service
+    assert "Logger.error(failure" not in service
+    assert "response.body" not in service
+    assert "local ok, result = LrTasks.pcall(function()" in service
+    assert "return LrFunctionContext.callWithContext(" in service
+    assert "local outcome, value = prepareDevelopPhotoBody(" in service
+    assert "outcome = outcome," in service
+    assert "value = value," in service
+    assert "return result.outcome, result.value" in service
+    assert '"invalid_preparation_result"' in service
+
+
+def test_final_dialog_displays_only_a_sanitized_failure_code() -> None:
+    dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
+    summary = _read("lib/BatchSummary.lua")
+    service = _read("lib/PreparationService.lua")
+
+    assert '"Diagnostic code: "' in dialog
+    assert '"Diagnostic stage: "' in dialog
+    assert "Utils.safeErrorCode(" in dialog
+    assert "firstFailure.code" in dialog
+    assert "firstFailure.stage" in dialog
+    assert "firstFailure.message" not in dialog
+    assert "failure.stage = Utils.safeErrorCode(" in service
+    assert "develop_preparation_entry" in service
+    assert "Utils.safeErrorCode(stage, " in summary
+
+
+def test_operation_record_lifecycle_uses_actual_batch_recorder() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+    started = command.index('Logger.info("operation_record_started")')
+    recorded = command.index(
+        "BatchOperationRecorder.tryRecord(",
+        started,
+    )
+    completed = command.index(
+        'Logger.info("operation_record_completed")',
+        recorded,
+    )
+
+    assert started < recorded < completed
+    assert '"stage=operation_record category="' in command
 
 
 def test_progress_and_confirmation_preferences_are_integrated() -> None:

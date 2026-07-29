@@ -98,6 +98,7 @@ local function prepareBatch(
         local terminalFailure = outcome == "failed"
             and type(value) == "table"
             and ErrorClassifier.isTerminalForBatch(value.category)
+        Logger.info("operation_record_started")
         local recordingStatus = BatchOperationRecorder.tryRecord({
             cancelled = progressScope:isCanceled(),
             terminalFailure = terminalFailure,
@@ -105,6 +106,19 @@ local function prepareBatch(
             operation = value,
             operations = operations,
         })
+        if recordingStatus == "recorded" then
+            Logger.info("operation_record_completed")
+        else
+            local recordingCategory = type(value) == "table"
+                and value.category or ErrorClassifier.codes.internalError
+            Logger.warn(
+                "stage=operation_record category="
+                    .. Utils.safeErrorCode(
+                        recordingCategory,
+                        ErrorClassifier.codes.internalError
+                    )
+            )
+        end
         if recordingStatus == "recorded" then
             summary.ready = summary.ready + 1
             if value.cropIncluded then
