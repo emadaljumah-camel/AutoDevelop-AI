@@ -27,6 +27,9 @@ package-dir = {"" = "backend"}
 [tool.setuptools.packages.find]
 where = ["backend"]
 
+[tool.setuptools.package-data]
+autodevelop = ["profiles/data/*.json"]
+
 [tool.pytest.ini_options]
 addopts = "-ra"
 pythonpath = ["backend"]

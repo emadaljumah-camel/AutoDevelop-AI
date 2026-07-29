@@ -1,0 +1,50 @@
+{
+  "id": "natural_travel",
+  "display_name": "Natural Travel",
+  "description": "Natural travel rendering with moderate contrast and realistic people, skies, and color.",
+  "version": "1.0",
+  "editing_goals": [
+    "Preserve natural color",
+    "Add moderate tonal separation",
+    "Retain realistic skin and skies"
+  ],
+  "cautions": [
+    "Avoid heavy clarity",
+    "Avoid excessive dehaze",
+    "Avoid oversaturated foliage"
+  ],
+  "slider_ranges": {
+    "Exposure2012": {"min": -1.0, "max": 1.0, "preferred": 0.0},
+    "Contrast2012": {"min": -15.0, "max": 25.0, "preferred": 10.0},
+    "Highlights2012": {"min": -60.0, "max": 10.0, "preferred": -25.0},
+    "Shadows2012": {"min": -20.0, "max": 50.0, "preferred": 20.0},
+    "Whites2012": {"min": -20.0, "max": 25.0, "preferred": 8.0},
+    "Blacks2012": {"min": -25.0, "max": 15.0, "preferred": -8.0},
+    "Texture": {"min": -10.0, "max": 20.0, "preferred": 5.0},
+    "Clarity2012": {"min": -10.0, "max": 18.0, "preferred": 5.0},
+    "Dehaze": {"min": -5.0, "max": 15.0, "preferred": 4.0},
+    "Vibrance": {"min": -10.0, "max": 30.0, "preferred": 12.0},
+    "Saturation": {"min": -10.0, "max": 12.0, "preferred": 0.0},
+    "Temperature": {"min": 3500.0, "max": 7500.0, "preferred": 5500.0},
+    "Tint": {"min": -20.0, "max": 20.0, "preferred": 0.0},
+    "CropAngle": {"min": -5.0, "max": 5.0, "preferred": 0.0}
+  },
+  "crop_policy": {
+    "allow_crop": true,
+    "allow_leveling": true,
+    "max_edge_crop": 0.12,
+    "minimum_retained_area": 0.75,
+    "maximum_absolute_angle": 5.0,
+    "minimum_confidence": 0.65,
+    "require_confidence": false,
+    "preserve_aspect_ratio": false
+  },
+  "denoise_policy": {
+    "allow_denoise": true,
+    "minimum_iso": 800,
+    "minimum_amount": 0.0,
+    "maximum_amount": 35.0,
+    "minimum_confidence": 0.55,
+    "preserve_detail": true
+  }
+}

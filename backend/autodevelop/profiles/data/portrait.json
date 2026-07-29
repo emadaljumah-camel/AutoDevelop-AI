@@ -1,0 +1,50 @@
+{
+  "id": "portrait",
+  "display_name": "Portrait",
+  "description": "Natural portrait rendering with protected skin tone and gentle texture treatment.",
+  "version": "1.0",
+  "editing_goals": [
+    "Preserve natural skin",
+    "Use soft texture and clarity",
+    "Keep color flattering and realistic"
+  ],
+  "cautions": [
+    "Avoid aggressive clarity",
+    "Avoid oversaturated skin",
+    "Avoid excessive denoise smoothing"
+  ],
+  "slider_ranges": {
+    "Exposure2012": {"min": -0.75, "max": 1.0, "preferred": 0.15},
+    "Contrast2012": {"min": -15.0, "max": 20.0, "preferred": 4.0},
+    "Highlights2012": {"min": -50.0, "max": 10.0, "preferred": -18.0},
+    "Shadows2012": {"min": -10.0, "max": 35.0, "preferred": 12.0},
+    "Whites2012": {"min": -15.0, "max": 18.0, "preferred": 4.0},
+    "Blacks2012": {"min": -18.0, "max": 15.0, "preferred": -4.0},
+    "Texture": {"min": -25.0, "max": 10.0, "preferred": -6.0},
+    "Clarity2012": {"min": -18.0, "max": 10.0, "preferred": -3.0},
+    "Dehaze": {"min": -8.0, "max": 8.0, "preferred": 0.0},
+    "Vibrance": {"min": -10.0, "max": 20.0, "preferred": 6.0},
+    "Saturation": {"min": -12.0, "max": 8.0, "preferred": -1.0},
+    "Temperature": {"min": 4000.0, "max": 7500.0, "preferred": 5600.0},
+    "Tint": {"min": -18.0, "max": 22.0, "preferred": 3.0},
+    "CropAngle": {"min": -3.0, "max": 3.0, "preferred": 0.0}
+  },
+  "crop_policy": {
+    "allow_crop": true,
+    "allow_leveling": true,
+    "max_edge_crop": 0.08,
+    "minimum_retained_area": 0.85,
+    "maximum_absolute_angle": 3.0,
+    "minimum_confidence": 0.75,
+    "require_confidence": false,
+    "preserve_aspect_ratio": true
+  },
+  "denoise_policy": {
+    "allow_denoise": true,
+    "minimum_iso": 800,
+    "minimum_amount": 0.0,
+    "maximum_amount": 30.0,
+    "minimum_confidence": 0.7,
+    "preserve_detail": true
+  }
+}
