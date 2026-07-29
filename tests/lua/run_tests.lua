@@ -25,6 +25,13 @@ _G.import = function(name)
             end,
         }
     end
+    if name == "LrTasks" then
+        return {
+            pcall = function(fn, ...)
+                return pcall(fn, ...)
+            end,
+        }
+    end
     error("Unexpected Lightroom import in pure Lua tests: " .. tostring(name))
 end
 
@@ -56,6 +63,10 @@ local RequestBuilder = require("lib.RequestBuilder")
 local Validation = require("lib.Validation")
 local BatchPolicy = require("lib.BatchPolicy")
 local ResultStore = require("lib.ResultStore")
+local DevelopSettingsMapper = require("lib.DevelopSettingsMapper")
+local CropMapper = require("lib.CropMapper")
+local PendingOperation = require("lib.PendingOperation")
+local ApplyService = require("lib.ApplyService")
 
 local function photo(raw, formatted, develop)
     formatted = formatted or {}
@@ -271,6 +282,31 @@ local configured = assert(RequestBuilder.build(
 ))
 assertEqual(configured.options.style_profile, "architecture")
 
+local developRequest = assert(RequestBuilder.buildDevelop(
+    mappedPhoto,
+    "D:\\Temp\\develop-preview.jpg",
+    {
+        styleProfileId = "portrait",
+        includeCrop = true,
+        includeDenoise = true,
+        uuidFactory = function()
+            return "33345678-1234-4abc-8abc-1234567890ab"
+        end,
+    }
+))
+assertEqual(developRequest.options.style_profile, "portrait")
+assertEqual(developRequest.options.include_crop, true)
+assertEqual(developRequest.options.include_denoise, true)
+assertEqual(developRequest.options.dry_run, false)
+assertEqual(developRequest.options.preserve_current_adjustments, true)
+assertEqual(Config.apiPaths.develop, "/autodevelop/v1/develop")
+assertEqual(Config.defaults.backendBaseUrl, "http://127.0.0.1:8005")
+fakePreferences.applyCrop = nil
+assertEqual(Config.getApplyCrop(), true)
+fakePreferences.applyCrop = false
+assertEqual(Config.getApplyCrop(), false)
+fakePreferences.applyCrop = nil
+
 local successfulResponse = {
     status = "success",
     schema_version = "1.0",
@@ -316,6 +352,368 @@ local parsedError = Validation.parseErrorResponse({
 }, 400)
 assertEqual(parsedError.code, "profile_not_found")
 assertEqual(parsedError.retryable, false)
+
+local developResponse = {
+    status = "success",
+    schema_version = "1.0",
+    request_id = developRequest.request_id,
+    filename = developRequest.filename,
+    analysis = {},
+    edit_plan = {},
+    model = "fake-autodevelop-v1",
+    processing_duration_ms = 3,
+    develop_settings = {
+        Exposure2012 = 0,
+        Contrast2012 = 10,
+    },
+    crop = {
+        recommended = true,
+        left = 0,
+        right = 0.95,
+        top = 0,
+        bottom = 0.95,
+        angle = 0,
+        confidence = 0.9,
+    },
+    denoise = {
+        recommended = true,
+        amount = 20,
+        confidence = 0.9,
+    },
+    warnings = {
+        {
+            code = "example",
+            message = "Example warning.",
+            severity = "warning",
+        },
+    },
+}
+assertTrue(
+    Validation.validateDevelopResponse(developResponse, developRequest)
+)
+local developRequestMismatch = Utils.deepCopy(developResponse)
+developRequestMismatch.request_id =
+    "43345678-1234-4abc-8abc-1234567890ab"
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developRequestMismatch,
+        developRequest
+    )
+)
+local developFilenameMismatch = Utils.deepCopy(developResponse)
+developFilenameMismatch.filename = "Different.NEF"
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developFilenameMismatch,
+        developRequest
+    )
+)
+local developWrongSchema = Utils.deepCopy(developResponse)
+developWrongSchema.schema_version = "2.0"
+assertTrue(
+    not Validation.validateDevelopResponse(developWrongSchema, developRequest)
+)
+local developMissingSettings = Utils.deepCopy(developResponse)
+developMissingSettings.develop_settings = nil
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developMissingSettings,
+        developRequest
+    )
+)
+local developUnknownShape = Utils.deepCopy(developResponse)
+developUnknownShape.untrusted = true
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developUnknownShape,
+        developRequest
+    )
+)
+local developInvalidWarnings = Utils.deepCopy(developResponse)
+developInvalidWarnings.warnings = {
+    invalid = {
+        code = "bad",
+        message = "Not an array.",
+        severity = "warning",
+    },
+}
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developInvalidWarnings,
+        developRequest
+    )
+)
+
+local currentSettings = {
+    Exposure2012 = 1,
+    Contrast2012 = 2,
+    Highlights2012 = 3,
+    Shadows2012 = 4,
+    Whites2012 = 5,
+    Blacks2012 = 6,
+    Texture = 7,
+    Clarity2012 = 8,
+    Dehaze = 9,
+    Vibrance = 10,
+    Saturation = 11,
+    Temperature = 5500,
+    Tint = 4,
+    CropLeft = 0,
+    CropRight = 1,
+    CropTop = 0,
+    CropBottom = 1,
+    CropAngle = 0,
+    ProcessVersion = "15.4",
+}
+local backendSettings = {
+    Exposure2012 = 0,
+    Contrast2012 = 12,
+    Highlights2012 = -20,
+    Shadows2012 = 20,
+    Whites2012 = 8,
+    Blacks2012 = -8,
+    Texture = 5,
+    Clarity2012 = 4,
+    Dehaze = 3,
+    Vibrance = 10,
+    Saturation = 0,
+    Temperature = 5200,
+    Tint = 0,
+    UnknownSetting = 99,
+    ProcessVersion = "99.0",
+}
+local mappedDevelop = DevelopSettingsMapper.map(
+    backendSettings,
+    currentSettings
+)
+assertEqual(mappedDevelop.Exposure2012, 0, "mapped zero must be preserved")
+assertEqual(mappedDevelop.Contrast2012, 12)
+assertEqual(mappedDevelop.Highlights2012, -20)
+assertEqual(mappedDevelop.Shadows2012, 20)
+assertEqual(mappedDevelop.Whites2012, 8)
+assertEqual(mappedDevelop.Blacks2012, -8)
+assertEqual(mappedDevelop.Texture, 5)
+assertEqual(mappedDevelop.Clarity2012, 4)
+assertEqual(mappedDevelop.Dehaze, 3)
+assertEqual(mappedDevelop.Vibrance, 10)
+assertEqual(mappedDevelop.Saturation, 0)
+assertEqual(mappedDevelop.Temperature, 5200)
+assertEqual(mappedDevelop.Tint, 0)
+assertTrue(mappedDevelop.UnknownSetting == nil)
+assertTrue(mappedDevelop.ProcessVersion == nil)
+
+local invalidBackendSettings = Utils.deepCopy(backendSettings)
+invalidBackendSettings.Exposure2012 = 0 / 0
+invalidBackendSettings.Contrast2012 = math.huge
+invalidBackendSettings.Highlights2012 = nil
+local invalidMapped = DevelopSettingsMapper.map(
+    invalidBackendSettings,
+    currentSettings
+)
+assertTrue(invalidMapped.Exposure2012 == nil)
+assertTrue(invalidMapped.Contrast2012 == nil)
+assertTrue(invalidMapped.Highlights2012 == nil)
+local missingWhiteBalanceValues = Utils.deepCopy(currentSettings)
+missingWhiteBalanceValues.Temperature = nil
+missingWhiteBalanceValues.Tint = nil
+local conservativeWhiteBalance = DevelopSettingsMapper.map(
+    backendSettings,
+    missingWhiteBalanceValues
+)
+assertTrue(conservativeWhiteBalance.Temperature == nil)
+assertTrue(conservativeWhiteBalance.Tint == nil)
+
+local validCrop = {
+    recommended = true,
+    left = 0,
+    right = 0.95,
+    top = 0,
+    bottom = 0.9,
+    angle = 0,
+}
+local mappedCrop = CropMapper.map(validCrop, true, currentSettings)
+assertEqual(mappedCrop.CropLeft, 0)
+assertEqual(mappedCrop.CropRight, 0.95)
+assertEqual(mappedCrop.CropTop, 0)
+assertEqual(mappedCrop.CropBottom, 0.9)
+assertEqual(mappedCrop.CropAngle, 0)
+assertTrue(CropMapper.map(nil, true, currentSettings) == nil)
+assertTrue(CropMapper.map(validCrop, false, currentSettings) == nil)
+local incompleteCrop = Utils.deepCopy(validCrop)
+incompleteCrop.angle = nil
+assertTrue(CropMapper.map(incompleteCrop, true, currentSettings) == nil)
+local outsideCrop = Utils.deepCopy(validCrop)
+outsideCrop.left = -0.01
+assertTrue(CropMapper.map(outsideCrop, true, currentSettings) == nil)
+local reversedHorizontalCrop = Utils.deepCopy(validCrop)
+reversedHorizontalCrop.left = 0.9
+reversedHorizontalCrop.right = 0.2
+assertTrue(
+    CropMapper.map(reversedHorizontalCrop, true, currentSettings) == nil
+)
+local reversedVerticalCrop = Utils.deepCopy(validCrop)
+reversedVerticalCrop.top = 0.9
+reversedVerticalCrop.bottom = 0.2
+assertTrue(
+    CropMapper.map(reversedVerticalCrop, true, currentSettings) == nil
+)
+local infiniteAngleCrop = Utils.deepCopy(validCrop)
+infiniteAngleCrop.angle = math.huge
+assertTrue(
+    CropMapper.map(infiniteAngleCrop, true, currentSettings) == nil
+)
+local excessiveAngleCrop = Utils.deepCopy(validCrop)
+excessiveAngleCrop.angle = 45.1
+assertTrue(
+    CropMapper.map(excessiveAngleCrop, true, currentSettings) == nil
+)
+
+local originalForApply = ApplyService.captureOriginal(
+    currentSettings,
+    mappedDevelop
+)
+local pending = PendingOperation.new({
+    photo = mappedPhoto,
+    photoKey = Utils.photoKey(mappedPhoto),
+    filename = "Mapped.NEF",
+    requestId = developRequest.request_id,
+    profileId = "portrait",
+    originalSettings = originalForApply,
+    mappedSettings = mappedDevelop,
+    cropIncluded = true,
+    denoiseRecommended = true,
+    warnings = developResponse.warnings,
+    model = developResponse.model,
+})
+pending.mappedSettings.Exposure2012 = 99
+assertEqual(mappedDevelop.Exposure2012, 0)
+pending.originalSettings.Exposure2012 = 99
+assertEqual(originalForApply.Exposure2012, 1)
+assertEqual(pending.photoKey, "local:7")
+assertEqual(pending.denoiseRecommended, true)
+
+local insideWrite = false
+local writeAction = nil
+local appliedSettings = nil
+local fakeCatalog = {
+    withWriteAccessDo = function(_, action, callback)
+        writeAction = action
+        insideWrite = true
+        callback()
+        insideWrite = false
+    end,
+}
+local successfulPhoto = {
+    applyDevelopSettings = function(_, values)
+        assertTrue(insideWrite, "apply must run inside catalog write access")
+        appliedSettings = Utils.deepCopy(values)
+    end,
+}
+local safeOperation = PendingOperation.new({
+    photo = successfulPhoto,
+    mappedSettings = {
+        Exposure2012 = 0,
+        UnknownSetting = 123,
+    },
+    originalSettings = {
+        Exposure2012 = 1,
+    },
+})
+local applyResult = ApplyService.applyBatch(
+    fakeCatalog,
+    { safeOperation }
+)
+assertEqual(writeAction, "AutoDevelop AI: Apply Develop Settings")
+assertEqual(applyResult.applied, 1)
+assertEqual(safeOperation.applicationStatus, "applied")
+assertEqual(appliedSettings.Exposure2012, 0)
+assertTrue(appliedSettings.UnknownSetting == nil)
+assertEqual(safeOperation.mappedSettings.UnknownSetting, 123)
+
+local partialCropSettings = ApplyService.sanitize({
+    Exposure2012 = 0,
+    CropLeft = 0.1,
+})
+assertEqual(partialCropSettings.Exposure2012, 0)
+assertTrue(partialCropSettings.CropLeft == nil)
+local completeCropSettings = ApplyService.sanitize(mappedCrop)
+assertEqual(completeCropSettings.CropLeft, 0)
+assertEqual(completeCropSettings.CropRight, 0.95)
+assertEqual(completeCropSettings.CropTop, 0)
+assertEqual(completeCropSettings.CropBottom, 0.9)
+assertEqual(completeCropSettings.CropAngle, 0)
+
+local cancelledCalls = 0
+local cancelledPhoto = {
+    applyDevelopSettings = function()
+        cancelledCalls = cancelledCalls + 1
+    end,
+}
+local cancelledResult = ApplyService.applyBatch(
+    fakeCatalog,
+    {
+        PendingOperation.new({
+            photo = cancelledPhoto,
+            mappedSettings = { Exposure2012 = 1 },
+            originalSettings = { Exposure2012 = 0 },
+        }),
+    },
+    {
+        isCancelled = function()
+            return true
+        end,
+    }
+)
+assertEqual(cancelledCalls, 0)
+assertEqual(cancelledResult.notApplied, 1)
+assertEqual(cancelledResult.cancelled, true)
+
+local restoreCalls = 0
+local restoredValue = nil
+local failingPhoto = {
+    applyDevelopSettings = function(_, values)
+        restoreCalls = restoreCalls + 1
+        if restoreCalls == 1 then
+            error("simulated apply failure")
+        end
+        restoredValue = values.Exposure2012
+    end,
+}
+local restoreResult = ApplyService.applyBatch(
+    fakeCatalog,
+    {
+        PendingOperation.new({
+            photo = failingPhoto,
+            mappedSettings = { Exposure2012 = 1 },
+            originalSettings = { Exposure2012 = 0 },
+        }),
+    }
+)
+assertEqual(restoreResult.restoredAfterFailure, 1)
+assertEqual(restoreResult.failedNotRestored, 0)
+assertEqual(restoredValue, 0)
+
+local failedRestorePhoto = {
+    applyDevelopSettings = function()
+        error("simulated apply and restore failure")
+    end,
+}
+local failedRestoreResult = ApplyService.applyBatch(
+    fakeCatalog,
+    {
+        PendingOperation.new({
+            photo = failedRestorePhoto,
+            mappedSettings = { Exposure2012 = 1 },
+            originalSettings = { Exposure2012 = 0 },
+        }),
+    }
+)
+assertEqual(failedRestoreResult.restoredAfterFailure, 0)
+assertEqual(failedRestoreResult.failedNotRestored, 1)
+
+local pendingList = { pending, safeOperation }
+PendingOperation.clear(pendingList)
+assertEqual(#pendingList, 0)
 
 assertTrue(BatchPolicy.shouldRetry(500, 0, false))
 assertTrue(BatchPolicy.shouldRetry(502, 0, false))

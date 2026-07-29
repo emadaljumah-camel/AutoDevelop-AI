@@ -16,6 +16,15 @@ def test_analyze_menu_is_registered_and_delegated() -> None:
     assert 'require("lib.AnalyzeCommand").start()' in menu_actions
 
 
+def test_auto_develop_menu_is_registered_and_delegated() -> None:
+    info = _read("Info.lua")
+    menu_actions = _read("lib/MenuActions.lua")
+
+    assert 'title = "Auto Develop Selected Photos"' in info
+    assert 'file = "AutoDevelopSelectedPhotos.lua"' in info
+    assert 'require("lib.AutoDevelopCommand").start()' in menu_actions
+
+
 def test_backend_configuration_uses_autodevelop_port_and_route() -> None:
     config = _read("lib/Config.lua")
     client = _read("lib/ApiClient.lua")
@@ -23,9 +32,14 @@ def test_backend_configuration_uses_autodevelop_port_and_route() -> None:
     assert "http://127.0.0.1:8005" in config
     assert 'Config.DEFAULT_STYLE_PROFILE = "natural_travel"' in config
     assert "styleProfileId = Config.DEFAULT_STYLE_PROFILE" in config
-    assert '"/autodevelop/v1/analyze"' in client
+    assert 'analyze = "/autodevelop/v1/analyze"' in config
+    assert 'develop = "/autodevelop/v1/develop"' in config
+    assert "Config.apiPaths.analyze" in client
+    assert "Config.apiPaths.develop" in client
     assert "LrHttp.post(" in client
     assert '"POST"' in client
+    assert "8004" not in config
+    assert "8004" not in client
 
 
 def test_requests_use_backend_contract_field_names() -> None:
@@ -88,6 +102,19 @@ def test_response_validation_requires_request_match_and_analysis() -> None:
     assert 'type(response.edit_plan) ~= "table"' in validation
 
 
+def test_develop_response_validation_requires_safe_contract() -> None:
+    validation = _read("lib/Validation.lua")
+
+    assert "Validation.validateDevelopResponse" in validation
+    assert "response.request_id ~= request.request_id" in validation
+    assert 'response.schema_version ~= "1.0"' in validation
+    assert 'type(response.develop_settings) ~= "table"' in validation
+    assert "validateCrop(response.crop)" in validation
+    assert "validateDenoise(response.denoise)" in validation
+    assert "validateWarnings(response.warnings)" in validation
+    assert "hasOnlyFields(response, developResponseFields)" in validation
+
+
 def test_command_is_async_sequential_and_cancellable() -> None:
     command = _read("lib/AnalyzeCommand.lua")
 
@@ -140,19 +167,139 @@ def test_default_style_profile_has_one_plugin_source_of_truth() -> None:
     assert '"natural_travel"' not in builder
 
 
-def test_no_lightroom_mutation_apis_are_used() -> None:
+def test_only_apply_service_uses_catalog_develop_writes() -> None:
+    apply_service = _read("lib/ApplyService.lua")
+    other_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in PLUGIN.rglob("*.lua")
+        if path.name != "ApplyService.lua"
+    )
+
+    assert "catalog:withWriteAccessDo(" in apply_service
+    assert "operation.photo:applyDevelopSettings(" in apply_service
+    assert "withWriteAccessDo" not in other_source
+    assert "applyDevelopSettings" not in other_source
+    assert "ApiClient" not in apply_service
+    assert "PreviewExporter" not in apply_service
+    assert "LrDialogs" not in apply_service
+
+
+def test_auto_develop_confirmation_precedes_catalog_application() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+
+    backend = command.index("ApiClient.develop(request)")
+    confirmed = command.index(
+        "AutoDevelopConfirmationDialog.confirm(summary)"
+    )
+    applied = command.index("ApplyService.applyBatch(catalog, operations")
+
+    assert backend < confirmed < applied
+    assert "withWriteAccessDo" not in command
+
+
+def test_auto_develop_progress_cleanup_precedes_scope_methods() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+
+    preparation_constructed = command.index(
+        "local preparationProgress = LrProgressScope"
+    )
+    preparation_registered = command.index(
+        "context:addCleanupHandler(releasePreparationProgress)",
+        preparation_constructed,
+    )
+    preparation_configured = command.index(
+        "preparationProgress:setCancelable(true)",
+        preparation_constructed,
+    )
+    assert (
+        preparation_constructed
+        < preparation_registered
+        < preparation_configured
+    )
+    assert (
+        "preparationProgress:"
+        not in command[preparation_constructed:preparation_registered]
+    )
+
+    apply_constructed = command.index(
+        "local applyProgress = LrProgressScope"
+    )
+    apply_registered = command.index(
+        "context:addCleanupHandler(releaseApplyProgress)",
+        apply_constructed,
+    )
+    apply_configured = command.index(
+        "applyProgress:setCancelable(true)",
+        apply_constructed,
+    )
+    assert apply_constructed < apply_registered < apply_configured
+    assert "applyProgress:" not in command[apply_constructed:apply_registered]
+
+
+def test_auto_develop_uses_two_phase_cleanup_and_no_standard_xpcall() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+    apply_service = _read("lib/ApplyService.lua")
+
+    assert "context:addCleanupHandler" in command
+    assert "cleanupPreview(preview)" in command
+    assert "cleanupBatch(batchDirectory)" in command
+    assert "PendingOperation.clear(operations)" in command
+    assert "LrTasks.startAsyncTask(function()" in command
+    assert "LrTasks.pcall" in command
+    assert "xpcall" not in command
+    assert "xpcall" not in apply_service
+    assert "LrTasks.pcall" in apply_service
+
+
+def test_develop_mapping_is_allow_listed_and_preserves_process_version() -> None:
+    mapper = _read("lib/DevelopSettingsMapper.lua")
+    crop_mapper = _read("lib/CropMapper.lua")
+
+    for key in (
+        "Exposure2012",
+        "Contrast2012",
+        "Highlights2012",
+        "Shadows2012",
+        "Whites2012",
+        "Blacks2012",
+        "Texture",
+        "Clarity2012",
+        "Dehaze",
+        "Vibrance",
+        "Saturation",
+        "Temperature",
+        "Tint",
+    ):
+        assert f'"{key}"' in mapper
+    assert "ProcessVersion" not in mapper
+    assert "CameraProfile" not in mapper
+    assert "WhiteBalance" not in mapper
+    assert "CropLeft = crop.left" in crop_mapper
+    assert "CropRight = crop.right" in crop_mapper
+    assert "CropTop = crop.top" in crop_mapper
+    assert "CropBottom = crop.bottom" in crop_mapper
+    assert "CropAngle = crop.angle" in crop_mapper
+
+
+def test_no_unrelated_lightroom_mutation_apis_are_used() -> None:
     plugin_source = "\n".join(
         path.read_text(encoding="utf-8")
         for path in PLUGIN.rglob("*.lua")
     )
     forbidden = (
-        "withWriteAccessDo",
-        "applyDevelopSettings",
         "setRawMetadata",
+        "setFormattedMetadata",
         "setSelectedPhotos",
         "setActivePhoto",
+        "setActiveSources",
         "createDevelopSnapshot",
         "LrDevelopController",
+        "createVirtualCopy",
+        "updateAISettings",
+        "applyDenoise",
+        "requestEnhance",
+        "createEnhancedDNG",
+        "LrAI",
     )
 
     for operation in forbidden:

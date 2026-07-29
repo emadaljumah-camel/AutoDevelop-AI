@@ -17,7 +17,7 @@ local jsonHeaders = {
     },
 }
 
-function ApiClient.analyze(request)
+local function postJson(path, request)
     local encoded, encodeError = Json.encode(request)
     if not encoded then
         return {
@@ -29,7 +29,7 @@ function ApiClient.analyze(request)
         }
     end
 
-    local url = Config.getBackendBaseUrl() .. "/autodevelop/v1/analyze"
+    local url = Config.getBackendBaseUrl() .. path
     local ok, responseBody, responseHeaders = LrTasks.pcall(function()
         return LrHttp.post(
             url,
@@ -68,6 +68,14 @@ function ApiClient.analyze(request)
         body = responseBody,
         transportError = nil,
     }
+end
+
+function ApiClient.analyze(request)
+    return postJson(Config.apiPaths.analyze, request)
+end
+
+function ApiClient.develop(request)
+    return postJson(Config.apiPaths.develop, request)
 end
 
 function ApiClient.decodeBody(response)

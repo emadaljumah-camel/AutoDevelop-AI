@@ -11,7 +11,7 @@ local function showPlaceholder(commandName)
 end
 
 function MenuActions.autoDevelopSelectedPhotos()
-    showPlaceholder("Auto Develop Selected Photos")
+    require("lib.AutoDevelopCommand").start()
 end
 
 function MenuActions.analyzeSelectedPhotos()

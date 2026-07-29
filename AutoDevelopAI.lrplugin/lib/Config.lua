@@ -10,9 +10,14 @@ Config.defaults = {
     backendBaseUrl = "http://127.0.0.1:8005",
     styleProfileId = Config.DEFAULT_STYLE_PROFILE,
     requestTimeoutSeconds = 120,
+    applyCrop = true,
 }
 
 Config.apiBaseUrl = Config.defaults.backendBaseUrl .. "/autodevelop/v1"
+Config.apiPaths = {
+    analyze = "/autodevelop/v1/analyze",
+    develop = "/autodevelop/v1/develop",
+}
 Config.logPath = "logs/autodevelop.log"
 Config.tempDirectory = "temp"
 
@@ -37,6 +42,14 @@ function Config.getRequestTimeoutSeconds()
         return value
     end
     return Config.defaults.requestTimeoutSeconds
+end
+
+function Config.getApplyCrop()
+    local value = preferences().applyCrop
+    if type(value) == "boolean" then
+        return value
+    end
+    return Config.defaults.applyCrop
 end
 
 return Config
