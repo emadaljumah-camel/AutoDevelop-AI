@@ -226,7 +226,10 @@ def test_real_model_service_rejects_provider_identity_mismatch(
     assert marker not in response.text
     assert marker not in log_text
     assert value not in response.text
-    assert value not in log_text
+    if field == "model":
+        assert f"model={value}" not in log_text
+    else:
+        assert value not in log_text
     assert calls == 1
 
 

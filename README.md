@@ -28,6 +28,57 @@ python -m pip install -e ".[test]"
 Copy-Item .env.example .env
 ```
 
+## Configure AI models
+
+Copy the committed example to create a machine-local active configuration:
+
+```powershell
+Copy-Item config\models.example.yaml config\models.yaml
+```
+
+Edit provider model identifiers to match the models exposed by the configured
+inference provider:
+
+```yaml
+models:
+  gemma:
+    provider_model_id: gemma-4-31b-qat
+
+  qwen:
+    provider_model_id: qwen3-vl-32b-instruct
+```
+
+Configuration precedence is:
+
+1. environment variable;
+2. `config/models.yaml`;
+3. built-in default.
+
+For example, this environment value overrides only the Qwen entry while other
+YAML settings remain active:
+
+```powershell
+$env:AUTODEVELOP_QWEN_MODEL = "qwen3-vl-32b-instruct"
+```
+
+To use a different YAML file:
+
+```powershell
+$env:AUTODEVELOP_CONFIG_FILE = "D:\AutoDevelop\my-models.yaml"
+```
+
+Relative custom paths are resolved from the AutoDevelop AI application root,
+not the current console directory. The active `config/models.yaml` is ignored
+by Git; commit only `config/models.example.yaml`.
+
+YAML configuration is loaded once during backend startup. Restart the
+AutoDevelop AI backend after changing the YAML file. Automatic reload and file
+watching are not enabled.
+
+API keys and other credentials must not be placed in YAML. Configure
+`AUTODEVELOP_LOCAL_API_KEY` and `AUTODEVELOP_GEMINI_API_KEY` through the
+environment or local `.env` file only.
+
 ## Run the backend
 
 ```powershell

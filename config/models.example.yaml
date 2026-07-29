@@ -1,0 +1,31 @@
+version: 1
+
+# Stable AutoDevelop model ID used when legacy requests omit "model".
+default_model: gemma
+
+providers:
+  local:
+    # OpenAI-compatible endpoint, such as LM Studio.
+    base_url: http://127.0.0.1:1234/v1
+    timeout_seconds: 120
+
+  gemini:
+    timeout_seconds: 120
+
+models:
+  gemma:
+    # This must exactly match the model identifier exposed by the local server.
+    provider_model_id: gemma-4-31b
+
+  qwen:
+    provider_model_id: qwen_qwen3-vl-32b-instruct
+
+  gpt_oss:
+    provider_model_id: gpt-oss
+
+  gemini:
+    provider_model_id: gemini-2.5-flash
+
+  claude:
+    # Claude integration is reserved for a future phase.
+    enabled: false

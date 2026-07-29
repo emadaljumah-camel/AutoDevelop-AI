@@ -2,10 +2,15 @@
 
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import urlsplit
+from types import MappingProxyType
+from typing import Literal, Mapping
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, PrivateAttr, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from autodevelop.config_models import normalize_safe_http_url
+
+ConfigurationSource = Literal["environment", "yaml", "built-in"]
 
 
 class Settings(BaseSettings):
@@ -33,16 +38,22 @@ class Settings(BaseSettings):
     lm_studio_timeout_seconds: float = Field(default=30.0, gt=0)
     lm_studio_max_tokens: int = Field(default=2048, gt=0)
     lm_studio_use_response_format: bool = True
+    config_file: str | None = Field(default=None, exclude=True, repr=False)
     default_model: str = "gemma"
     local_base_url: str = "http://127.0.0.1:1234/v1"
     local_api_key: SecretStr = SecretStr("")
-    local_timeout_seconds: float = Field(default=120.0, gt=0)
+    local_timeout_seconds: float = Field(default=120.0, ge=10, le=600)
     gemma_model: str = "gemma-4-31b"
     qwen_model: str = "qwen_qwen3-vl-32b-instruct"
     gpt_oss_model: str = "gpt-oss"
     gemini_api_key: SecretStr = SecretStr("")
     gemini_model: str = "gemini-2.5-flash"
-    gemini_timeout_seconds: float = Field(default=120.0, gt=0)
+    gemini_timeout_seconds: float = Field(default=120.0, ge=10, le=600)
+
+    _yaml_loaded: bool = PrivateAttr(default=False)
+    _configuration_sources: dict[str, ConfigurationSource] = PrivateAttr(
+        default_factory=dict
+    )
 
     @field_validator(
         "default_model",
@@ -51,6 +62,7 @@ class Settings(BaseSettings):
         "qwen_model",
         "gpt_oss_model",
         "gemini_model",
+        "config_file",
         mode="before",
     )
     @classmethod
@@ -65,27 +77,18 @@ class Settings(BaseSettings):
         "qwen_model",
         "gpt_oss_model",
         "gemini_model",
+        "config_file",
     )
     @classmethod
-    def reject_blank_text(cls, value: str) -> str:
-        if not value:
+    def reject_blank_text(cls, value: str | None) -> str | None:
+        if value is not None and not value:
             raise ValueError("value must not be blank")
         return value
 
     @field_validator("local_base_url")
     @classmethod
     def validate_local_base_url(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("local_base_url must be a safe HTTP(S) URL")
-        return value.rstrip("/")
+        return normalize_safe_http_url(value)
 
     @field_validator("default_model")
     @classmethod
@@ -99,9 +102,46 @@ class Settings(BaseSettings):
             raise ValueError("default_model is not selectable")
         return value
 
+    def set_configuration_metadata(
+        self,
+        *,
+        yaml_loaded: bool,
+        sources: Mapping[str, ConfigurationSource],
+    ) -> None:
+        """Attach safe startup-source metadata outside serialized settings."""
+
+        self._yaml_loaded = yaml_loaded
+        self._configuration_sources = dict(sources)
+
+    @property
+    def yaml_configuration_loaded(self) -> bool:
+        return self._yaml_loaded
+
+    @property
+    def configuration_sources(
+        self,
+    ) -> Mapping[str, ConfigurationSource]:
+        return MappingProxyType(self._configuration_sources)
+
+    @property
+    def environment_overrides_active(self) -> bool:
+        return "environment" in self._configuration_sources.values()
+
+    @property
+    def configuration_source_summary(self) -> str:
+        if self._yaml_loaded and self.environment_overrides_active:
+            return "yaml+environment"
+        if self._yaml_loaded:
+            return "yaml"
+        if self.environment_overrides_active:
+            return "environment"
+        return "built-in"
+
 
 @lru_cache
 def get_settings() -> Settings:
     """Return the process-wide settings instance."""
 
-    return Settings()
+    from autodevelop.config_loader import load_settings
+
+    return load_settings()

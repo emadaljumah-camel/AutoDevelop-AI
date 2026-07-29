@@ -22,6 +22,8 @@ logs/*
 temp/*
 !temp/.gitkeep
 
+config/models.yaml
+
 *.lrcat
 *.lrdata/
 .DS_Store

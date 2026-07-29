@@ -44,6 +44,24 @@ def create_app(
             log_path=resolved_settings.log_path,
             level=resolved_settings.log_level,
         )
+        logger.info(
+            (
+                "configuration_loaded config_source=%s default_model=%s "
+                "local_base_url_configured=%s gemma_model_configured=%s "
+                "qwen_model_configured=%s gpt_oss_model_configured=%s "
+                "gemini_model_configured=%s gemini_api_key_configured=%s"
+            ),
+            resolved_settings.configuration_source_summary,
+            resolved_settings.default_model,
+            bool(resolved_settings.local_base_url),
+            bool(resolved_settings.gemma_model),
+            bool(resolved_settings.qwen_model),
+            bool(resolved_settings.gpt_oss_model),
+            bool(resolved_settings.gemini_model),
+            bool(
+                resolved_settings.gemini_api_key.get_secret_value().strip()
+            ),
+        )
         try:
             application_profile_loader.reload_profiles()
         except Exception:
