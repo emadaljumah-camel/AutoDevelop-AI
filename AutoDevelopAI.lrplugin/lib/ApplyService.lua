@@ -30,6 +30,19 @@ local function sanitize(settings)
     return safe
 end
 
+local function sanitizeRestore(settings)
+    local safe = sanitize(settings)
+    if type(settings) == "table"
+        and Utils.isFiniteNumber(settings.HDREditMode)
+        and (
+            settings.HDREditMode == 0
+            or settings.HDREditMode == 1
+        ) then
+        safe.HDREditMode = settings.HDREditMode
+    end
+    return safe
+end
+
 local function countSettings(settings)
     local count = 0
     for _ in pairs(settings) do
@@ -98,6 +111,14 @@ function ApplyService.applyBatch(catalog, operations, options)
                     onProgress(index, #operations, operation)
 
                     local safeSettings = sanitize(operation.mappedSettings)
+                    if operation.enableHdr == true
+                        and type(operation.originalSettings) == "table"
+                        and (
+                            operation.originalSettings.HDREditMode == 0
+                            or operation.originalSettings.HDREditMode == 1
+                        ) then
+                        safeSettings.HDREditMode = 1
+                    end
                     if countSettings(safeSettings) == 0 then
                         operation.applicationStatus = "not_applied"
                         result.notApplied = result.notApplied + 1
@@ -113,7 +134,7 @@ function ApplyService.applyBatch(catalog, operations, options)
                             result.applied = result.applied + 1
                         else
                             local restoreSettings =
-                                sanitize(operation.originalSettings)
+                                sanitizeRestore(operation.originalSettings)
                             local restoreOk = false
                             if countSettings(restoreSettings) > 0 then
                                 restoreOk = LrTasks.pcall(function()

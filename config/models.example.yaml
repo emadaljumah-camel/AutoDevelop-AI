@@ -29,3 +29,11 @@ models:
   claude:
     # Claude integration is reserved for a future phase.
     enabled: false
+
+learning:
+  enabled: true
+  database_path: data/autodevelop_learning.sqlite3
+  minimum_samples: 3
+  maximum_results: 5
+  minimum_similarity: 0.70
+  maximum_candidate_pool: 100

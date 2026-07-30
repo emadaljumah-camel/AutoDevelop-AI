@@ -9,6 +9,8 @@ from autodevelop.models import (
     CropRecommendation,
     DenoiseRecommendation,
     DevelopSettings,
+    HdrRecommendation,
+    LevelingRecommendation,
 )
 
 
@@ -74,9 +76,21 @@ class ValidationResult(_ValidationModel):
         default=None,
         description="Safe crop recommendation, if retained.",
     )
+    leveling: LevelingRecommendation = Field(
+        default_factory=lambda: LevelingRecommendation(
+            recommended=False,
+            angle=0,
+            mode="none",
+        ),
+        description="Safe rotational-leveling recommendation.",
+    )
     denoise: DenoiseRecommendation | None = Field(
         default=None,
         description="Safe denoise recommendation, if supplied.",
+    )
+    enable_hdr: HdrRecommendation = Field(
+        default_factory=lambda: HdrRecommendation(recommended=False),
+        description="Backend-validated Lightroom HDR edit-mode recommendation.",
     )
     issues: list[ValidationIssue] = Field(
         default_factory=list,

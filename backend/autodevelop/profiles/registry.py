@@ -14,7 +14,8 @@ class StyleDefinition:
     sort_order: int
 
 
-DEFAULT_STYLE_ID: Final = "natural_travel"
+AUTO_STYLE_ID: Final = "auto"
+DEFAULT_STYLE_ID: Final = AUTO_STYLE_ID
 
 _STYLES: Final[tuple[StyleDefinition, ...]] = (
     StyleDefinition(
@@ -100,3 +101,9 @@ def is_valid_style_id(profile_id: str) -> bool:
     """Return whether a profile ID is registered."""
 
     return profile_id in _STYLES_BY_ID
+
+
+def is_valid_style_request_id(profile_id: str) -> bool:
+    """Return whether a request selects Auto or a registered manual profile."""
+
+    return profile_id == AUTO_STYLE_ID or is_valid_style_id(profile_id)

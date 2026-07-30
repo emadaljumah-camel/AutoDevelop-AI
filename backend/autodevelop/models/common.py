@@ -29,6 +29,10 @@ FiniteFloat = Annotated[
 ]
 PositiveFiniteFloat = Annotated[FiniteFloat, Field(gt=0)]
 UnitFloat = Annotated[FiniteFloat, Field(ge=0, le=1)]
+EditingIntensity = Literal["conservative", "moderate", "strong", "very_strong"]
+StyleSelectionMode = Literal["auto", "manual"]
+LevelingMode = Literal["none", "horizon", "vertical", "both"]
+Recoverability = Literal["poor", "limited", "moderate", "high", "unknown"]
 Latitude = Annotated[FiniteFloat, Field(ge=-90, le=90)]
 Longitude = Annotated[FiniteFloat, Field(ge=-180, le=180)]
 PositiveInteger = Annotated[StrictInt, Field(gt=0)]
@@ -194,8 +198,8 @@ class ProcessingOptions(TransportModel):
     """Caller-selected options controlling recommendation generation."""
 
     style_profile: str = Field(
-        default="natural_travel",
-        description="File-based style profile name.",
+        default="auto",
+        description="Auto selection mode or a registered style profile name.",
     )
     include_crop: bool = Field(
         default=True,
@@ -212,6 +216,61 @@ class ProcessingOptions(TransportModel):
     preserve_current_adjustments: bool = Field(
         default=True,
         description="Whether existing Lightroom adjustments should be preserved.",
+    )
+    hdr_edit_supported: bool = Field(
+        default=False,
+        description="Whether the caller can safely apply Lightroom HDR edit mode.",
+    )
+    hdr_workflow: Literal["hdr", "sdr_only", "unknown"] = Field(
+        default="unknown",
+        description="Caller-declared output workflow used for HDR safety gating.",
+    )
+
+
+class LearningRequestOptions(TransportModel):
+    """Per-request control for optional personalized Develop context."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether this Develop request may use personalized context.",
+    )
+
+
+class LearningDiagnostics(TransportModel):
+    """Safe aggregate diagnostics for optional Develop personalization."""
+
+    enabled: bool = Field(description="Whether backend learning is enabled.")
+    personalization_applied: bool = Field(
+        description="Whether aggregate personalized context was used."
+    )
+    usable_sample_count: NonNegativeInteger = Field(
+        description="Number of same-profile usable samples available."
+    )
+    retrieved_sample_count: NonNegativeInteger = Field(
+        description="Number of similar samples used for aggregation."
+    )
+    minimum_sample_count: PositiveInteger = Field(
+        description="Minimum usable and similar samples required."
+    )
+    average_similarity: UnitFloat | None = Field(
+        default=None,
+        description="Mean similarity of retrieved samples, when available.",
+    )
+    feature_type: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Safe local feature-provider identifier.",
+    )
+    reason: Literal[
+        "disabled",
+        "database_unavailable",
+        "embedding_unavailable",
+        "insufficient_samples",
+        "no_similar_samples",
+        "retrieval_unavailable",
+    ] | None = Field(
+        default=None,
+        description="Stable reason personalization was not used.",
     )
 
 
@@ -245,6 +304,18 @@ class TechnicalAnalysis(TransportModel):
     noise_level: str | None = Field(
         default=None,
         description="Assessment of visible or expected noise.",
+    )
+    highlight_recoverability: Recoverability = Field(
+        default="unknown",
+        description="Likely RAW highlight recoverability, not JPEG-preview clipping.",
+    )
+    shadow_recoverability: Recoverability = Field(
+        default="unknown",
+        description="Likely RAW shadow recoverability, not JPEG-preview visibility.",
+    )
+    severe_underexposure: bool = Field(
+        default=False,
+        description="Whether underexposure or noise makes HDR edit mode unsafe.",
     )
     horizon_status: str | None = Field(
         default=None,
@@ -285,7 +356,7 @@ class EditPlan(TransportModel):
 
 
 class CropRecommendation(TransportModel):
-    """Normalized crop and leveling recommendation."""
+    """Composition-crop recommendation independent of rotational leveling."""
 
     recommended: bool = Field(
         description="Whether the crop is recommended.",
@@ -305,10 +376,6 @@ class CropRecommendation(TransportModel):
     bottom: UnitFloat | None = Field(
         default=None,
         description="Optional normalized bottom crop bound.",
-    )
-    angle: FiniteFloat | None = Field(
-        default=None,
-        description="Optional crop angle without transport-layer clamping.",
     )
     confidence: UnitFloat | None = Field(
         default=None,
@@ -341,6 +408,37 @@ class CropRecommendation(TransportModel):
         return self
 
 
+class LevelingRecommendation(TransportModel):
+    """Rotational-leveling recommendation independent of composition crop."""
+
+    recommended: bool = Field(
+        description="Whether rotational leveling is recommended.",
+    )
+    angle: FiniteFloat = Field(
+        default=0.0,
+        description="Finite Lightroom rotation angle in degrees.",
+    )
+    mode: LevelingMode = Field(
+        default="none",
+        description="Stable geometric reference used for rotational leveling.",
+    )
+
+    @model_validator(mode="after")
+    def validate_state(self) -> "LevelingRecommendation":
+        """Require active and inactive leveling states to be unambiguous."""
+
+        if self.recommended:
+            if self.mode == "none":
+                raise ValueError(
+                    "recommended leveling requires a non-none mode"
+                )
+        elif self.angle != 0 or self.mode != "none":
+            raise ValueError(
+                "inactive leveling requires angle=0 and mode='none'"
+            )
+        return self
+
+
 class DenoiseRecommendation(TransportModel):
     """Recommendation for a future Lightroom denoise operation."""
 
@@ -358,6 +456,18 @@ class DenoiseRecommendation(TransportModel):
     reason: str | None = Field(
         default=None,
         description="Optional explanation for the recommendation.",
+    )
+
+
+class HdrRecommendation(TransportModel):
+    """Backend-validated Lightroom HDR edit-mode recommendation."""
+
+    recommended: bool = Field(
+        description="Whether Lightroom HDR edit mode is recommended.",
+    )
+    reason: Literal[None] = Field(
+        default=None,
+        description="Reserved field; provider reasoning is never exposed.",
     )
 
 

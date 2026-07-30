@@ -1,17 +1,19 @@
 {
   "id": "architecture",
   "display_name": "Architecture",
-  "description": "Clean architectural rendering with neutral color, controlled highlights, and crisp detail.",
+  "description": "Strong architectural rendering with structural definition, clean contrast, rich controlled color, and crisp material detail.",
   "version": "1.0",
   "editing_goals": [
-    "Maintain neutral white balance",
-    "Control reflective highlights",
-    "Render materials with crisp detail"
+    "Present clean geometry with strong structural definition and deliberate tonal separation",
+    "Create bright clean highlights, defined shadows, and accurate but rich material color",
+    "Render structural and surface texture crisply with clear commercial thumbnail impact"
   ],
   "cautions": [
     "Avoid exaggerated color",
     "Avoid harsh local contrast",
-    "Keep crop and leveling conservative"
+    "Keep composition cropping conservative",
+    "Apply rotational leveling only when supported by reliable structural references",
+    "Avoid lifeless neutral rendering or weak material definition"
   ],
   "slider_ranges": {
     "Exposure2012": {"min": -0.8, "max": 0.8, "preferred": 0.0},
@@ -26,18 +28,24 @@
     "Vibrance": {"min": -8.0, "max": 20.0, "preferred": 5.0},
     "Saturation": {"min": -12.0, "max": 8.0, "preferred": -1.0},
     "Temperature": {"min": 3800.0, "max": 7000.0, "preferred": 5200.0},
-    "Tint": {"min": -15.0, "max": 15.0, "preferred": 0.0},
-    "CropAngle": {"min": -4.0, "max": 4.0, "preferred": 0.0}
+    "Tint": {"min": -15.0, "max": 15.0, "preferred": 0.0}
   },
   "crop_policy": {
     "allow_crop": true,
-    "allow_leveling": true,
     "max_edge_crop": 0.08,
     "minimum_retained_area": 0.85,
-    "maximum_absolute_angle": 4.0,
     "minimum_confidence": 0.7,
     "require_confidence": false,
     "preserve_aspect_ratio": true
+  },
+  "leveling_policy": {
+    "allow_leveling": true,
+    "maximum_absolute_angle": 4.0,
+    "guidance": [
+      "Use reliable structural horizontal and vertical lines with high sensitivity to accidental camera roll",
+      "Distinguish rotational tilt from perspective convergence",
+      "Do not over-correct an intentional architectural viewpoint"
+    ]
   },
   "denoise_policy": {
     "allow_denoise": true,

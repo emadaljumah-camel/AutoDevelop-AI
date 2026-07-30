@@ -32,7 +32,11 @@ from autodevelop.models import (
     DevelopResponse,
     DevelopSettings,
     EditPlan,
+    HdrRecommendation,
+    LevelingRecommendation,
     ProcessingWarning,
+    ProcessingOptions,
+    TechnicalAnalysis,
 )
 from autodevelop.profiles import (
     ProfileNotFoundError,
@@ -69,6 +73,7 @@ def _raw_response(
     *,
     settings: DevelopSettings | None = None,
     crop: CropRecommendation | None = None,
+    leveling: LevelingRecommendation | None = None,
     denoise: DenoiseRecommendation | None = None,
     warnings: list[ProcessingWarning] | None = None,
     model: str | None = None,
@@ -86,6 +91,11 @@ def _raw_response(
         ),
         develop_settings=settings or DevelopSettings(Exposure2012=0.25),
         crop=crop,
+        leveling=leveling or LevelingRecommendation(
+            recommended=False,
+            angle=0,
+            mode="none",
+        ),
         denoise=denoise,
         warnings=warnings or [],
         model=model or request.model,
@@ -199,6 +209,8 @@ class RecordingSafetyValidator(SafetyValidator):
         self.crop: CropRecommendation | None = None
         self.denoise: DenoiseRecommendation | None = None
         self.profile: StyleProfile | None = None
+        self.enable_hdr: HdrRecommendation | None = None
+        self.leveling: LevelingRecommendation | None = None
 
     def validate(
         self,
@@ -207,17 +219,27 @@ class RecordingSafetyValidator(SafetyValidator):
         crop: CropRecommendation | None,
         denoise: DenoiseRecommendation | None,
         profile: StyleProfile,
+        enable_hdr: HdrRecommendation | None = None,
+        leveling: LevelingRecommendation | None = None,
+        analysis: TechnicalAnalysis | None = None,
+        options: ProcessingOptions | None = None,
     ) -> ValidationResult:
         self.calls += 1
         self.settings = settings
         self.crop = crop
         self.denoise = denoise
         self.profile = profile
+        self.enable_hdr = enable_hdr
+        self.leveling = leveling
         return super().validate(
             settings=settings,
             crop=crop,
             denoise=denoise,
             profile=profile,
+            enable_hdr=enable_hdr,
+            leveling=leveling,
+            analysis=analysis,
+            options=options,
         )
 
 
@@ -225,14 +247,7 @@ class RaisingSafetyValidator(SafetyValidator):
     def __init__(self, error: Exception) -> None:
         self.error = error
 
-    def validate(
-        self,
-        *,
-        settings: DevelopSettings | None,
-        crop: CropRecommendation | None,
-        denoise: DenoiseRecommendation | None,
-        profile: StyleProfile,
-    ) -> ValidationResult:
+    def validate(self, **_kwargs) -> ValidationResult:
         raise self.error
 
 
@@ -467,7 +482,6 @@ def _valid_crop(**changes: object) -> CropRecommendation:
         "right": 0.95,
         "top": 0.05,
         "bottom": 0.95,
-        "angle": 1.0,
         "confidence": 0.9,
         "reason": "Improve alignment.",
     }
@@ -488,11 +502,6 @@ def _valid_crop(**changes: object) -> CropRecommendation:
             _valid_crop(left=0.12, right=0.88, top=0.12, bottom=0.88),
             None,
             policies.CROP_AREA_TOO_SMALL,
-        ),
-        (
-            _valid_crop(angle=9.0),
-            "angle_clamped",
-            policies.CROP_ANGLE_CLAMPED,
         ),
     ],
 )
@@ -516,8 +525,6 @@ def test_crop_is_sanitized_by_profile_policy(
         assert payload["crop"] is None
     elif expected_crop == "preserved":
         assert payload["crop"] == crop.model_dump(mode="json")
-    else:
-        assert payload["crop"]["angle"] == 5.0
     if expected_code is not None:
         assert expected_code in {
             warning["code"] for warning in payload["warnings"]

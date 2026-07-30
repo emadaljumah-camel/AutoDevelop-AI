@@ -221,6 +221,21 @@ local function processPhotoBody(
     return "success", {
         model = validatedModel,
         resolvedModel = resolvedModel,
+        requestedStyleId = decoded.requested_style_id,
+        effectiveStyleId = decoded.effective_style_id,
+        styleSelectionMode = decoded.style_selection_mode,
+        editingIntensity = decoded.editing_intensity,
+        primarySubject = decoded.analysis.main_subject,
+        sceneCategory = decoded.analysis.scene_type,
+        lighting = decoded.analysis.lighting,
+        priorities = Utils.deepCopy(decoded.edit_plan.goals or {}),
+        cropRecommended = type(decoded.crop) == "table"
+            and decoded.crop.recommended == true,
+        levelingRecommended = decoded.leveling.recommended == true,
+        levelingMode = decoded.leveling.mode,
+        levelingAngle = decoded.leveling.angle,
+        processingDurationMs = decoded.processing_duration_ms,
+        filename = request.filename,
     }
 end
 
@@ -277,6 +292,7 @@ local function runBatch(
     summary.modelDisplayName =
         ModelProfiles.getDisplayName(preferences.modelProfileId)
     summary.resolvedModels = {}
+    summary.analysisExamples = {}
 
     for index, photo in ipairs(photos) do
         if progressScope:isCanceled() then
@@ -304,8 +320,15 @@ local function runBatch(
         end
         if outcome == "success" then
             summary.analyzed = summary.analyzed + 1
+            BatchSummary.recordStyle(summary, reason)
+            BatchSummary.recordGeometry(summary, reason)
             if type(reason) == "table" and reason.resolvedModel then
                 summary.resolvedModels[reason.resolvedModel] = true
+            end
+            if type(reason) == "table"
+                and #summary.analysisExamples < 5 then
+                summary.analysisExamples[#summary.analysisExamples + 1] =
+                    Utils.deepCopy(reason)
             end
         elseif outcome == "skipped" then
             summary.skipped = summary.skipped + 1

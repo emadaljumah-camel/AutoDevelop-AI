@@ -4,6 +4,7 @@ local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
 local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
 local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
+local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
 
 local AnalysisSummaryDialog = {}
 
@@ -21,6 +22,10 @@ local function summaryText(summary)
             .. Utils.safeMessage(summary.modelDisplayName, "unavailable"),
         "Model ID: " .. Utils.safeMessage(summary.modelId, "unavailable"),
         "Cancelled: " .. (summary.cancelled and "yes" or "no"),
+        "Composition crop recommended: "
+            .. tostring(summary.cropRecommendedCount or 0),
+        "Leveling recommended: "
+            .. tostring(summary.levelingRecommendedCount or 0),
         "Elapsed: "
             .. ProgressTracker.formatDuration(summary.elapsedSeconds or 0),
     }
@@ -31,6 +36,67 @@ local function summaryText(summary)
     table.sort(resolved)
     lines[#lines + 1] = "Resolved model: "
         .. (#resolved > 0 and table.concat(resolved, ", ") or "unavailable")
+    if Utils.isFiniteNumber(summary.levelingAngleMinimum)
+        and Utils.isFiniteNumber(summary.levelingAngleMaximum) then
+        lines[#lines + 1] = string.format(
+            "Leveling angle range: %+.2f to %+.2f degrees",
+            summary.levelingAngleMinimum,
+            summary.levelingAngleMaximum
+        )
+    end
+
+    for _, example in ipairs(summary.analysisExamples or {}) do
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "Photo Analysis"
+        lines[#lines + 1] = "--------------"
+        lines[#lines + 1] = "Photo: "
+            .. Utils.safeMessage(example.filename, "Photo")
+        lines[#lines + 1] = "Primary subject: "
+            .. Utils.safeMessage(example.primarySubject, "unavailable")
+        lines[#lines + 1] = "Lighting: "
+            .. Utils.safeMessage(example.lighting, "unavailable")
+        lines[#lines + 1] = "Scene: "
+            .. Utils.safeMessage(example.sceneCategory, "unavailable")
+        lines[#lines + 1] = "Recommended style: "
+            .. Utils.safeMessage(
+                StyleProfiles.getDisplayName(example.effectiveStyleId),
+                "unavailable"
+            )
+        local intensity = Utils.safeMessage(
+            example.editingIntensity,
+            "unavailable"
+        ):gsub("_", " ")
+        lines[#lines + 1] = "Editing intensity: " .. intensity
+        lines[#lines + 1] = "Composition crop: "
+            .. (example.cropRecommended and "Recommended" or "Not needed")
+        if example.levelingRecommended then
+            local mode = Utils.safeMessage(
+                example.levelingMode,
+                "rotation"
+            ):gsub("_", " ")
+            lines[#lines + 1] = string.format(
+                "Level correction: %s, %+.2f degrees",
+                mode,
+                example.levelingAngle or 0
+            )
+        else
+            lines[#lines + 1] = "Level correction: Not needed"
+        end
+        lines[#lines + 1] = "Editing priorities"
+        lines[#lines + 1] = "------------------"
+        local count = 0
+        for _, priority in ipairs(example.priorities or {}) do
+            if count >= 4 then
+                break
+            end
+            lines[#lines + 1] = "- "
+                .. Utils.safeMessage(priority, "Improve the current image")
+            count = count + 1
+        end
+        if count == 0 then
+            lines[#lines + 1] = "- No priorities supplied"
+        end
+    end
 
     local categories = BatchSummary.sortedCategories(summary)
     if #categories > 0 then

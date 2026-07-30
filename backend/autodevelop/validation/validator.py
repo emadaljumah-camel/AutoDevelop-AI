@@ -9,6 +9,10 @@ from autodevelop.models import (
     CropRecommendation,
     DenoiseRecommendation,
     DevelopSettings,
+    HdrRecommendation,
+    LevelingRecommendation,
+    ProcessingOptions,
+    TechnicalAnalysis,
 )
 from autodevelop.profiles import StyleProfile
 from autodevelop.validation import policies
@@ -91,24 +95,106 @@ class SafetyValidator:
         crop: CropRecommendation | None,
         denoise: DenoiseRecommendation | None,
         profile: StyleProfile,
+        enable_hdr: HdrRecommendation | None = None,
+        leveling: LevelingRecommendation | None = None,
+        analysis: TechnicalAnalysis | None = None,
+        options: ProcessingOptions | None = None,
     ) -> ValidationResult:
         """Return safe copies without mutating any source model."""
 
         state = _ValidationState()
         safe_settings = self._validate_settings(settings, profile, state)
         safe_crop = self._validate_crop(crop, profile, state)
+        safe_leveling = self._validate_leveling(leveling, profile, state)
         safe_denoise = self._validate_denoise(denoise, profile, state)
+        safe_hdr = self._validate_hdr(enable_hdr, analysis, options, state)
         is_safe = not any(issue.severity == "error" for issue in state.issues)
         return ValidationResult(
             is_safe=is_safe,
             settings=safe_settings,
             crop=safe_crop,
+            leveling=safe_leveling,
             denoise=safe_denoise,
+            enable_hdr=safe_hdr,
             issues=state.issues,
             rejected_fields=state.rejected_fields,
             clamped_fields=state.clamped_fields,
             removed_fields=state.removed_fields,
         )
+
+    @staticmethod
+    def _validate_hdr(
+        recommendation: HdrRecommendation | None,
+        analysis: TechnicalAnalysis | None,
+        options: ProcessingOptions | None,
+        state: _ValidationState,
+    ) -> HdrRecommendation:
+        safe_false = HdrRecommendation(recommended=False)
+        if recommendation is None or not recommendation.recommended:
+            return safe_false
+
+        reasons: list[str] = []
+        if options is None or not options.hdr_edit_supported:
+            reasons.append("Lightroom HDR edit mode is not supported by the caller.")
+        if options is not None and options.hdr_workflow == "sdr_only":
+            reasons.append("The caller declared an SDR-only workflow.")
+        if analysis is None:
+            reasons.append("Structured scene evidence is unavailable.")
+        else:
+            dynamic_range = (analysis.dynamic_range or "").strip().lower()
+            if dynamic_range != "high":
+                reasons.append("The scene is not assessed as high dynamic range.")
+            recoverability = {
+                analysis.highlight_recoverability,
+                analysis.shadow_recoverability,
+            }
+            if not recoverability.intersection({"moderate", "high"}):
+                reasons.append("Useful RAW highlight or shadow recovery is unlikely.")
+            if analysis.severe_underexposure:
+                reasons.append("Severe underexposure makes HDR edit mode unsafe.")
+            noise = (analysis.noise_level or "").strip().lower()
+            if noise in {"high", "severe", "extreme"}:
+                reasons.append("Noise is too high for a safe HDR recommendation.")
+
+            scene = " ".join(
+                value
+                for value in (
+                    analysis.scene_type,
+                    analysis.main_subject,
+                    analysis.lighting,
+                    analysis.exposure_assessment,
+                )
+                if value
+            ).lower()
+            ordinary_people_scene = (
+                any(word in scene for word in ("portrait", "headshot", "people"))
+                and not any(
+                    cue in scene
+                    for cue in (
+                        "sunset",
+                        "sunrise",
+                        "bright window",
+                        "backlit",
+                        "luminous",
+                        "bright lights",
+                    )
+                )
+            )
+            if ordinary_people_scene:
+                reasons.append("An ordinary people scene has no compelling HDR cue.")
+
+        if reasons:
+            state.add_issue(
+                code=policies.HDR_RECOMMENDATION_REJECTED,
+                message=" ".join(reasons),
+                field_name="enable_hdr",
+                original_value=True,
+                adjusted_value=False,
+                action=ValidationAction.REJECTED,
+                track_field="enable_hdr",
+            )
+            return safe_false
+        return HdrRecommendation(recommended=True)
 
     @staticmethod
     def _validate_settings(
@@ -309,7 +395,6 @@ class SafetyValidator:
                 confidence,
             )
 
-        angle = self._safe_crop_angle(crop.angle, profile, state)
         return CropRecommendation.model_validate(
             {
                 "recommended": True,
@@ -317,7 +402,6 @@ class SafetyValidator:
                 "right": right,
                 "top": top,
                 "bottom": bottom,
-                "angle": angle,
                 "confidence": confidence,
                 "reason": crop.reason,
             }
@@ -328,7 +412,7 @@ class SafetyValidator:
         crop: CropRecommendation,
         state: _ValidationState,
     ) -> CropRecommendation:
-        for field_name in ("left", "right", "top", "bottom", "angle"):
+        for field_name in ("left", "right", "top", "bottom"):
             value = getattr(crop, field_name, None)
             if value is not None:
                 state.add_issue(
@@ -358,44 +442,55 @@ class SafetyValidator:
         )
 
     @staticmethod
-    def _safe_crop_angle(
-        angle: object,
+    def _validate_leveling(
+        leveling: LevelingRecommendation | None,
         profile: StyleProfile,
         state: _ValidationState,
-    ) -> float | None:
-        if angle is None:
-            return None
-        if not _is_finite_number(angle):
+    ) -> LevelingRecommendation:
+        safe_false = LevelingRecommendation(
+            recommended=False,
+            angle=0,
+            mode="none",
+        )
+        if leveling is None or not leveling.recommended:
+            return safe_false
+        if not profile.leveling_policy.allow_leveling:
             state.add_issue(
-                code=policies.INVALID_NUMERIC_VALUE,
-                message="crop.angle is not a finite numeric value.",
-                field_name="crop.angle",
-                original_value=angle,
-                action=ValidationAction.REMOVED,
+                code=policies.LEVELING_NOT_ALLOWED,
+                message="Leveling is not allowed by the selected profile.",
+                field_name="leveling",
+                original_value=True,
+                adjusted_value=False,
+                action=ValidationAction.REJECTED,
             )
-            return None
-        if not profile.crop_policy.allow_leveling:
+            return safe_false
+        if not _is_finite_number(leveling.angle) or leveling.mode == "none":
             state.add_issue(
-                code=policies.CROP_ANGLE_NOT_ALLOWED,
-                message="Crop leveling is not allowed by the selected profile.",
-                field_name="crop.angle",
-                original_value=angle,
-                action=ValidationAction.REMOVED,
+                code=policies.LEVELING_INVALID_STATE,
+                message="Recommended leveling requires a finite angle and active mode.",
+                field_name="leveling",
+                original_value=leveling.model_dump(mode="json"),
+                adjusted_value=False,
+                action=ValidationAction.REJECTED,
             )
-            return None
+            return safe_false
 
-        limit = profile.crop_policy.maximum_absolute_angle
-        adjusted = max(-limit, min(limit, float(angle)))
-        if adjusted != angle:
+        limit = profile.leveling_policy.maximum_absolute_angle
+        adjusted = max(-limit, min(limit, float(leveling.angle)))
+        if adjusted != leveling.angle:
             state.add_issue(
-                code=policies.CROP_ANGLE_CLAMPED,
-                message="Crop angle was clamped to the profile limit.",
-                field_name="crop.angle",
-                original_value=angle,
+                code=policies.LEVELING_ANGLE_CLAMPED,
+                message="Leveling angle was clamped to the profile limit.",
+                field_name="leveling.angle",
+                original_value=leveling.angle,
                 adjusted_value=adjusted,
                 action=ValidationAction.CLAMPED,
             )
-        return adjusted
+        return LevelingRecommendation(
+            recommended=True,
+            angle=adjusted,
+            mode=leveling.mode,
+        )
 
     def _validate_denoise(
         self,

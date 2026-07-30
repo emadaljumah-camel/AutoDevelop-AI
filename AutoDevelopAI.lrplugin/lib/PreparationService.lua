@@ -237,6 +237,7 @@ local function prepareDevelopPhotoBody(
             includeCrop = true,
             includeDenoise = true,
             preserveCurrentAdjustments = true,
+            learningEnabled = preferences.learningEnabled,
         }
     )
     if not request then
@@ -325,19 +326,34 @@ local function prepareDevelopPhotoBody(
     )
     markLifecycle(lifecycle, "develop_mapping_completed")
 
-    markLifecycle(lifecycle, "crop_mapping_started")
-    local mappedCrop = CropMapper.map(
+    markLifecycle(lifecycle, "geometry_mapping_started")
+    local cropRecommended = type(decoded.crop) == "table"
+        and decoded.crop.recommended == true
+    local levelingRecommended = type(decoded.leveling) == "table"
+        and decoded.leveling.recommended == true
+    local mappedGeometry = CropMapper.map(
         decoded.crop,
-        preferences.applyCrop,
+        decoded.leveling,
+        {
+            applyCompositionCrop = preferences.applyCompositionCrop,
+            applyLeveling = preferences.applyLeveling,
+        },
         currentSettings
     )
-    markLifecycle(lifecycle, "crop_mapping_completed")
-    local cropDisabled = preferences.applyCrop == false
-        and type(decoded.crop) == "table"
-        and decoded.crop.recommended == true
+    markLifecycle(lifecycle, "geometry_mapping_completed")
+    local cropDisabled = preferences.applyCompositionCrop == false
+        and cropRecommended
+    local levelingDisabled = preferences.applyLeveling == false
+        and levelingRecommended
     local denoiseRecommended = type(decoded.denoise) == "table"
         and decoded.denoise.recommended == true
-    mappedSettings = mergeSettings(mappedSettings, mappedCrop)
+    mappedSettings = mergeSettings(mappedSettings, mappedGeometry)
+    local enableHdr = type(decoded.enable_hdr) == "table"
+        and decoded.enable_hdr.recommended == true
+        and (
+            currentSettings.HDREditMode == 0
+            or currentSettings.HDREditMode == 1
+        )
     if progressScope:isCanceled() then
         return "cancelled", PreparationService.failure(
             ErrorClassifier.codes.cancelled,
@@ -345,9 +361,14 @@ local function prepareDevelopPhotoBody(
         )
     end
     local settingCount = countSettings(mappedSettings)
-    if settingCount == 0 then
+    if settingCount == 0 and not enableHdr then
         return "skipped", {
             cropDisabled = cropDisabled,
+            cropRecommended = cropRecommended,
+            levelingDisabled = levelingDisabled,
+            levelingRecommended = levelingRecommended,
+            levelingAngle = levelingRecommended
+                and decoded.leveling.angle or nil,
             denoiseRecommended = denoiseRecommended,
         }
     end
@@ -367,23 +388,63 @@ local function prepareDevelopPhotoBody(
             "original_settings_unavailable"
         )
     end
+    if enableHdr then
+        originalSettings.HDREditMode = currentSettings.HDREditMode
+    end
 
     local operation = PendingOperation.new({
         photo = photo,
         photoKey = Utils.photoKey(photo),
         filename = request.filename,
         requestId = request.request_id,
-        profileId = request.options.style_profile,
+        profileId = decoded.effective_style_id,
+        requestedStyleId = decoded.requested_style_id,
+        effectiveStyleId = decoded.effective_style_id,
+        styleSelectionMode = decoded.style_selection_mode,
+        styleSelectionReason = decoded.style_selection_reason,
+        editingIntensity = decoded.editing_intensity,
+        sceneConfidence = decoded.scene_confidence,
         originalSettings = originalSettings,
         mappedSettings = mappedSettings,
-        cropIncluded = mappedCrop ~= nil,
+        cropRecommended = cropRecommended,
+        compositionCropIncluded = mappedGeometry ~= nil
+            and cropRecommended
+            and preferences.applyCompositionCrop == true,
+        levelingRecommended = levelingRecommended,
+        levelingIncluded = mappedGeometry ~= nil
+            and levelingRecommended
+            and preferences.applyLeveling == true,
+        levelingMode = decoded.leveling.mode,
+        levelingAngle = decoded.leveling.angle,
         denoiseRecommended = denoiseRecommended,
+        enableHdr = enableHdr,
         warnings = Utils.deepCopy(decoded.warnings or {}),
         model = validatedModel,
         resolvedModel = decoded.resolved_model,
         processingDurationMs = decoded.processing_duration_ms,
+        exifContext = {
+            camera = request.exif.camera,
+            lens = request.exif.lens,
+            iso = request.exif.iso,
+            aperture = request.exif.aperture,
+            shutter_speed = request.exif.shutter_speed,
+            focal_length = request.exif.focal_length,
+            orientation = request.exif.orientation,
+            width = request.exif.width,
+            height = request.exif.height,
+            capture_time_category = "unknown",
+        },
+        validationSummary = {
+            issue_count = #(decoded.warnings or {}),
+            crop_rejected = decoded.crop == nil,
+            leveling_rejected = decoded.leveling == nil,
+            clamped_count = 0,
+            removed_count = 0,
+        },
+        learning = decoded.learning,
     })
     operation.cropDisabled = cropDisabled
+    operation.levelingDisabled = levelingDisabled
     markLifecycle(lifecycle, "pending_operation_build_completed")
     if progressScope:isCanceled() then
         PendingOperation.clear({ operation })

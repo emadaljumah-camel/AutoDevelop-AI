@@ -125,6 +125,12 @@ def test_trusted_envelope_does_not_mutate_provider_payload() -> None:
         "filename",
         "model",
         "resolved_model",
+        "requested_style_id",
+        "effective_style_id",
+        "style_selection_mode",
+        "style_selection_reason",
+        "editing_intensity",
+        "scene_confidence",
     ):
         response_payload.pop(field)
     original = response_payload.copy()
@@ -134,6 +140,12 @@ def test_trusted_envelope_does_not_mutate_provider_payload() -> None:
         _request(),
         response_type=AnalyzeResponse,
         expected_resolved_model="gemma-4-31b",
+        requested_style_id="auto",
+        effective_style_id="stock_neutral",
+        style_selection_mode="auto",
+        style_selection_reason="Ambiguous scene; broad commercial treatment",
+        editing_intensity="moderate",
+        scene_confidence=0.0,
     )
 
     assert response_payload == original
@@ -142,3 +154,87 @@ def test_trusted_envelope_does_not_mutate_provider_payload() -> None:
     assert response.filename == "Identity.NEF"
     assert response.model == "gemma"
     assert response.resolved_model == "gemma-4-31b"
+
+
+def _legacy_geometry_payload(*, angle_marker=...) -> dict[str, object]:
+    payload = _response().model_dump(mode="json")
+    for field in (
+        "schema_version",
+        "request_id",
+        "filename",
+        "model",
+        "resolved_model",
+        "requested_style_id",
+        "effective_style_id",
+        "style_selection_mode",
+        "style_selection_reason",
+        "editing_intensity",
+        "scene_confidence",
+        "leveling",
+    ):
+        payload.pop(field, None)
+    crop = {
+        "recommended": True,
+        "left": 0.03,
+        "right": 0.97,
+        "top": 0.02,
+        "bottom": 0.96,
+        "confidence": 0.9,
+        "reason": "Improve composition.",
+    }
+    if angle_marker is not ...:
+        crop["angle"] = angle_marker
+    payload["crop"] = crop
+    return payload
+
+
+def _build_legacy(payload: dict[str, object]) -> AnalyzeResponse:
+    return build_model_response(
+        payload,
+        _request(),
+        response_type=AnalyzeResponse,
+        expected_resolved_model="gemma-4-31b",
+        requested_style_id="auto",
+        effective_style_id="stock_neutral",
+        style_selection_mode="auto",
+        style_selection_reason="Ambiguous scene; broad commercial treatment",
+        editing_intensity="moderate",
+        scene_confidence=0.0,
+    )
+
+
+@pytest.mark.parametrize("legacy_angle", [..., None, 0, 0.0])
+def test_legacy_missing_null_or_zero_angle_normalizes_to_crop_only(
+    legacy_angle: object,
+) -> None:
+    response = _build_legacy(
+        _legacy_geometry_payload(angle_marker=legacy_angle)
+    )
+
+    assert response.crop is not None
+    assert response.crop.recommended is True
+    assert response.leveling.recommended is False
+    assert response.leveling.angle == 0
+    assert response.leveling.mode == "none"
+
+
+def test_legacy_nonzero_angle_normalizes_to_leveling_once() -> None:
+    response = _build_legacy(_legacy_geometry_payload(angle_marker=-0.72))
+
+    assert response.crop is not None
+    assert response.leveling.recommended is True
+    assert response.leveling.angle == -0.72
+    assert response.leveling.mode == "horizon"
+    assert "angle" not in response.crop.model_dump()
+
+
+def test_legacy_and_new_leveling_sources_are_rejected() -> None:
+    payload = _legacy_geometry_payload(angle_marker=-0.72)
+    payload["leveling"] = {
+        "recommended": True,
+        "angle": -0.72,
+        "mode": "horizon",
+    }
+
+    with pytest.raises(InvalidModelResponseError):
+        _build_legacy(payload)

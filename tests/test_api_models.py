@@ -15,6 +15,9 @@ from autodevelop.models import (
     DevelopResponse,
     DevelopSettings,
     ErrorResponse,
+    HdrRecommendation,
+    LearningDiagnostics,
+    LevelingRecommendation,
     PhotoExif,
     ProcessingWarning,
     TechnicalAnalysis,
@@ -27,6 +30,12 @@ ANALYZE_RESPONSE_DATA = {
     "request_id": str(REQUEST_ID),
     "filename": "DSC_0001.NEF",
     "status": "success",
+    "requested_style_id": "natural_travel",
+    "effective_style_id": "natural_travel",
+    "style_selection_mode": "manual",
+    "style_selection_reason": "Manual style override",
+    "editing_intensity": "moderate",
+    "scene_confidence": 0.93,
     "analysis": {
         "scene_type": "landscape",
         "main_subject": "mountain lake",
@@ -35,6 +44,9 @@ ANALYZE_RESPONSE_DATA = {
         "white_balance_assessment": "Slightly cool.",
         "dynamic_range": "high",
         "noise_level": "low",
+        "highlight_recoverability": "unknown",
+        "shadow_recoverability": "unknown",
+        "severe_underexposure": False,
         "horizon_status": "slightly tilted",
         "visible_people": 0,
         "has_faces": False,
@@ -52,9 +64,13 @@ ANALYZE_RESPONSE_DATA = {
         "right": 0.98,
         "top": 0.03,
         "bottom": 0.97,
-        "angle": -0.4,
         "confidence": 0.86,
-        "reason": "Level the horizon.",
+        "reason": "Improve composition.",
+    },
+    "leveling": {
+        "recommended": True,
+        "angle": -0.4,
+        "mode": "horizon",
     },
     "denoise": {
         "recommended": False,
@@ -92,11 +108,15 @@ DEVELOP_RESPONSE_DATA = {
         "Saturation": 2.0,
         "Temperature": 5750.0,
         "Tint": 6.0,
-        "CropLeft": 0.02,
-        "CropRight": 0.98,
-        "CropTop": 0.03,
-        "CropBottom": 0.97,
-        "CropAngle": -0.4,
+        "CropLeft": None,
+        "CropRight": None,
+        "CropTop": None,
+        "CropBottom": None,
+        "CropAngle": None,
+    },
+    "enable_hdr": {
+        "recommended": False,
+        "reason": None,
     },
 }
 
@@ -115,10 +135,10 @@ ERROR_RESPONSE_DATA = {
 }
 
 PUBLIC_SCHEMA_HASHES = {
-    AnalyzeRequest: "94fa1c653f611c9e901f8c895ac4d3a89eed4f4df50d51a95a611692b659d5c4",
-    DevelopRequest: "b26191450b41d48348d355f383ef15ce812b498defb0c8f31ea54ba2b000d007",
-    AnalyzeResponse: "589256af69b8280a1331b65a7b8b9fb9f7afaedc998e90f8063e01cf4862846d",
-    DevelopResponse: "c156d566f92dc850fca4be44ed8d202dafa0d3f174a25d8bb6edc5e7443d3bcd",
+    AnalyzeRequest: "66e732e2c0676358f648b0e68a5db9517c74a23a092f59e0c15a0874475550aa",
+    DevelopRequest: "fedcec26ef898208d0495dbaf88c38c72badbac1fa3305c1a28797623df8a40e",
+    AnalyzeResponse: "28351b84312968c92d7f72670505454229e8fdb0c8385fc20e9f69ecb72e7e13",
+    DevelopResponse: "17dbf2c0f41013fcb34c55b919fd72bd0b455d56c674260db1edbe54bb7f7098",
     ErrorResponse: "527d0bbd9b728522f146a539d44bc433c39e7988db3926cda467ce9cdec9994e",
 }
 
@@ -140,7 +160,7 @@ def test_minimal_analyze_request_with_preview_path() -> None:
     assert request.preview_path == "temp/DSC_0001.jpg"
     assert request.exif.model_dump(exclude_none=True) == {}
     assert request.current_settings.model_dump(exclude_none=True) == {}
-    assert request.options.style_profile == "natural_travel"
+    assert request.options.style_profile == "auto"
 
 
 def test_minimal_analyze_request_with_preview_base64() -> None:
@@ -209,8 +229,8 @@ def test_zero_or_negative_iso_is_rejected(iso: int) -> None:
         (PhotoExif, {"aperture": None}),
         (DevelopSettings, {"Exposure2012": None}),
         (
-            CropRecommendation,
-            {"recommended": False, "angle": None},
+            LevelingRecommendation,
+            {"recommended": True, "angle": None, "mode": "horizon"},
         ),
         (
             DenoiseRecommendation,
@@ -224,6 +244,7 @@ def test_nonfinite_values_are_rejected_for_numeric_model_categories(
         PhotoExif
         | DevelopSettings
         | CropRecommendation
+        | LevelingRecommendation
         | DenoiseRecommendation
         | TechnicalAnalysis
     ],
@@ -308,13 +329,27 @@ def test_valid_complete_crop_recommendation() -> None:
         right=0.9,
         top=0.2,
         bottom=0.8,
-        angle=-0.5,
         confidence=0.9,
         reason="Improve composition.",
     )
 
     assert crop.left == 0.1
     assert crop.bottom == 0.8
+
+
+def test_leveling_state_is_independent_and_strict() -> None:
+    leveling = LevelingRecommendation(
+        recommended=True,
+        angle=-0.5,
+        mode="horizon",
+    )
+    assert leveling.angle == -0.5
+    with pytest.raises(ValidationError):
+        LevelingRecommendation(
+            recommended=False,
+            angle=-0.5,
+            mode="horizon",
+        )
 
 
 def test_recommended_crop_with_missing_bound_is_rejected() -> None:
@@ -475,7 +510,10 @@ def test_processing_response_json_output_is_unchanged(
 ) -> None:
     response = model_type.model_validate(payload)
 
-    assert json.loads(response.model_dump_json()) == payload
+    serialized = json.loads(response.model_dump_json())
+    if model_type is DevelopResponse:
+        assert serialized.pop("learning") is None
+    assert serialized == payload
 
 
 @pytest.mark.parametrize("model_type", [AnalyzeResponse, DevelopResponse])
@@ -506,9 +544,15 @@ def test_processing_response_warning_lists_are_not_shared(
             severity="info",
         )
     )
-
     assert len(first.warnings) == 1
     assert second.warnings == []
+
+
+def test_hdr_reason_is_contractually_null() -> None:
+    with pytest.raises(ValidationError):
+        HdrRecommendation.model_validate(
+            {"recommended": True, "reason": "private provider reasoning"}
+        )
 
 
 @pytest.mark.parametrize("model_type", [AnalyzeResponse, DevelopResponse])
@@ -547,6 +591,41 @@ def test_public_json_schemas_are_unchanged(
     ).encode()
 
     assert hashlib.sha256(canonical_schema).hexdigest() == expected_hash
+
+
+def test_learning_diagnostics_validate_visible_summary_values() -> None:
+    diagnostics = LearningDiagnostics(
+        enabled=True,
+        personalization_applied=True,
+        usable_sample_count=18,
+        retrieved_sample_count=5,
+        minimum_sample_count=3,
+        average_similarity=0.86,
+        feature_type="local_color_luminance",
+        reason=None,
+    )
+
+    assert diagnostics.minimum_sample_count == 3
+    assert diagnostics.average_similarity == 0.86
+    with pytest.raises(ValidationError):
+        LearningDiagnostics(
+            enabled=True,
+            personalization_applied=False,
+            usable_sample_count=2,
+            retrieved_sample_count=0,
+            minimum_sample_count=0,
+            average_similarity=None,
+            reason="insufficient_samples",
+        )
+    with pytest.raises(ValidationError):
+        diagnostics.model_copy(
+            update={"average_similarity": 1.01}
+        ).model_validate(
+            {
+                **diagnostics.model_dump(),
+                "average_similarity": 1.01,
+            }
+        )
 
 
 @pytest.mark.parametrize("model_type", [AnalyzeRequest, DevelopRequest])

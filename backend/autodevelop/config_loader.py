@@ -25,6 +25,14 @@ _MODEL_SETTING_FIELDS = (
     "gemini_model",
     "gemini_timeout_seconds",
 )
+_LEARNING_SETTING_FIELDS = (
+    "learning_enabled",
+    "learning_db",
+    "learning_min_samples",
+    "learning_max_results",
+    "learning_min_similarity",
+    "learning_max_candidate_pool",
+)
 
 
 class ModelConfigurationError(ValueError):
@@ -145,7 +153,11 @@ def load_models_yaml(
     )
 
 
-def _flatten_yaml_config(config: ModelsYamlConfig) -> dict[str, Any]:
+def _flatten_yaml_config(
+    config: ModelsYamlConfig,
+    *,
+    application_root: Path,
+) -> dict[str, Any]:
     values: dict[str, Any] = {}
     if config.default_model is not None:
         values["default_model"] = config.default_model
@@ -170,6 +182,21 @@ def _flatten_yaml_config(config: ModelsYamlConfig) -> dict[str, Any]:
         entry = config.models.get(model_id)
         if entry is not None and entry.provider_model_id is not None:
             values[field_name] = entry.provider_model_id
+    learning = config.learning
+    if learning is not None:
+        database_path = Path(learning.database_path).expanduser()
+        if not database_path.is_absolute():
+            database_path = application_root / database_path
+        values.update(
+            {
+                "learning_enabled": learning.enabled,
+                "learning_db": database_path.resolve(strict=False),
+                "learning_min_samples": learning.minimum_samples,
+                "learning_max_results": learning.maximum_results,
+                "learning_min_similarity": learning.minimum_similarity,
+                "learning_max_candidate_pool": learning.maximum_candidate_pool,
+            }
+        )
     return values
 
 
@@ -189,19 +216,25 @@ def load_settings(
         requested_file,
         application_root=application_root,
     )
-    yaml_values = _flatten_yaml_config(loaded.config)
+    yaml_values = _flatten_yaml_config(
+        loaded.config,
+        application_root=application_root,
+    )
     environment_fields = environment_settings.model_fields_set
     resolved_values = {
         field_name: getattr(environment_settings, field_name)
         for field_name in type(environment_settings).model_fields
     }
     for field_name, value in yaml_values.items():
-        if field_name not in environment_fields:
+        if (
+            field_name in _LEARNING_SETTING_FIELDS
+            or field_name not in environment_fields
+        ):
             resolved_values[field_name] = value
     settings = Settings(_env_file=None, **resolved_values)
 
     sources = {}
-    for field_name in _MODEL_SETTING_FIELDS:
+    for field_name in _MODEL_SETTING_FIELDS + _LEARNING_SETTING_FIELDS:
         if field_name in environment_fields:
             sources[field_name] = "environment"
         elif field_name in yaml_values:

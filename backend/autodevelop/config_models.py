@@ -20,6 +20,8 @@ NonBlankConfigString = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, strict=True),
 ]
 ProviderTimeout = Annotated[int, Field(strict=True, ge=10, le=600)]
+PositiveLearningInteger = Annotated[int, Field(strict=True, ge=1)]
+LearningSimilarity = Annotated[float, Field(strict=True, ge=0, le=1)]
 
 
 def normalize_safe_http_url(value: str) -> str:
@@ -67,11 +69,31 @@ class ModelYamlEntry(_YamlModel):
     enabled: StrictBool | None = None
 
 
+class LearningYamlConfig(_YamlModel):
+    """Strict non-secret personalized-learning configuration."""
+
+    enabled: StrictBool = True
+    database_path: NonBlankConfigString = "data/autodevelop_learning.sqlite3"
+    minimum_samples: PositiveLearningInteger = 3
+    maximum_results: PositiveLearningInteger = 5
+    minimum_similarity: LearningSimilarity = 0.70
+    maximum_candidate_pool: PositiveLearningInteger = 100
+
+    @model_validator(mode="after")
+    def validate_candidate_pool(self) -> "LearningYamlConfig":
+        if self.maximum_candidate_pool < self.maximum_results:
+            raise ValueError(
+                "maximum_candidate_pool must be at least maximum_results"
+            )
+        return self
+
+
 class ModelsYamlConfig(_YamlModel):
     version: Literal[1] = 1
     default_model: NonBlankConfigString | None = None
     providers: ProviderYamlConfig | None = None
     models: dict[str, ModelYamlEntry] = Field(default_factory=dict)
+    learning: LearningYamlConfig | None = None
 
     @field_validator("default_model")
     @classmethod

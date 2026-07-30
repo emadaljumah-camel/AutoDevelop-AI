@@ -38,13 +38,16 @@ def _profile_data(profile_id: str = "test_profile") -> dict[str, object]:
         },
         "crop_policy": {
             "allow_crop": True,
-            "allow_leveling": True,
             "max_edge_crop": 0.1,
             "minimum_retained_area": 0.75,
-            "maximum_absolute_angle": 4.0,
             "minimum_confidence": 0.6,
             "require_confidence": False,
             "preserve_aspect_ratio": True,
+        },
+        "leveling_policy": {
+            "allow_leveling": True,
+            "maximum_absolute_angle": 4.0,
+            "guidance": ["Correct clearly accidental camera roll"],
         },
         "denoise_policy": {
             "allow_denoise": True,
@@ -118,8 +121,8 @@ def test_documentary_limits_stay_within_existing_bundled_safety_envelope() -> No
     assert documentary.crop_policy.minimum_retained_area >= min(
         profile.crop_policy.minimum_retained_area for profile in established
     )
-    assert documentary.crop_policy.maximum_absolute_angle <= max(
-        profile.crop_policy.maximum_absolute_angle for profile in established
+    assert documentary.leveling_policy.maximum_absolute_angle <= max(
+        profile.leveling_policy.maximum_absolute_angle for profile in established
     )
     assert documentary.denoise_policy.maximum_amount <= max(
         profile.denoise_policy.maximum_amount for profile in established

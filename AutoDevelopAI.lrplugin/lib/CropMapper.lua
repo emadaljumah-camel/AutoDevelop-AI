@@ -21,26 +21,20 @@ local function validUnit(value)
     return Utils.isFiniteNumber(value) and value >= 0 and value <= 1
 end
 
-function CropMapper.map(crop, applyCrop, currentSettings)
-    if applyCrop ~= true or crop == nil then
-        return nil
-    end
-    if type(crop) ~= "table" or crop.recommended ~= true then
-        return nil
-    end
-    if not validUnit(crop.left)
-        or not validUnit(crop.right)
-        or not validUnit(crop.top)
-        or not validUnit(crop.bottom)
-        or not Utils.isFiniteNumber(crop.angle) then
-        return nil
-    end
-    if crop.left >= crop.right or crop.top >= crop.bottom then
-        return nil
-    end
-    if math.abs(crop.angle) > CropMapper.MAX_ABSOLUTE_ANGLE then
-        return nil
-    end
+local function validBounds(source)
+    return type(source) == "table"
+        and validUnit(source.left or source.CropLeft)
+        and validUnit(source.right or source.CropRight)
+        and validUnit(source.top or source.CropTop)
+        and validUnit(source.bottom or source.CropBottom)
+        and (source.left or source.CropLeft)
+            < (source.right or source.CropRight)
+        and (source.top or source.CropTop)
+            < (source.bottom or source.CropBottom)
+end
+
+function CropMapper.map(crop, leveling, options, currentSettings)
+    options = options or {}
     if type(currentSettings) ~= "table" then
         return nil
     end
@@ -50,12 +44,26 @@ function CropMapper.map(crop, applyCrop, currentSettings)
         end
     end
 
+    local applyCrop = options.applyCompositionCrop == true
+        and type(crop) == "table"
+        and crop.recommended == true
+        and validBounds(crop)
+    local applyLeveling = options.applyLeveling == true
+        and type(leveling) == "table"
+        and leveling.recommended == true
+        and Utils.isFiniteNumber(leveling.angle)
+        and math.abs(leveling.angle) <= CropMapper.MAX_ABSOLUTE_ANGLE
+    if not applyCrop and not applyLeveling then
+        return nil
+    end
+
     return {
-        CropLeft = crop.left,
-        CropRight = crop.right,
-        CropTop = crop.top,
-        CropBottom = crop.bottom,
-        CropAngle = crop.angle,
+        CropLeft = applyCrop and crop.left or currentSettings.CropLeft,
+        CropRight = applyCrop and crop.right or currentSettings.CropRight,
+        CropTop = applyCrop and crop.top or currentSettings.CropTop,
+        CropBottom = applyCrop and crop.bottom or currentSettings.CropBottom,
+        CropAngle = applyLeveling
+            and leveling.angle or currentSettings.CropAngle,
     }
 end
 

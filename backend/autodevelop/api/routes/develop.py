@@ -31,7 +31,12 @@ from autodevelop.models import (
     ErrorResponse,
     ProcessingWarning,
 )
-from autodevelop.profiles import ProfileNotFoundError, StyleProfileLoader
+from autodevelop.profiles import (
+    AUTO_STYLE_ID,
+    ProfileNotFoundError,
+    StyleProfileLoader,
+    is_valid_style_request_id,
+)
 from autodevelop.validation import (
     SafetyValidator,
     ValidationIssue,
@@ -92,6 +97,12 @@ def _build_final_response(
         request_id=raw_response.request_id,
         filename=raw_response.filename,
         status=raw_response.status,
+        requested_style_id=raw_response.requested_style_id,
+        effective_style_id=raw_response.effective_style_id,
+        style_selection_mode=raw_response.style_selection_mode,
+        style_selection_reason=raw_response.style_selection_reason,
+        editing_intensity=raw_response.editing_intensity,
+        scene_confidence=raw_response.scene_confidence,
         analysis=(
             raw_response.analysis.model_copy(deep=True)
             if raw_response.analysis is not None
@@ -103,11 +114,13 @@ def _build_final_response(
             else None
         ),
         develop_settings=validation_result.settings.model_copy(deep=True),
+        enable_hdr=validation_result.enable_hdr.model_copy(deep=True),
         crop=(
             validation_result.crop.model_copy(deep=True)
             if validation_result.crop is not None
             else None
         ),
+        leveling=validation_result.leveling.model_copy(deep=True),
         denoise=(
             validation_result.denoise.model_copy(deep=True)
             if validation_result.denoise is not None
@@ -120,6 +133,11 @@ def _build_final_response(
         model=raw_response.model,
         resolved_model=raw_response.resolved_model,
         processing_duration_ms=raw_response.processing_duration_ms,
+        learning=(
+            raw_response.learning.model_copy(deep=True)
+            if raw_response.learning is not None
+            else None
+        ),
     )
 
 
@@ -169,8 +187,12 @@ async def develop_photo(
         profile_id,
     )
 
+    profile = None
     try:
-        profile = profile_loader.get_cached_profile(profile_id)
+        if profile_id != AUTO_STYLE_ID:
+            profile = profile_loader.get_cached_profile(profile_id)
+        if not is_valid_style_request_id(profile_id):
+            raise ProfileNotFoundError(profile_id)
     except ProfileNotFoundError:
         logger.warning(
             "Develop profile not found request_id=%s filename=%s profile=%s",
@@ -261,11 +283,19 @@ async def develop_photo(
         )
 
     try:
+        if profile is None or profile.id != raw_response.effective_style_id:
+            profile = profile_loader.get_cached_profile(
+                raw_response.effective_style_id
+            )
         validation_result = safety_validator.validate(
             settings=raw_response.develop_settings,
             crop=raw_response.crop,
+            leveling=raw_response.leveling,
             denoise=raw_response.denoise,
             profile=profile,
+            enable_hdr=raw_response.enable_hdr,
+            analysis=raw_response.analysis,
+            options=request.options,
         )
         final_response = _build_final_response(
             raw_response,
@@ -287,7 +317,8 @@ async def develop_photo(
 
     logger.info(
         (
-            "Develop request complete request_id=%s filename=%s profile=%s "
+            "Develop request complete request_id=%s filename=%s requested_style=%s "
+            "effective_style=%s "
             "model=%s provider=%s resolved_model=%s outcome=%s duration_ms=%s "
             "validation_issues=%d "
             "crop_rejected=%s clamped=%d removed=%d"
@@ -295,6 +326,7 @@ async def develop_photo(
         request.request_id,
         request.filename,
         profile_id,
+        raw_response.effective_style_id,
         raw_response.model,
         resolution.definition.provider,
         raw_response.resolved_model,

@@ -1,17 +1,18 @@
 {
   "id": "night",
   "display_name": "Night",
-  "description": "Night rendering that protects bright lights, recovers shadows carefully, and permits stronger denoise.",
+  "description": "Strong night rendering with luminous controlled highlights, defined blacks, useful shadow detail, and rich realistic color.",
   "version": "1.0",
   "editing_goals": [
-    "Protect artificial-light highlights",
-    "Recover useful shadow detail carefully",
-    "Control high-ISO noise"
+    "Build a strong nighttime atmosphere with luminous but controlled lights and protected bright detail",
+    "Create defined blacks and recover useful shadow detail without making night look like day",
+    "Produce rich realistic color and clear subject separation while managing casts and high-ISO noise"
   ],
   "cautions": [
     "Avoid excessive shadow lifting",
-    "Avoid flattening deep blacks",
-    "Avoid smearing fine detail"
+    "Avoid washed-out or flattened blacks",
+    "Avoid smearing fine detail",
+    "Avoid a weak rendering that loses the scene's luminous impact"
   ],
   "slider_ranges": {
     "Exposure2012": {"min": -1.0, "max": 1.0, "preferred": 0.0},
@@ -26,18 +27,24 @@
     "Vibrance": {"min": -12.0, "max": 25.0, "preferred": 5.0},
     "Saturation": {"min": -15.0, "max": 10.0, "preferred": -2.0},
     "Temperature": {"min": 2500.0, "max": 6500.0, "preferred": 4000.0},
-    "Tint": {"min": -25.0, "max": 25.0, "preferred": 0.0},
-    "CropAngle": {"min": -4.0, "max": 4.0, "preferred": 0.0}
+    "Tint": {"min": -25.0, "max": 25.0, "preferred": 0.0}
   },
   "crop_policy": {
     "allow_crop": true,
-    "allow_leveling": true,
     "max_edge_crop": 0.1,
     "minimum_retained_area": 0.8,
-    "maximum_absolute_angle": 4.0,
     "minimum_confidence": 0.65,
     "require_confidence": false,
     "preserve_aspect_ratio": true
+  },
+  "leveling_policy": {
+    "allow_leveling": true,
+    "maximum_absolute_angle": 4.0,
+    "guidance": [
+      "Use skylines, buildings, reflections, and reliable light lines carefully",
+      "Do not treat perspective convergence as rotational tilt",
+      "Retain deliberate dynamic night framing"
+    ]
   },
   "denoise_policy": {
     "allow_denoise": true,

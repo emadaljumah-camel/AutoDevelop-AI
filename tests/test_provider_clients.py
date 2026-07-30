@@ -35,6 +35,9 @@ def test_local_transport_uses_configured_model_and_blank_key() -> None:
     result = asyncio.run(invoke())
     assert result == {"status": "success"}
     assert captured["json"]["model"] == "configured-qwen"  # type: ignore[index]
+    assert captured["json"]["response_format"] == {  # type: ignore[index]
+        "type": "text"
+    }
     assert "authorization" not in captured["headers"]  # type: ignore[operator]
 
 

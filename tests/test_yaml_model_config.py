@@ -29,6 +29,12 @@ MODEL_ENVIRONMENT_VARIABLES = (
     "AUTODEVELOP_GEMINI_API_KEY",
     "AUTODEVELOP_GEMINI_MODEL",
     "AUTODEVELOP_GEMINI_TIMEOUT_SECONDS",
+    "AUTODEVELOP_LEARNING_ENABLED",
+    "AUTODEVELOP_LEARNING_DB",
+    "AUTODEVELOP_LEARNING_MIN_SAMPLES",
+    "AUTODEVELOP_LEARNING_MAX_RESULTS",
+    "AUTODEVELOP_LEARNING_MIN_SIMILARITY",
+    "AUTODEVELOP_LEARNING_MAX_CANDIDATE_POOL",
 )
 IDENTITY_FIELDS = (
     "schema_version",
@@ -91,6 +97,13 @@ models:
     provider_model_id: yaml-gemini
   claude:
     enabled: false
+learning:
+  enabled: false
+  database_path: data/custom-learning.sqlite3
+  minimum_samples: 4
+  maximum_results: 6
+  minimum_similarity: 0.75
+  maximum_candidate_pool: 120
 """,
     )
 
@@ -104,6 +117,14 @@ models:
     assert settings.qwen_model == "yaml-qwen"
     assert settings.gpt_oss_model == "yaml-gpt"
     assert settings.gemini_model == "yaml-gemini"
+    assert settings.learning_enabled is False
+    assert settings.learning_db == (
+        tmp_path / "data" / "custom-learning.sqlite3"
+    ).resolve()
+    assert settings.learning_min_samples == 4
+    assert settings.learning_max_results == 6
+    assert settings.learning_min_similarity == 0.75
+    assert settings.learning_max_candidate_pool == 120
     assert settings.yaml_configuration_loaded is True
     assert settings.configuration_source_summary == "yaml"
 
@@ -220,12 +241,174 @@ def test_default_path_does_not_depend_on_current_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path, "default_model: qwen\n")
+    _write_config(
+        tmp_path,
+        (
+            "default_model: qwen\n"
+            "learning:\n"
+            "  database_path: data/from-stable-root.sqlite3\n"
+        ),
+    )
     other_directory = tmp_path / "elsewhere"
     other_directory.mkdir()
     monkeypatch.chdir(other_directory)
 
-    assert _load(tmp_path).default_model == "qwen"
+    settings = _load(tmp_path)
+    settings.log_path = tmp_path / "logs" / "different-cwd.log"
+    app = create_app(settings, model_client=FakeModelClient())
+
+    assert settings.default_model == "qwen"
+    assert settings.learning_db == (
+        tmp_path / "data" / "from-stable-root.sqlite3"
+    ).resolve()
+    with TestClient(app) as client:
+        assert client.get("/autodevelop/v1/health").status_code == 200
+    assert settings.learning_db.is_file()
+    assert settings.learning_db.parent.is_dir()
+
+
+def test_absolute_learning_database_path_is_preserved(tmp_path: Path) -> None:
+    absolute_path = (tmp_path / "external" / "learning.sqlite3").resolve()
+    _write_config(
+        tmp_path,
+        f"learning:\n  database_path: {absolute_path.as_posix()}\n",
+    )
+
+    assert _load(tmp_path).learning_db == absolute_path
+
+
+@pytest.mark.parametrize(
+    "learning_yaml",
+    [
+        "enabled: 'true'",
+        "database_path: '   '",
+        "minimum_samples: 0",
+        "minimum_samples: '3'",
+        "maximum_results: 0",
+        "maximum_results: '5'",
+        "minimum_similarity: -0.01",
+        "minimum_similarity: 1.01",
+        "minimum_similarity: '0.70'",
+        "maximum_candidate_pool: 0",
+        "maximum_candidate_pool: '100'",
+        "maximum_results: 6\nmaximum_candidate_pool: 5",
+    ],
+)
+def test_invalid_learning_yaml_fails_clearly(
+    tmp_path: Path,
+    learning_yaml: str,
+) -> None:
+    _write_config(
+        tmp_path,
+        "learning:\n  " + learning_yaml.replace("\n", "\n  ") + "\n",
+    )
+
+    with pytest.raises(
+        ModelConfigurationError,
+        match=r"learning(?:\.|$)",
+    ):
+        _load(tmp_path)
+
+
+def test_unknown_learning_key_is_rejected(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path,
+        "learning:\n  enabled: true\n  database: private.sqlite3\n",
+    )
+
+    with pytest.raises(ModelConfigurationError, match=r"learning\.<unknown-key>"):
+        _load(tmp_path)
+
+
+def test_learning_environment_variables_are_ignored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(
+        tmp_path,
+        """
+learning:
+  enabled: true
+  database_path: data/yaml-learning.sqlite3
+  minimum_samples: 3
+  maximum_results: 5
+  minimum_similarity: 0.70
+  maximum_candidate_pool: 100
+""",
+    )
+    monkeypatch.setenv("AUTODEVELOP_LEARNING_ENABLED", "false")
+    monkeypatch.setenv("AUTODEVELOP_LEARNING_DB", "private/env.sqlite3")
+    monkeypatch.setenv("AUTODEVELOP_LEARNING_MIN_SAMPLES", "91")
+    monkeypatch.setenv("AUTODEVELOP_LEARNING_MAX_RESULTS", "19")
+    monkeypatch.setenv("AUTODEVELOP_LEARNING_MIN_SIMILARITY", "0.01")
+    monkeypatch.setenv("AUTODEVELOP_LEARNING_MAX_CANDIDATE_POOL", "999")
+
+    settings = _load(tmp_path)
+
+    assert settings.learning_enabled is True
+    assert settings.learning_db == (
+        tmp_path / "data" / "yaml-learning.sqlite3"
+    ).resolve()
+    assert settings.learning_min_samples == 3
+    assert settings.learning_max_results == 5
+    assert settings.learning_min_similarity == 0.70
+    assert settings.learning_max_candidate_pool == 100
+    assert settings.configuration_sources["learning_enabled"] == "yaml"
+
+
+def test_learning_dotenv_values_are_ignored_but_secrets_still_load(
+    tmp_path: Path,
+) -> None:
+    _write_config(
+        tmp_path,
+        """
+learning:
+  enabled: true
+  database_path: data/yaml-dotenv.sqlite3
+  minimum_samples: 3
+  maximum_results: 5
+  minimum_similarity: 0.70
+  maximum_candidate_pool: 100
+""",
+    )
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "\n".join(
+            (
+                "AUTODEVELOP_LEARNING_ENABLED=false",
+                "AUTODEVELOP_LEARNING_DB=private/dotenv.sqlite3",
+                "AUTODEVELOP_LEARNING_MIN_SAMPLES=90",
+                "AUTODEVELOP_LEARNING_MAX_RESULTS=19",
+                "AUTODEVELOP_LEARNING_MIN_SIMILARITY=0.01",
+                "AUTODEVELOP_LEARNING_MAX_CANDIDATE_POOL=999",
+                "AUTODEVELOP_LOCAL_API_KEY=dotenv-local-secret",
+                "AUTODEVELOP_GEMINI_API_KEY=dotenv-gemini-secret",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(
+        application_root=tmp_path,
+        env_file=env_path,
+    )
+
+    assert settings.learning_enabled is True
+    assert settings.learning_db == (
+        tmp_path / "data" / "yaml-dotenv.sqlite3"
+    ).resolve()
+    assert settings.learning_min_samples == 3
+    assert settings.learning_max_results == 5
+    assert settings.learning_min_similarity == 0.70
+    assert settings.learning_max_candidate_pool == 100
+    assert (
+        settings.local_api_key.get_secret_value()
+        == "dotenv-local-secret"
+    )
+    assert (
+        settings.gemini_api_key.get_secret_value()
+        == "dotenv-gemini-secret"
+    )
 
 
 @pytest.mark.parametrize(
@@ -564,8 +747,21 @@ class StaticProviderClient:
         self.payload = payload
         self.calls = 0
 
-    async def infer(self, **_kwargs: Any) -> dict[str, Any]:
+    async def infer(self, **kwargs: Any) -> dict[str, Any]:
         self.calls += 1
+        if "Identify only the observable semantic signals" in kwargs.get(
+            "prompt", ""
+        ):
+            return {
+                "primary_subject_type": "other",
+                "primary_subject": "configured test scene",
+                "scene_category": "commercial_general",
+                "lighting_type": "daylight",
+                "dynamic_range": "moderate",
+                "color_character": "balanced",
+                "confidence": 0.9,
+                "editing_priorities": [],
+            }
         return dict(self.payload)
 
 
@@ -605,6 +801,18 @@ def _provider_payload(endpoint: str, resolved_model: str) -> dict[str, Any]:
     payload = response.model_dump(mode="json")
     for field in IDENTITY_FIELDS:
         payload.pop(field)
+    # Learning diagnostics are constructed by the backend, not supplied by a
+    # provider response.
+    payload.pop("learning", None)
+    for field in (
+        "requested_style_id",
+        "effective_style_id",
+        "style_selection_mode",
+        "style_selection_reason",
+        "editing_intensity",
+        "scene_confidence",
+    ):
+        payload.pop(field, None)
     return payload
 
 
@@ -634,7 +842,7 @@ def test_routes_report_yaml_resolved_provider_model(
     assert response.status_code == 200
     assert response.json()["model"] == "qwen"
     assert response.json()["resolved_model"] == "yaml-qwen"
-    assert provider.calls == 1
+    assert provider.calls == (2 if endpoint == "analyze" else 1)
 
 
 def test_models_endpoint_reflects_yaml_without_calling_provider(
@@ -684,7 +892,16 @@ def test_startup_log_is_safe_and_does_not_dump_yaml(
     gemini_secret = "gemini-api-secret"
     _write_config(
         tmp_path,
-        f"models:\n  gemma:\n    provider_model_id: {yaml_marker}\n",
+        (
+            f"models:\n  gemma:\n    provider_model_id: {yaml_marker}\n"
+            "learning:\n"
+            "  enabled: true\n"
+            "  database_path: data/log-test.sqlite3\n"
+            "  minimum_samples: 3\n"
+            "  maximum_results: 5\n"
+            "  minimum_similarity: 0.70\n"
+            "  maximum_candidate_pool: 100\n"
+        ),
     )
     monkeypatch.setenv("AUTODEVELOP_LOCAL_API_KEY", local_secret)
     monkeypatch.setenv("AUTODEVELOP_GEMINI_API_KEY", gemini_secret)
@@ -698,6 +915,13 @@ def test_startup_log_is_safe_and_does_not_dump_yaml(
 
     log_text = log_path.read_text(encoding="utf-8")
     assert "configuration_loaded" in log_text
+    assert "config_source=yaml" in log_text
+    assert "learning_enabled=true" in log_text
+    assert "learning_database_configured=true" in log_text
+    assert "learning_minimum_samples=3" in log_text
+    assert "learning_maximum_results=5" in log_text
+    assert "learning_minimum_similarity=0.70" in log_text
+    assert str(settings.learning_db) not in log_text
     assert local_secret not in log_text
     assert gemini_secret not in log_text
     assert yaml_marker not in log_text

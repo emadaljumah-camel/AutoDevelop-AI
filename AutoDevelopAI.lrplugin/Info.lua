@@ -22,6 +22,10 @@ return {
             file = "AnalyzeSelectedPhotos.lua",
         },
         {
+            title = "Capture Editing Feedback",
+            file = "CaptureEditingFeedback.lua",
+        },
+        {
             title = "Apply Recommended Crop",
             file = "ApplyRecommendedCrop.lua",
         },

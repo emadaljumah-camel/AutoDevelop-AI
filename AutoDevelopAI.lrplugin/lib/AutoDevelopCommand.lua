@@ -11,6 +11,8 @@ local BatchOperationRecorder =
 local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
 local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
 local Logger = ModuleLoader.load("lib/Logger.lua")
+local LearningBaselineService =
+    ModuleLoader.load("lib/LearningBaselineService.lua")
 local PendingOperation = ModuleLoader.load("lib/PendingOperation.lua")
 local Preferences = ModuleLoader.load("lib/Preferences.lua")
 local PreparationService = ModuleLoader.load("lib/PreparationService.lua")
@@ -131,12 +133,8 @@ local function prepareBatch(
         end
         if recordingStatus == "recorded" then
             summary.ready = summary.ready + 1
-            if value.cropIncluded then
-                summary.cropCount = summary.cropCount + 1
-            end
-            if value.cropDisabled then
-                summary.cropDisabled = summary.cropDisabled + 1
-            end
+            BatchSummary.recordStyle(summary, value)
+            BatchSummary.recordGeometry(summary, value)
             if value.denoiseRecommended then
                 summary.denoiseIgnored = summary.denoiseIgnored + 1
             end
@@ -146,11 +144,19 @@ local function prepareBatch(
             if value.resolvedModel then
                 summary.resolvedModels[value.resolvedModel] = true
             end
+            if type(value.learning) == "table" then
+                BatchSummary.recordLearning(summary, value.learning)
+            end
             if #summary.examples < 5 then
                 summary.examples[#summary.examples + 1] = {
                     filename = value.filename,
                     settingCount = countSettings(value.mappedSettings),
-                    cropIncluded = value.cropIncluded,
+                    cropRecommended = value.cropRecommended,
+                    cropIncluded = value.compositionCropIncluded,
+                    levelingRecommended = value.levelingRecommended,
+                    levelingIncluded = value.levelingIncluded,
+                    levelingMode = value.levelingMode,
+                    levelingAngle = value.levelingAngle,
                     warningCount = #(value.warnings or {}),
                 }
             end
@@ -168,8 +174,8 @@ local function prepareBatch(
             break
         elseif outcome == "skipped" then
             summary.skipped = summary.skipped + 1
-            if type(value) == "table" and value.cropDisabled then
-                summary.cropDisabled = summary.cropDisabled + 1
+            if type(value) == "table" then
+                BatchSummary.recordGeometry(summary, value)
             end
             if type(value) == "table" and value.denoiseRecommended then
                 summary.denoiseIgnored = summary.denoiseIgnored + 1
@@ -267,6 +273,7 @@ local function runCommand(context)
     summary.backendBaseUrl = preferences.backendBaseUrl
     summary.requestTimeoutSeconds = preferences.requestTimeoutSeconds
     summary.confirmationMode = preferences.confirmationMode
+    summary.showLearningSummary = preferences.learningShowSummary
     local operations = {}
     local operationsCleared = false
     local function releaseOperations()
@@ -477,14 +484,19 @@ local function runCommand(context)
     summary.elapsedSeconds = preparationTracker:elapsedSeconds()
     releaseApplyProgress()
     application.cropApplied = 0
+    application.levelingApplied = 0
     for _, operation in ipairs(operations) do
         local message = "Auto Develop application filename="
             .. operation.filename
             .. " status="
             .. tostring(operation.applicationStatus)
         if operation.applicationStatus == "applied" then
-            if operation.cropIncluded then
+            if operation.compositionCropIncluded then
                 application.cropApplied = application.cropApplied + 1
+            end
+            if operation.levelingIncluded then
+                application.levelingApplied =
+                    application.levelingApplied + 1
             end
             Logger.info(message)
         else
@@ -501,6 +513,18 @@ local function runCommand(context)
                         "operation_not_applied"
                     )
             )
+        end
+    end
+    if preferences.learningEnabled
+        and preferences.learningCaptureBaseline
+        and not application.cancelled then
+        local learningResult =
+            LearningBaselineService.recordApplied(operations, preferences)
+        summary.learningBaselineSaved = learningResult.saved
+        summary.learningBaselineFailed = learningResult.failed
+        if learningResult.failed > 0 then
+            summary.warningCount =
+                summary.warningCount + learningResult.failed
         end
     end
     AutoDevelopConfirmationDialog.showFinal(summary, application)

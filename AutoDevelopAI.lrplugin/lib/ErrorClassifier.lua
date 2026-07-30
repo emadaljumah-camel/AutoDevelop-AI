@@ -61,7 +61,7 @@ function ErrorClassifier.fromHttp(status, backendCode)
         return ErrorClassifier.codes.modelTimeout
     end
     if backendCode == "provider_unavailable" then
-        return ErrorClassifier.codes.backendNotRunning
+        return ErrorClassifier.codes.backendError
     end
     if backendCode == "invalid_model_response"
         or backendCode == "inference_failed" then

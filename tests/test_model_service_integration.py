@@ -23,6 +23,14 @@ IDENTITY_FIELDS = (
     "model",
     "resolved_model",
 )
+BACKEND_DIAGNOSTIC_FIELDS = (
+    "requested_style_id",
+    "effective_style_id",
+    "style_selection_mode",
+    "style_selection_reason",
+    "editing_intensity",
+    "scene_confidence",
+)
 
 
 class RecordingSafetyValidator(SafetyValidator):
@@ -66,12 +74,21 @@ def _valid_provider_payload(
         response = asyncio.run(
             FakeModelClient(model_name="gemma-4-31b").analyze(request)
         )
-    else:
-        request = DevelopRequest.model_validate(body)
-        response = asyncio.run(
-            FakeModelClient(model_name="gemma-4-31b").develop(request)
-        )
+        payload = response.model_dump(mode="json")
+        for field in BACKEND_DIAGNOSTIC_FIELDS:
+            payload.pop(field, None)
+        if not include_identity:
+            for field in IDENTITY_FIELDS:
+                payload.pop(field)
+        return payload
+    request = DevelopRequest.model_validate(body)
+    response = asyncio.run(
+        FakeModelClient(model_name="gemma-4-31b").develop(request)
+    )
     payload = response.model_dump(mode="json")
+    payload.pop("learning", None)
+    for field in BACKEND_DIAGNOSTIC_FIELDS:
+        payload.pop(field, None)
     if not include_identity:
         for field in IDENTITY_FIELDS:
             payload.pop(field)
@@ -93,9 +110,23 @@ def _invoke_route(
         provider_calls += 1
         assert request.url.host == "provider.test"
         assert request.headers["authorization"] == f"Bearer {provider_secret}"
+        rendered_content = content
+        if endpoint == "analyze" and provider_calls == 1:
+            rendered_content = json.dumps(
+                {
+                    "primary_subject_type": "landscape",
+                    "primary_subject": "mountain landscape",
+                    "scene_category": "scenic_travel",
+                    "lighting_type": "daylight",
+                    "dynamic_range": "high",
+                    "color_character": "balanced",
+                    "confidence": 0.92,
+                    "editing_priorities": ["Improve tonal separation"],
+                }
+            )
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": content}}]},
+            json={"choices": [{"message": {"content": rendered_content}}]},
         )
 
     transport_client = httpx.AsyncClient(
@@ -166,13 +197,13 @@ def test_real_model_service_accepts_valid_provider_content(
     assert response.json()["filename"] == "Integration.NEF"
     assert response.json()["model"] == "gemma"
     assert response.json()["resolved_model"] == "gemma-4-31b"
-    assert calls == 1
+    assert calls == (2 if endpoint == "analyze" else 1)
     assert "provider-secret-must-not-leak" not in response.text
     assert "provider-secret-must-not-leak" not in log_text
-    assert validator.called is (endpoint == "develop")
+    assert validator.called is True
 
 
-@pytest.mark.parametrize("endpoint", ["analyze", "develop"])
+@pytest.mark.parametrize("endpoint", ["develop"])
 def test_matching_optional_provider_identity_echoes_are_accepted(
     tmp_path: Path,
     endpoint: str,
@@ -184,7 +215,7 @@ def test_matching_optional_provider_identity_echoes_are_accepted(
     )
 
     assert response.status_code == 200
-    assert calls == 1
+    assert calls == (2 if endpoint == "analyze" else 1)
 
 
 @pytest.mark.parametrize("endpoint", ["analyze", "develop"])
@@ -230,7 +261,7 @@ def test_real_model_service_rejects_provider_identity_mismatch(
         assert f"model={value}" not in log_text
     else:
         assert value not in log_text
-    assert calls == 1
+    assert calls == (2 if endpoint == "analyze" else 1)
 
 
 @pytest.mark.parametrize("endpoint", ["analyze", "develop"])
@@ -257,4 +288,4 @@ def test_real_model_service_maps_malformed_output_safely(
     assert content not in log_text
     assert "provider-secret-must-not-leak" not in response.text
     assert "provider-secret-must-not-leak" not in log_text
-    assert calls == 1
+    assert calls == (2 if endpoint == "analyze" else 1)

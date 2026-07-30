@@ -6,6 +6,10 @@ from autodevelop.models import (
     CropRecommendation,
     DenoiseRecommendation,
     DevelopSettings,
+    HdrRecommendation,
+    LevelingRecommendation,
+    ProcessingOptions,
+    TechnicalAnalysis,
 )
 from autodevelop.profiles import StyleProfile, StyleProfileLoader
 from autodevelop.validation import (
@@ -33,12 +37,20 @@ def _validate(
     settings: DevelopSettings | None = None,
     crop: CropRecommendation | None = None,
     denoise: DenoiseRecommendation | None = None,
+    enable_hdr: HdrRecommendation | None = None,
+    leveling: LevelingRecommendation | None = None,
+    analysis: TechnicalAnalysis | None = None,
+    options: ProcessingOptions | None = None,
 ) -> ValidationResult:
     return validator.validate(
         settings=settings,
         crop=crop,
         denoise=denoise,
         profile=profile,
+        enable_hdr=enable_hdr,
+        leveling=leveling,
+        analysis=analysis,
+        options=options,
     )
 
 
@@ -49,7 +61,6 @@ def _valid_crop(**changes: object) -> CropRecommendation:
         "right": 0.95,
         "top": 0.05,
         "bottom": 0.95,
-        "angle": 1.0,
         "confidence": 0.8,
         "reason": "Improve alignment.",
     }
@@ -197,7 +208,12 @@ def test_original_style_profile_remains_unchanged(
         validator,
         profile,
         settings=DevelopSettings(Exposure2012=5.0),
-        crop=_valid_crop(angle=20.0),
+        crop=_valid_crop(),
+        leveling=LevelingRecommendation(
+            recommended=True,
+            angle=20.0,
+            mode="horizon",
+        ),
         denoise=DenoiseRecommendation(
             recommended=True,
             amount=100.0,
@@ -511,27 +527,36 @@ def test_crop_below_retained_area_threshold_is_rejected(
     assert result.issues[0].code == policies.CROP_AREA_TOO_SMALL
 
 
-def test_crop_angle_inside_limit_passes(
+def test_leveling_angle_inside_limit_passes(
     validator: SafetyValidator,
     profile: StyleProfile,
 ) -> None:
-    result = _validate(validator, profile, crop=_valid_crop(angle=4.0))
+    leveling = LevelingRecommendation(
+        recommended=True,
+        angle=4.0,
+        mode="horizon",
+    )
+    result = _validate(validator, profile, leveling=leveling)
 
-    assert result.crop is not None
-    assert result.crop.angle == 4.0
+    assert result.leveling.angle == 4.0
+    assert result.leveling.mode == "horizon"
     assert result.issues == []
 
 
-def test_crop_angle_outside_limit_is_clamped(
+def test_leveling_angle_outside_limit_is_clamped(
     validator: SafetyValidator,
     profile: StyleProfile,
 ) -> None:
-    result = _validate(validator, profile, crop=_valid_crop(angle=-12.0))
+    leveling = LevelingRecommendation(
+        recommended=True,
+        angle=-12.0,
+        mode="horizon",
+    )
+    result = _validate(validator, profile, leveling=leveling)
 
-    assert result.crop is not None
-    assert result.crop.angle == -5.0
-    assert result.issues[0].code == policies.CROP_ANGLE_CLAMPED
-    assert result.clamped_fields == ["crop.angle"]
+    assert result.leveling.angle == -5.0
+    assert result.issues[0].code == policies.LEVELING_ANGLE_CLAMPED
+    assert result.clamped_fields == ["leveling.angle"]
 
 
 def test_crop_below_confidence_threshold_is_rejected(
@@ -546,7 +571,7 @@ def test_crop_below_confidence_threshold_is_rejected(
     assert result.is_safe is True
 
 
-def test_nonrecommended_crop_removes_bounds_and_angle(
+def test_nonrecommended_crop_removes_inactive_bounds(
     validator: SafetyValidator,
     profile: StyleProfile,
 ) -> None:
@@ -556,7 +581,6 @@ def test_nonrecommended_crop_removes_bounds_and_angle(
         right=0.95,
         top=0.05,
         bottom=0.95,
-        angle=2.0,
         confidence=0.8,
         reason="Not needed.",
     )
@@ -566,18 +590,17 @@ def test_nonrecommended_crop_removes_bounds_and_angle(
     assert result.crop is not None
     assert result.crop.recommended is False
     assert result.crop.left is None
-    assert result.crop.angle is None
     assert result.crop.confidence == 0.8
     assert [issue.action for issue in result.issues] == [
         ValidationAction.REMOVED
-    ] * 5
+    ] * 4
 
 
 def test_original_crop_recommendation_remains_unchanged(
     validator: SafetyValidator,
     profile: StyleProfile,
 ) -> None:
-    crop = _valid_crop(angle=20.0)
+    crop = _valid_crop()
     before = crop.model_dump()
 
     _validate(validator, profile, crop=crop)
@@ -751,7 +774,12 @@ def test_clamped_fields_contains_no_duplicates(
             Exposure2012=5.0,
             Contrast2012=100.0,
         ),
-        crop=_valid_crop(angle=20.0),
+        crop=_valid_crop(),
+        leveling=LevelingRecommendation(
+            recommended=True,
+            angle=20.0,
+            mode="horizon",
+        ),
         denoise=DenoiseRecommendation(
             recommended=True,
             amount=100.0,
@@ -772,7 +800,6 @@ def test_removed_fields_contains_no_duplicates(
         right=0.95,
         top=0.05,
         bottom=0.95,
-        angle=2.0,
     )
     denoise = DenoiseRecommendation(
         recommended=False,
@@ -784,6 +811,162 @@ def test_removed_fields_contains_no_duplicates(
     assert len(result.removed_fields) == len(set(result.removed_fields))
 
 
+@pytest.mark.parametrize(
+    ("scene_type", "lighting", "exposure"),
+    [
+        ("landscape", "sunset", "Bright sky over dark foreground"),
+        ("interior", "mixed", "Bright windows and recoverable interior shadows"),
+        ("night city", "artificial", "Luminous signs and deep recoverable shadows"),
+    ],
+)
+def test_genuine_high_dynamic_range_scene_can_recommend_hdr(
+    validator: SafetyValidator,
+    profile: StyleProfile,
+    scene_type: str,
+    lighting: str,
+    exposure: str,
+) -> None:
+    result = _validate(
+        validator,
+        profile,
+        enable_hdr=HdrRecommendation(recommended=True),
+        analysis=TechnicalAnalysis(
+            scene_type=scene_type,
+            lighting=lighting,
+            exposure_assessment=exposure,
+            dynamic_range="high",
+            noise_level="low",
+            highlight_recoverability="high",
+            shadow_recoverability="moderate",
+        ),
+        options=ProcessingOptions(
+            hdr_edit_supported=True,
+            hdr_workflow="hdr",
+        ),
+    )
+
+    assert result.enable_hdr.recommended is True
+    assert result.enable_hdr.reason is None
+
+
+@pytest.mark.parametrize(
+    "analysis",
+    [
+        TechnicalAnalysis(
+            scene_type="portrait",
+            main_subject="ordinary portrait",
+            lighting="soft daylight",
+            dynamic_range="high",
+            noise_level="low",
+            highlight_recoverability="moderate",
+        ),
+        TechnicalAnalysis(
+            scene_type="general daylight",
+            lighting="daylight",
+            dynamic_range="low",
+            noise_level="low",
+            highlight_recoverability="high",
+        ),
+    ],
+)
+def test_ordinary_portrait_and_low_range_daylight_do_not_recommend_hdr(
+    validator: SafetyValidator,
+    profile: StyleProfile,
+    analysis: TechnicalAnalysis,
+) -> None:
+    result = _validate(
+        validator,
+        profile,
+        enable_hdr=HdrRecommendation(recommended=True),
+        analysis=analysis,
+        options=ProcessingOptions(
+            hdr_edit_supported=True,
+            hdr_workflow="hdr",
+        ),
+    )
+
+    assert result.enable_hdr.recommended is False
+    assert result.rejected_fields == ["enable_hdr"]
+
+
+def test_landscape_style_alone_does_not_force_hdr(
+    validator: SafetyValidator,
+    profile: StyleProfile,
+) -> None:
+    result = _validate(
+        validator,
+        profile,
+        enable_hdr=HdrRecommendation(recommended=True),
+        analysis=TechnicalAnalysis(
+            scene_type="landscape",
+            lighting="daylight",
+            dynamic_range="moderate",
+            highlight_recoverability="moderate",
+        ),
+        options=ProcessingOptions(
+            hdr_edit_supported=True,
+            hdr_workflow="hdr",
+        ),
+    )
+
+    assert result.enable_hdr.recommended is False
+
+
+def test_noisy_high_range_scene_does_not_recommend_hdr(
+    validator: SafetyValidator,
+    profile: StyleProfile,
+) -> None:
+    result = _validate(
+        validator,
+        profile,
+        enable_hdr=HdrRecommendation(recommended=True),
+        analysis=TechnicalAnalysis(
+            scene_type="night city",
+            lighting="artificial",
+            dynamic_range="high",
+            noise_level="high",
+            highlight_recoverability="high",
+            shadow_recoverability="moderate",
+        ),
+        options=ProcessingOptions(
+            hdr_edit_supported=True,
+            hdr_workflow="hdr",
+        ),
+    )
+
+    assert result.enable_hdr.recommended is False
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ProcessingOptions(hdr_edit_supported=False, hdr_workflow="hdr"),
+        ProcessingOptions(hdr_edit_supported=True, hdr_workflow="sdr_only"),
+    ],
+)
+def test_provider_cannot_bypass_hdr_capability_or_workflow_gate(
+    validator: SafetyValidator,
+    profile: StyleProfile,
+    options: ProcessingOptions,
+) -> None:
+    result = _validate(
+        validator,
+        profile,
+        enable_hdr=HdrRecommendation(recommended=True),
+        analysis=TechnicalAnalysis(
+            scene_type="landscape",
+            lighting="sunset",
+            dynamic_range="high",
+            noise_level="low",
+            highlight_recoverability="high",
+            shadow_recoverability="high",
+        ),
+        options=options,
+    )
+
+    assert result.enable_hdr.recommended is False
+
+
 def test_validation_result_serialization_round_trip(
     validator: SafetyValidator,
     profile: StyleProfile,
@@ -792,7 +975,12 @@ def test_validation_result_serialization_round_trip(
         validator,
         profile,
         settings=DevelopSettings(Exposure2012=5.0, CropLeft=0.1),
-        crop=_valid_crop(angle=20.0),
+        crop=_valid_crop(),
+        leveling=LevelingRecommendation(
+            recommended=True,
+            angle=20.0,
+            mode="horizon",
+        ),
         denoise=DenoiseRecommendation(
             recommended=True,
             amount=100.0,

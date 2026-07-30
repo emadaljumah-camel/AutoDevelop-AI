@@ -76,7 +76,7 @@ end
 local function validateStyleProfileId(value)
     local normalized = Utils.trim(value)
     if not normalized or not StyleProfiles.isValidId(normalized) then
-        return nil, "Select one of the seven built-in style profiles."
+        return nil, "Select Auto or one of the seven built-in style profiles."
     end
     return normalized
 end
@@ -133,15 +133,41 @@ local validators = {
     styleProfileId = validateStyleProfileId,
     modelProfileId = validateModelProfileId,
     requestTimeoutSeconds = validateRequestTimeoutSeconds,
-    applyCrop = function(value)
-        return validateBoolean(value, "Apply crop")
+    applyCompositionCrop = function(value)
+        return validateBoolean(value, "Apply composition crop")
+    end,
+    applyLeveling = function(value)
+        return validateBoolean(value, "Apply leveling correction")
     end,
     confirmationMode = validateConfirmationMode,
     loggingLevel = validateLoggingLevel,
+    learningEnabled = function(value)
+        return validateBoolean(value, "Personalized learning")
+    end,
+    learningCaptureBaseline = function(value)
+        return validateBoolean(value, "Learning baseline capture")
+    end,
+    learningShowSummary = function(value)
+        return validateBoolean(value, "Learning summary")
+    end,
 }
+
+local function migrateGeometryPreferences(preferences)
+    local legacyApplyCrop = preferences.applyCrop
+    if type(legacyApplyCrop) ~= "boolean" then
+        legacyApplyCrop = Config.defaults.applyCompositionCrop
+    end
+    if preferences.applyCompositionCrop == nil then
+        preferences.applyCompositionCrop = legacyApplyCrop
+    end
+    if preferences.applyLeveling == nil then
+        preferences.applyLeveling = legacyApplyCrop
+    end
+end
 
 function Preferences.initializeDefaults()
     local preferences = store()
+    migrateGeometryPreferences(preferences)
     for key, value in pairs(defaultValues()) do
         if preferences[key] == nil then
             preferences[key] = value
@@ -194,8 +220,12 @@ function Preferences.getRequestTimeoutSeconds()
     return Preferences.get("requestTimeoutSeconds")
 end
 
-function Preferences.getApplyCrop()
-    return Preferences.get("applyCrop")
+function Preferences.getApplyCompositionCrop()
+    return Preferences.get("applyCompositionCrop")
+end
+
+function Preferences.getApplyLeveling()
+    return Preferences.get("applyLeveling")
 end
 
 function Preferences.getConfirmationMode()
@@ -204,6 +234,28 @@ end
 
 function Preferences.getLoggingLevel()
     return Preferences.get("loggingLevel")
+end
+
+function Preferences.getLearningEnabled()
+    return Preferences.get("learningEnabled")
+end
+
+function Preferences.getLearningCaptureBaseline()
+    return Preferences.get("learningCaptureBaseline")
+end
+
+function Preferences.getLearningShowSummary()
+    return Preferences.get("learningShowSummary")
+end
+
+function Preferences.getLearningPendingSessions()
+    local value = store().learningPendingSessions
+    return Utils.deepCopy(type(value) == "table" and value or {})
+end
+
+function Preferences.setLearningPendingSessions(value)
+    store().learningPendingSessions =
+        Utils.deepCopy(type(value) == "table" and value or {})
 end
 
 function Preferences.getRuntimeLoggingLevel()
@@ -247,6 +299,7 @@ end
 
 function Preferences.valuesForUi()
     local preferences = store()
+    migrateGeometryPreferences(preferences)
     local values = {}
     for key, default in pairs(defaultValues()) do
         local value = preferences[key]
@@ -260,6 +313,7 @@ end
 
 function Preferences.validatedSnapshot(overrides)
     overrides = overrides or {}
+    migrateGeometryPreferences(store())
     local snapshot = {}
     local defaults = defaultValues()
     for key in pairs(defaults) do

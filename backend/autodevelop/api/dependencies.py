@@ -4,6 +4,7 @@ from fastapi import Request
 
 from autodevelop.model_clients import ModelClient
 from autodevelop.model_clients import ModelResolver
+from autodevelop.learning.service import LearningService
 from autodevelop.config import Settings
 from autodevelop.profiles import StyleProfileLoader
 from autodevelop.validation import SafetyValidator
@@ -37,3 +38,9 @@ async def get_safety_validator(request: Request) -> SafetyValidator:
     """Return the application-scoped stateless safety validator."""
 
     return request.app.state.safety_validator
+
+
+async def get_learning_service(request: Request) -> LearningService:
+    """Return the application-scoped personalized-learning service."""
+
+    return request.app.state.learning_service

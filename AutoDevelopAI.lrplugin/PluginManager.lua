@@ -6,6 +6,7 @@ local LrView = import("LrView")
 
 local BackendClient = ModuleLoader.load("lib/BackendClient.lua")
 local Logger = ModuleLoader.load("lib/Logger.lua")
+local LearningClient = ModuleLoader.load("lib/LearningClient.lua")
 local PluginManagerController =
     ModuleLoader.load("lib/PluginManagerController.lua")
 local Preferences = ModuleLoader.load("lib/Preferences.lua")
@@ -18,9 +19,13 @@ local observedKeys = {
     "styleProfileId",
     "modelProfileId",
     "requestTimeoutText",
-    "applyCrop",
+    "applyCompositionCrop",
+    "applyLeveling",
     "confirmationMode",
     "loggingLevel",
+    "learningEnabled",
+    "learningCaptureBaseline",
+    "learningShowSummary",
 }
 
 local function loadValues(properties)
@@ -119,6 +124,45 @@ local function testConnection(properties)
     end)
 end
 
+local function checkLearningStatus(properties)
+    if properties.learningStatusRunning then
+        return
+    end
+    local settings, reason =
+        PluginManagerController.validateAndSave(properties)
+    if not settings then
+        properties.learningStatusText = "Invalid settings"
+        return
+    end
+    properties.learningStatusRunning = true
+    properties.canCheckLearningStatus = false
+    properties.learningStatusText = "Checking..."
+    LrTasks.startAsyncTask(function()
+        local ok, result = LrTasks.pcall(
+            LearningClient.status,
+            {
+                baseUrl = settings.backendBaseUrl,
+                timeoutSeconds = settings.requestTimeoutSeconds,
+            }
+        )
+        local text = "Learning status unavailable"
+        if ok and result and result.ok then
+            if not result.enabled then
+                text = "Disabled by backend"
+            elseif not result.database_available then
+                text = "Database unavailable"
+            else
+                text = tostring(result.usable_samples)
+                    .. " usable sample(s); minimum "
+                    .. tostring(result.minimum_samples)
+            end
+        end
+        setPropertySafely(properties, "learningStatusRunning", false)
+        setPropertySafely(properties, "canCheckLearningStatus", true)
+        setPropertySafely(properties, "learningStatusText", text)
+    end)
+end
+
 local function validationText(factory)
     return factory:static_text({
         title = bind("validationMessage"),
@@ -170,6 +214,50 @@ return {
                         })
                     ),
 
+                    factory:separator({ fill_horizontal = 1 }),
+                    factory:static_text({
+                        title = "Learning System",
+                        font = "<system/bold>",
+                    }),
+                    preferenceRow(
+                        factory,
+                        "Personalization",
+                        factory:checkbox({
+                            title = "Enable personalized learning",
+                            value = bind("learningEnabled"),
+                        })
+                    ),
+                    preferenceRow(
+                        factory,
+                        "Baseline",
+                        factory:checkbox({
+                            title = "Capture baseline after Auto Develop",
+                            value = bind("learningCaptureBaseline"),
+                        })
+                    ),
+                    preferenceRow(
+                        factory,
+                        "Summary",
+                        factory:checkbox({
+                            title = "Show learning summary after develop",
+                            value = bind("learningShowSummary"),
+                        })
+                    ),
+                    factory:row({
+                        spacing = factory:control_spacing(),
+                        factory:push_button({
+                            title = "Backend Learning Status",
+                            enabled = bind("canCheckLearningStatus"),
+                            action = function()
+                                checkLearningStatus(propertyTable)
+                            end,
+                        }),
+                        factory:static_text({
+                            title = bind("learningStatusText"),
+                            fill_horizontal = 1,
+                        }),
+                    }),
+
                     preferenceRow(
                         factory,
                         "Style profile",
@@ -206,10 +294,18 @@ return {
 
                     preferenceRow(
                         factory,
-                        "Crop",
+                        "Composition",
                         factory:checkbox({
-                            title = "Apply recommended crop",
-                            value = bind("applyCrop"),
+                            title = "Apply recommended composition crop",
+                            value = bind("applyCompositionCrop"),
+                        })
+                    ),
+                    preferenceRow(
+                        factory,
+                        "Leveling",
+                        factory:checkbox({
+                            title = "Apply recommended leveling correction",
+                            value = bind("applyLeveling"),
                         })
                     ),
 

@@ -14,6 +14,9 @@ local lastDialog = nil
 local lastPropertyTable = nil
 local modalDialogResult = "ok"
 local modalDialogMutator = nil
+local fakeHttpResponseBody = nil
+local fakeHttpResponseHeaders = { status = 200 }
+local lastHttpPostBody = nil
 
 _G._PLUGIN = {
     path = "AutoDevelopAI.lrplugin",
@@ -131,6 +134,17 @@ _G.import = function(name)
             end,
         }
     end
+    if name == "LrHttp" then
+        return {
+            post = function(_, body)
+                lastHttpPostBody = body
+                return fakeHttpResponseBody, fakeHttpResponseHeaders
+            end,
+            get = function()
+                return fakeHttpResponseBody, fakeHttpResponseHeaders
+            end,
+        }
+    end
     error("Unexpected Lightroom import in pure Lua tests: " .. tostring(name))
 end
 
@@ -182,12 +196,20 @@ local Logger = ModuleLoader.load("lib/Logger.lua")
 local ErrorDialog = ModuleLoader.load("dialogs/ErrorDialog.lua")
 local AutoDevelopConfirmationDialog =
     ModuleLoader.load("dialogs/AutoDevelopConfirmationDialog.lua")
+local AnalysisSummaryDialog =
+    ModuleLoader.load("dialogs/AnalysisSummaryDialog.lua")
 local ResultStore = ModuleLoader.load("lib/ResultStore.lua")
 local DevelopSettingsMapper =
     ModuleLoader.load("lib/DevelopSettingsMapper.lua")
 local CropMapper = ModuleLoader.load("lib/CropMapper.lua")
 local PendingOperation = ModuleLoader.load("lib/PendingOperation.lua")
 local ApplyService = ModuleLoader.load("lib/ApplyService.lua")
+local Sha256 = ModuleLoader.load("lib/Sha256.lua")
+local LearningPhotoIdentity =
+    ModuleLoader.load("lib/LearningPhotoIdentity.lua")
+local LearningSessionStore =
+    ModuleLoader.load("lib/LearningSessionStore.lua")
+local LearningClient = ModuleLoader.load("lib/LearningClient.lua")
 
 assertTrue(
     Utils == ModuleLoader.load("lib/Utils.lua"),
@@ -515,6 +537,7 @@ local mappedPhoto = photo({
     Exposure2012 = 0,
     Contrast2012 = 12,
     Temperature = 5500,
+    HDREditMode = 0,
     UnsupportedSetting = 99,
     Tint = 0 / 0,
 })
@@ -590,6 +613,84 @@ assertTrue(
     settings.UnsupportedSetting == nil,
     "unsupported settings must be omitted"
 )
+local manuallyEditedValues = {
+    Contrast2012 = 25,
+    Clarity2012 = 32,
+    Dehaze = 18,
+    Vibrance = 38,
+}
+local manuallyEditedPhoto = photo({
+    localIdentifier = 70,
+    fileName = "Manual_Edit.NEF",
+    fileFormat = "RAW",
+}, nil, manuallyEditedValues)
+local currentFeedbackSettings =
+    ExifMapper.mapDevelopSettings(manuallyEditedPhoto)
+assertEqual(currentFeedbackSettings.Contrast2012, 25)
+assertEqual(currentFeedbackSettings.Clarity2012, 32)
+assertEqual(currentFeedbackSettings.Dehaze, 18)
+assertEqual(currentFeedbackSettings.Vibrance, 38)
+
+fakeHttpResponseBody = assert(Json.encode({
+    schema_version = 1,
+    session_id = "11111111-1111-4111-8111-111111111111",
+    has_significant_changes = true,
+    accepted_without_change = false,
+    significant_changes = {
+        Contrast2012 = {
+            baseline = 12,
+            current = 25,
+            delta = 13,
+            threshold = 2,
+            significant = true,
+        },
+        Clarity2012 = {
+            baseline = 18,
+            current = 32,
+            delta = 14,
+            threshold = 2,
+            significant = true,
+        },
+        Dehaze = {
+            baseline = 6,
+            current = 18,
+            delta = 12,
+            threshold = 1,
+            significant = true,
+        },
+        Vibrance = {
+            baseline = 18,
+            current = 38,
+            delta = 20,
+            threshold = 2,
+            significant = true,
+        },
+    },
+    ignored_changes = {},
+    crop_changes = {},
+    leveling_changes = {},
+}))
+local previewResult = LearningClient.previewFeedback({
+    schema_version = 1,
+    session_id = "11111111-1111-4111-8111-111111111111",
+    photo_key = string.rep("a", 64),
+    final_settings = currentFeedbackSettings,
+}, {
+    baseUrl = "http://127.0.0.1:8005",
+    timeoutSeconds = 120,
+})
+assertTrue(previewResult.ok)
+assertEqual(previewResult.significantChanges.Contrast2012.delta, 13)
+assertEqual(previewResult.significantChanges.Clarity2012.delta, 14)
+assertEqual(previewResult.significantChanges.Dehaze.delta, 12)
+assertEqual(previewResult.significantChanges.Vibrance.delta, 20)
+local postedPreview = assert(Json.decode(lastHttpPostBody))
+assertEqual(postedPreview.final_settings.Contrast2012, 25)
+assertEqual(postedPreview.final_settings.Clarity2012, 32)
+assertEqual(postedPreview.final_settings.Dehaze, 18)
+assertEqual(postedPreview.final_settings.Vibrance, 38)
+assertTrue(postedPreview.final_settings.Contrast == nil)
+assertTrue(postedPreview.final_settings.Clarity == nil)
 
 local request = assert(RequestBuilder.build(
     mappedPhoto,
@@ -607,7 +708,7 @@ assertEqual(request.options.style_profile, "natural_travel")
 assertEqual(request.model, "gemma")
 assertEqual(request.current_settings.Exposure2012, 0)
 assertEqual(request.preview_path, "D:\\Temp\\AutoDevelopAI\\preview.jpg")
-assertEqual(StyleProfiles.getDefaultId(), "natural_travel")
+assertEqual(StyleProfiles.getDefaultId(), "auto")
 assertTrue(
     RequestBuilder.build(mappedPhoto, "D:\\Temp\\missing-style.jpg", {
         uuidFactory = function()
@@ -657,30 +758,38 @@ assertEqual(developRequest.options.include_crop, true)
 assertEqual(developRequest.options.include_denoise, true)
 assertEqual(developRequest.options.dry_run, false)
 assertEqual(developRequest.options.preserve_current_adjustments, true)
+assertEqual(developRequest.options.hdr_edit_supported, true)
+assertEqual(developRequest.options.hdr_workflow, "unknown")
 assertEqual(Config.apiPaths.develop, "/autodevelop/v1/develop")
 assertEqual(Config.defaults.backendBaseUrl, "http://127.0.0.1:8005")
+assertEqual(Config.defaults.learningShowSummary, true)
 assertEqual(Config.SCHEMA_VERSION, "1.0")
 fakePreferences.backendBaseUrl = nil
 fakePreferences.styleProfileId = nil
 fakePreferences.modelProfileId = nil
 fakePreferences.requestTimeoutSeconds = nil
-fakePreferences.applyCrop = nil
+fakePreferences.applyCrop = false
+fakePreferences.applyCompositionCrop = nil
+fakePreferences.applyLeveling = nil
 fakePreferences.confirmationMode = nil
 fakePreferences.loggingLevel = nil
 assertEqual(
     Preferences.getBackendBaseUrl(),
     "http://127.0.0.1:8005"
 )
-assertEqual(Preferences.getStyleProfileId(), "natural_travel")
+assertEqual(Preferences.getStyleProfileId(), "auto")
 assertEqual(Preferences.getRequestTimeoutSeconds(), 120)
-assertEqual(Preferences.getApplyCrop(), true)
+Preferences.initializeDefaults()
+assertEqual(Preferences.getApplyCompositionCrop(), false)
+assertEqual(Preferences.getApplyLeveling(), false)
 assertEqual(Preferences.getConfirmationMode(), "always")
 assertEqual(Preferences.getLoggingLevel(), "info")
 fakePreferences.applyCrop = nil
-assertEqual(Preferences.getApplyCrop(), true)
-fakePreferences.applyCrop = false
-assertEqual(Preferences.getApplyCrop(), false)
-fakePreferences.applyCrop = nil
+fakePreferences.applyCompositionCrop = nil
+fakePreferences.applyLeveling = nil
+Preferences.initializeDefaults()
+assertEqual(Preferences.getApplyCompositionCrop(), true)
+assertEqual(Preferences.getApplyLeveling(), true)
 
 local normalizedUrl = assert(Preferences.set(
     "backendBaseUrl",
@@ -731,28 +840,30 @@ local defaults = Preferences.resetDefaults()
 assertEqual(defaults.backendBaseUrl, "http://127.0.0.1:8005")
 assertEqual(defaults.styleProfileId, "natural_travel")
 assertEqual(defaults.requestTimeoutSeconds, 120)
-assertEqual(defaults.applyCrop, true)
+assertEqual(defaults.applyCompositionCrop, true)
+assertEqual(defaults.applyLeveling, true)
 assertEqual(defaults.confirmationMode, "always")
 assertEqual(defaults.loggingLevel, "info")
 
 local profileChoices = Preferences.getStyleProfileChoices()
-assertEqual(#profileChoices, 7)
-assertEqual(profileChoices[1].title, "Natural Travel")
-assertEqual(profileChoices[1].value, "natural_travel")
-assertEqual(profileChoices[2].value, "landscape_impact")
-assertEqual(profileChoices[3].value, "architecture")
-assertEqual(profileChoices[4].value, "stock_neutral")
-assertEqual(profileChoices[5].value, "portrait")
-assertEqual(profileChoices[6].value, "night")
-assertEqual(profileChoices[7].value, "documentary")
+assertEqual(#profileChoices, 8)
+assertEqual(profileChoices[1].title, "Auto")
+assertEqual(profileChoices[1].value, "auto")
+assertEqual(profileChoices[2].value, "natural_travel")
+assertEqual(profileChoices[3].value, "landscape_impact")
+assertEqual(profileChoices[4].value, "architecture")
+assertEqual(profileChoices[5].value, "stock_neutral")
+assertEqual(profileChoices[6].value, "portrait")
+assertEqual(profileChoices[7].value, "night")
+assertEqual(profileChoices[8].value, "documentary")
 profileChoices[1].title = "Mutated"
 assertEqual(
     Preferences.getStyleProfileChoices()[1].title,
-    "Natural Travel",
+    "Auto",
     "choice getters must return defensive copies"
 )
 
-assertEqual(StyleProfiles.getDefaultId(), "natural_travel")
+assertEqual(StyleProfiles.getDefaultId(), "auto")
 assertEqual(StyleProfiles.getDisplayName("documentary"), "Documentary")
 assertTrue(StyleProfiles.getDescription("documentary") ~= nil)
 assertTrue(StyleProfiles.isValidId("architecture"))
@@ -764,7 +875,7 @@ assertEqual(initialStyle, "portrait")
 assertEqual(invalidStored, false)
 initialStyle, invalidStored =
     StyleProfiles.resolveInitialSelection("removed_profile")
-assertEqual(initialStyle, "natural_travel")
+assertEqual(initialStyle, "auto")
 assertEqual(invalidStored, true)
 local copiedStyle = StyleProfiles.getById("natural_travel")
 copiedStyle.displayName = "Mutated"
@@ -1072,7 +1183,11 @@ PluginManagerController.populate(managerProperties)
 assertEqual(managerProperties.backendBaseUrl, defaults.backendBaseUrl)
 assertEqual(managerProperties.styleProfileId, defaults.styleProfileId)
 assertEqual(managerProperties.requestTimeoutText, "120")
-assertEqual(managerProperties.applyCrop, defaults.applyCrop)
+assertEqual(
+    managerProperties.applyCompositionCrop,
+    defaults.applyCompositionCrop
+)
+assertEqual(managerProperties.applyLeveling, defaults.applyLeveling)
 assertEqual(
     managerProperties.confirmationMode,
     defaults.confirmationMode
@@ -1155,7 +1270,18 @@ local successfulResponse = {
     request_id = request.request_id,
     filename = request.filename,
     analysis = {},
-    edit_plan = {},
+    edit_plan = { style_profile = "natural_travel" },
+    requested_style_id = "natural_travel",
+    effective_style_id = "natural_travel",
+    style_selection_mode = "manual",
+    style_selection_reason = "Manual style override",
+    editing_intensity = "moderate",
+    scene_confidence = 0.9,
+    leveling = {
+        recommended = false,
+        angle = 0,
+        mode = "none",
+    },
     model = "gemma",
     resolved_model = "fake-autodevelop-v1",
 }
@@ -1165,6 +1291,30 @@ invalidAnalyzeModel.model =
     "https://user:pass@example.com/model?token=secret"
 assertTrue(
     not Validation.validateAnalyzeResponse(invalidAnalyzeModel, request)
+)
+local autoAnalyzeRequest = Utils.deepCopy(request)
+autoAnalyzeRequest.options.style_profile = "auto"
+local autoAnalyzeResponse = Utils.deepCopy(successfulResponse)
+autoAnalyzeResponse.requested_style_id = "auto"
+autoAnalyzeResponse.effective_style_id = "architecture"
+autoAnalyzeResponse.style_selection_mode = "auto"
+autoAnalyzeResponse.style_selection_reason = "Architectural study"
+autoAnalyzeResponse.editing_intensity = "moderate"
+autoAnalyzeResponse.edit_plan.style_profile = "architecture"
+assertTrue(
+    Validation.validateAnalyzeResponse(
+        autoAnalyzeResponse,
+        autoAnalyzeRequest
+    )
+)
+local unsupportedEffectiveStyle = Utils.deepCopy(autoAnalyzeResponse)
+unsupportedEffectiveStyle.effective_style_id = "provider_invented"
+unsupportedEffectiveStyle.edit_plan.style_profile = "provider_invented"
+assertTrue(
+    not Validation.validateAnalyzeResponse(
+        unsupportedEffectiveStyle,
+        autoAnalyzeRequest
+    )
 )
 
 local cancelledDialogSummary = BatchSummary.new(1, "develop")
@@ -1240,7 +1390,13 @@ local developResponse = {
     request_id = developRequest.request_id,
     filename = developRequest.filename,
     analysis = {},
-    edit_plan = {},
+    edit_plan = { style_profile = "portrait" },
+    requested_style_id = "portrait",
+    effective_style_id = "portrait",
+    style_selection_mode = "manual",
+    style_selection_reason = "Manual style override",
+    editing_intensity = "conservative",
+    scene_confidence = Json.null,
     model = "gpt_oss",
     resolved_model = "fake-autodevelop-v1",
     processing_duration_ms = 3,
@@ -1254,13 +1410,21 @@ local developResponse = {
         right = 0.95,
         top = 0,
         bottom = 0.95,
-        angle = 0,
         confidence = 0.9,
+    },
+    leveling = {
+        recommended = false,
+        angle = 0,
+        mode = "none",
     },
     denoise = {
         recommended = true,
         amount = 20,
         confidence = 0.9,
+    },
+    enable_hdr = {
+        recommended = false,
+        reason = Json.null,
     },
     warnings = {
         {
@@ -1273,6 +1437,82 @@ local developResponse = {
 assertTrue(
     Validation.validateDevelopResponse(developResponse, developRequest)
 )
+local developLearning = Utils.deepCopy(developResponse)
+developLearning.learning = {
+    enabled = true,
+    personalization_applied = false,
+    usable_sample_count = 2,
+    retrieved_sample_count = 0,
+    minimum_sample_count = 3,
+    average_similarity = Json.null,
+    feature_type = "local_color_luminance",
+    reason = "insufficient_samples",
+}
+assertTrue(
+    Validation.validateDevelopResponse(developLearning, developRequest)
+)
+local developFractionalLearningCount = Utils.deepCopy(developLearning)
+developFractionalLearningCount.learning.usable_sample_count = 1.5
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developFractionalLearningCount,
+        developRequest
+    )
+)
+local developInfiniteLearningCount = Utils.deepCopy(developLearning)
+developInfiniteLearningCount.learning.retrieved_sample_count = math.huge
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developInfiniteLearningCount,
+        developRequest
+    )
+)
+local developInvalidLearningMinimum = Utils.deepCopy(developLearning)
+developInvalidLearningMinimum.learning.minimum_sample_count = 0
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developInvalidLearningMinimum,
+        developRequest
+    )
+)
+local developInvalidLearningSimilarity = Utils.deepCopy(developLearning)
+developInvalidLearningSimilarity.learning.average_similarity = 1.01
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developInvalidLearningSimilarity,
+        developRequest
+    )
+)
+local developUnknownLearningReason = Utils.deepCopy(developLearning)
+developUnknownLearningReason.learning.reason = "private_provider_detail"
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developUnknownLearningReason,
+        developRequest
+    )
+)
+
+local developMissingHdr = Utils.deepCopy(developResponse)
+developMissingHdr.enable_hdr = nil
+assertTrue(
+    not Validation.validateDevelopResponse(developMissingHdr, developRequest)
+)
+local developInvalidHdrReason = Utils.deepCopy(developResponse)
+developInvalidHdrReason.enable_hdr.reason = "private provider detail"
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developInvalidHdrReason,
+        developRequest
+    )
+)
+local developInvalidHdrFlag = Utils.deepCopy(developResponse)
+developInvalidHdrFlag.enable_hdr.recommended = 1
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developInvalidHdrFlag,
+        developRequest
+    )
+)
 
 local fixtureFile = assert(io.open(
     "tests/fixtures/develop_response.json",
@@ -1281,10 +1521,12 @@ local fixtureFile = assert(io.open(
 local fixtureJson = fixtureFile:read("*a")
 fixtureFile:close()
 local wireDevelopResponse = assert(Json.decode(fixtureJson))
+local wireDevelopRequest = Utils.deepCopy(developRequest)
+wireDevelopRequest.options.style_profile = "natural_travel"
 local wireValid, wireValidationError, wireModel =
     Validation.validateDevelopResponse(
         wireDevelopResponse,
-        developRequest
+        wireDevelopRequest
     )
 assertTrue(wireValid, wireValidationError)
 assertEqual(wireModel, "gpt_oss")
@@ -1325,7 +1567,11 @@ assertTrue(wireMappedSettings.Temperature == nil)
 assertTrue(
     CropMapper.map(
         wireDevelopResponse.crop,
-        true,
+        wireDevelopResponse.leveling,
+        {
+            applyCompositionCrop = true,
+            applyLeveling = true,
+        },
         wireCurrentSettings
     ) == nil
 )
@@ -1341,7 +1587,8 @@ local wireOperation = PendingOperation.new({
     profileId = developRequest.options.style_profile,
     originalSettings = wireOriginalSettings,
     mappedSettings = wireMappedSettings,
-    cropIncluded = false,
+    compositionCropIncluded = false,
+    levelingIncluded = false,
     denoiseRecommended =
         wireDevelopResponse.denoise.recommended == true,
     warnings = wireDevelopResponse.warnings,
@@ -1562,43 +1809,122 @@ local validCrop = {
     right = 0.95,
     top = 0,
     bottom = 0.9,
-    angle = 0,
 }
-local mappedCrop = CropMapper.map(validCrop, true, currentSettings)
+local noLeveling = {
+    recommended = false,
+    angle = 0,
+    mode = "none",
+}
+local mappedCrop = CropMapper.map(validCrop, noLeveling, {
+    applyCompositionCrop = true,
+    applyLeveling = true,
+}, currentSettings)
 assertEqual(mappedCrop.CropLeft, 0)
 assertEqual(mappedCrop.CropRight, 0.95)
 assertEqual(mappedCrop.CropTop, 0)
 assertEqual(mappedCrop.CropBottom, 0.9)
 assertEqual(mappedCrop.CropAngle, 0)
-assertTrue(CropMapper.map(nil, true, currentSettings) == nil)
-assertTrue(CropMapper.map(validCrop, false, currentSettings) == nil)
+local rotatedCurrent = Utils.deepCopy(currentSettings)
+rotatedCurrent.CropAngle = 1.25
+local cropOnly = CropMapper.map(validCrop, noLeveling, {
+    applyCompositionCrop = true,
+    applyLeveling = true,
+}, rotatedCurrent)
+assertEqual(cropOnly.CropLeft, 0)
+assertEqual(cropOnly.CropBottom, 0.9)
+assertEqual(cropOnly.CropAngle, 1.25)
+local horizonLeveling = {
+    recommended = true,
+    angle = -0.72,
+    mode = "horizon",
+}
+local levelOnly = CropMapper.map(nil, horizonLeveling, {
+    applyCompositionCrop = true,
+    applyLeveling = true,
+}, rotatedCurrent)
+assertEqual(levelOnly.CropLeft, rotatedCurrent.CropLeft)
+assertEqual(levelOnly.CropRight, rotatedCurrent.CropRight)
+assertEqual(levelOnly.CropTop, rotatedCurrent.CropTop)
+assertEqual(levelOnly.CropBottom, rotatedCurrent.CropBottom)
+assertEqual(levelOnly.CropAngle, -0.72)
+local cropAndLevel = CropMapper.map(validCrop, horizonLeveling, {
+    applyCompositionCrop = true,
+    applyLeveling = true,
+}, rotatedCurrent)
+assertEqual(cropAndLevel.CropRight, validCrop.right)
+assertEqual(cropAndLevel.CropBottom, validCrop.bottom)
+assertEqual(cropAndLevel.CropAngle, -0.72)
+local cropPreferenceOff = CropMapper.map(validCrop, horizonLeveling, {
+    applyCompositionCrop = false,
+    applyLeveling = true,
+}, rotatedCurrent)
+assertEqual(cropPreferenceOff.CropLeft, rotatedCurrent.CropLeft)
+assertEqual(cropPreferenceOff.CropAngle, -0.72)
+local levelingPreferenceOff = CropMapper.map(validCrop, horizonLeveling, {
+    applyCompositionCrop = true,
+    applyLeveling = false,
+}, rotatedCurrent)
+assertEqual(levelingPreferenceOff.CropRight, validCrop.right)
+assertEqual(levelingPreferenceOff.CropAngle, rotatedCurrent.CropAngle)
+assertTrue(CropMapper.map(nil, noLeveling, {
+    applyCompositionCrop = true,
+    applyLeveling = true,
+}, currentSettings) == nil)
+assertTrue(CropMapper.map(validCrop, noLeveling, {
+    applyCompositionCrop = false,
+    applyLeveling = true,
+}, currentSettings) == nil)
 local incompleteCrop = Utils.deepCopy(validCrop)
-incompleteCrop.angle = nil
-assertTrue(CropMapper.map(incompleteCrop, true, currentSettings) == nil)
+incompleteCrop.bottom = nil
+assertTrue(CropMapper.map(incompleteCrop, noLeveling, {
+    applyCompositionCrop = true,
+    applyLeveling = true,
+}, currentSettings) == nil)
 local outsideCrop = Utils.deepCopy(validCrop)
 outsideCrop.left = -0.01
-assertTrue(CropMapper.map(outsideCrop, true, currentSettings) == nil)
+assertTrue(CropMapper.map(outsideCrop, noLeveling, {
+    applyCompositionCrop = true,
+    applyLeveling = true,
+}, currentSettings) == nil)
 local reversedHorizontalCrop = Utils.deepCopy(validCrop)
 reversedHorizontalCrop.left = 0.9
 reversedHorizontalCrop.right = 0.2
 assertTrue(
-    CropMapper.map(reversedHorizontalCrop, true, currentSettings) == nil
+    CropMapper.map(reversedHorizontalCrop, noLeveling, {
+        applyCompositionCrop = true,
+        applyLeveling = true,
+    }, currentSettings) == nil
 )
 local reversedVerticalCrop = Utils.deepCopy(validCrop)
 reversedVerticalCrop.top = 0.9
 reversedVerticalCrop.bottom = 0.2
 assertTrue(
-    CropMapper.map(reversedVerticalCrop, true, currentSettings) == nil
+    CropMapper.map(reversedVerticalCrop, noLeveling, {
+        applyCompositionCrop = true,
+        applyLeveling = true,
+    }, currentSettings) == nil
 )
-local infiniteAngleCrop = Utils.deepCopy(validCrop)
-infiniteAngleCrop.angle = math.huge
+local infiniteLeveling = {
+    recommended = true,
+    angle = math.huge,
+    mode = "horizon",
+}
 assertTrue(
-    CropMapper.map(infiniteAngleCrop, true, currentSettings) == nil
+    CropMapper.map(nil, infiniteLeveling, {
+        applyCompositionCrop = true,
+        applyLeveling = true,
+    }, currentSettings) == nil
 )
-local excessiveAngleCrop = Utils.deepCopy(validCrop)
-excessiveAngleCrop.angle = 45.1
+local excessiveLeveling = {
+    recommended = true,
+    angle = 45.1,
+    mode = "horizon",
+}
 assertTrue(
-    CropMapper.map(excessiveAngleCrop, true, currentSettings) == nil
+    CropMapper.map(nil, excessiveLeveling, {
+        applyCompositionCrop = true,
+        applyLeveling = true,
+    }, currentSettings) == nil
 )
 
 local originalForApply = ApplyService.captureOriginal(
@@ -1613,7 +1939,7 @@ local pending = PendingOperation.new({
     profileId = "portrait",
     originalSettings = originalForApply,
     mappedSettings = mappedDevelop,
-    cropIncluded = true,
+    compositionCropIncluded = true,
     denoiseRecommended = true,
     warnings = developResponse.warnings,
     model = developResponse.model,
@@ -1662,6 +1988,27 @@ assertEqual(safeOperation.applicationStatus, "applied")
 assertEqual(appliedSettings.Exposure2012, 0)
 assertTrue(appliedSettings.UnknownSetting == nil)
 assertEqual(safeOperation.mappedSettings.UnknownSetting, 123)
+
+appliedSettings = nil
+local hdrOperation = PendingOperation.new({
+    photo = successfulPhoto,
+    enableHdr = true,
+    mappedSettings = {
+        Exposure2012 = 0.25,
+        HDREditMode = 99,
+    },
+    originalSettings = {
+        Exposure2012 = 0,
+        HDREditMode = 0,
+    },
+})
+local hdrApplyResult = ApplyService.applyBatch(
+    fakeCatalog,
+    { hdrOperation }
+)
+assertEqual(hdrApplyResult.applied, 1)
+assertEqual(appliedSettings.Exposure2012, 0.25)
+assertEqual(appliedSettings.HDREditMode, 1)
 
 local partialCropSettings = ApplyService.sanitize({
     Exposure2012 = 0,
@@ -1734,6 +2081,7 @@ assertTrue(
 
 local restoreCalls = 0
 local restoredValue = nil
+local restoredHdrValue = nil
 local failingPhoto = {
     applyDevelopSettings = function(_, values)
         restoreCalls = restoreCalls + 1
@@ -1741,12 +2089,14 @@ local failingPhoto = {
             error("C:\\Users\\Person\\secret-preview.jpg?token=secret")
         end
         restoredValue = values.Exposure2012
+        restoredHdrValue = values.HDREditMode
     end,
 }
 local restoreOperation = PendingOperation.new({
     photo = failingPhoto,
     mappedSettings = { Exposure2012 = 1 },
-    originalSettings = { Exposure2012 = 0 },
+    originalSettings = { Exposure2012 = 0, HDREditMode = 0 },
+    enableHdr = true,
 })
 local restoreResult = ApplyService.applyBatch(
     fakeCatalog,
@@ -1755,6 +2105,7 @@ local restoreResult = ApplyService.applyBatch(
 assertEqual(restoreResult.restoredAfterFailure, 1)
 assertEqual(restoreResult.failedNotRestored, 0)
 assertEqual(restoredValue, 0)
+assertEqual(restoredHdrValue, 0)
 assertEqual(restoreOperation.applyErrorCategory, "apply_failed")
 assertEqual(restoreOperation.applyErrorCode, "lightroom_apply_failed")
 assertTrue(
@@ -1861,6 +2212,10 @@ assertEqual(
 )
 assertEqual(ErrorClassifier.fromHttp(500, "http_error"), "backend_error")
 assertEqual(ErrorClassifier.fromHttp(502, "model_client_error"), "backend_error")
+assertEqual(
+    ErrorClassifier.fromHttp(502, "provider_unavailable"),
+    "backend_error"
+)
 local now = 100
 local tracker = ProgressTracker.new(4, "Analyzing", function()
     return now
@@ -1977,6 +2332,164 @@ assertTrue(lastDialog.message:find("Users", 1, true) == nil)
 assertTrue(lastDialog.message:find("token", 1, true) == nil)
 assertTrue(lastDialog.message:find("example.test", 1, true) == nil)
 
+local appliedLearningSummary = BatchSummary.new(1, "develop")
+appliedLearningSummary.profileId = "natural_travel"
+appliedLearningSummary.confirmationMode = "always"
+appliedLearningSummary.models = {}
+appliedLearningSummary.examples = {}
+appliedLearningSummary.showLearningSummary = true
+BatchSummary.recordLearning(appliedLearningSummary, {
+    enabled = true,
+    personalization_applied = true,
+    usable_sample_count = 18,
+    retrieved_sample_count = 5,
+    minimum_sample_count = 3,
+    average_similarity = 0.86,
+})
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(
+    appliedLearningSummary,
+    { applied = 1 }
+)
+assertTrue(lastDialog.message:find("Learning\n---------", 1, true) ~= nil)
+assertTrue(lastDialog.message:find("Enabled: Yes", 1, true) ~= nil)
+assertTrue(
+    lastDialog.message:find(
+        "Usable feedback samples: 18",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    lastDialog.message:find("Similar samples found: 5", 1, true) ~= nil
+)
+assertTrue(
+    lastDialog.message:find("Average similarity: 0.86", 1, true) ~= nil
+)
+assertTrue(
+    lastDialog.message:find("Personalization: Applied", 1, true) ~= nil
+)
+
+local insufficientLearningSummary = BatchSummary.new(1, "develop")
+insufficientLearningSummary.profileId = "natural_travel"
+insufficientLearningSummary.confirmationMode = "always"
+insufficientLearningSummary.models = {}
+insufficientLearningSummary.examples = {}
+insufficientLearningSummary.showLearningSummary = true
+BatchSummary.recordLearning(insufficientLearningSummary, {
+    enabled = true,
+    personalization_applied = false,
+    usable_sample_count = 2,
+    retrieved_sample_count = 0,
+    minimum_sample_count = 3,
+    average_similarity = nil,
+    reason = "insufficient_samples",
+})
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(
+    insufficientLearningSummary,
+    { applied = 1 }
+)
+assertTrue(
+    lastDialog.message:find(
+        "Usable feedback samples: 2",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(lastDialog.message:find("Required: 3", 1, true) ~= nil)
+assertTrue(
+    lastDialog.message:find(
+        "Personalization: Not applied",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    lastDialog.message:find(
+        "Reason: Insufficient feedback",
+        1,
+        true
+    ) ~= nil
+)
+
+local mixedLearningSummary = BatchSummary.new(2, "develop")
+mixedLearningSummary.profileId = "natural_travel"
+mixedLearningSummary.confirmationMode = "always"
+mixedLearningSummary.models = {}
+mixedLearningSummary.examples = {}
+mixedLearningSummary.showLearningSummary = true
+BatchSummary.recordLearning(mixedLearningSummary, {
+    enabled = true,
+    personalization_applied = true,
+    usable_sample_count = 18,
+    retrieved_sample_count = 5,
+    minimum_sample_count = 3,
+    average_similarity = 0.86,
+})
+BatchSummary.recordLearning(mixedLearningSummary, {
+    enabled = true,
+    personalization_applied = false,
+    usable_sample_count = 2,
+    retrieved_sample_count = 0,
+    minimum_sample_count = 3,
+    reason = "insufficient_samples",
+})
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(
+    mixedLearningSummary,
+    { applied = 2 }
+)
+assertTrue(
+    lastDialog.message:find(
+        "Usable feedback samples: 2-18",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    lastDialog.message:find(
+        "Similar samples found: 0-5",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    lastDialog.message:find(
+        "Personalization: Applied for 1 of 2 photos",
+        1,
+        true
+    ) ~= nil
+)
+
+local disabledLearningSummary = BatchSummary.new(1, "develop")
+disabledLearningSummary.profileId = "natural_travel"
+disabledLearningSummary.confirmationMode = "always"
+disabledLearningSummary.models = {}
+disabledLearningSummary.examples = {}
+disabledLearningSummary.showLearningSummary = true
+BatchSummary.recordLearning(disabledLearningSummary, {
+    enabled = false,
+    personalization_applied = false,
+    usable_sample_count = 0,
+    retrieved_sample_count = 0,
+    minimum_sample_count = 3,
+    reason = "disabled",
+})
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(
+    disabledLearningSummary,
+    { applied = 1 }
+)
+assertTrue(lastDialog.message:find("Enabled: No", 1, true) ~= nil)
+assertTrue(
+    lastDialog.message:find(
+        "Reason: Disabled for this request",
+        1,
+        true
+    ) ~= nil
+)
+
 ResultStore.clear()
 local resultPhotoKey = Utils.photoKey(mappedPhoto)
 assertEqual(resultPhotoKey, "local:7")
@@ -2002,6 +2515,54 @@ assertTrue(
 local decodedRequest = assert(Json.decode(encoded))
 assertEqual(decodedRequest.request_id, request.request_id)
 assertEqual(decodedRequest.options.style_profile, "natural_travel")
+assertEqual(decodedRequest.learning.enabled, true)
+
+assertEqual(
+    Sha256.digest(""),
+    "e3b0c44298fc1c149afbf4c8996fb924"
+        .. "27ae41e4649b934ca495991b7852b855"
+)
+assertEqual(
+    Sha256.digest("abc"),
+    "ba7816bf8f01cfea414140de5dae2223"
+        .. "b00361a396177a9cb410ff61f20015ad"
+)
+assertEqual(
+    LearningPhotoIdentity.forPhoto(mappedPhoto),
+    "e88323fa27386e5982646f71b81d06c7"
+        .. "c4dd78b7ddb4ee01d666170bc218b82b"
+)
+LearningSessionStore.put(
+    LearningPhotoIdentity.forPhoto(mappedPhoto),
+    {
+        sessionId = "11111111-1111-4111-8111-111111111111",
+        baselineTimestamp = "2026-07-29T00:00:00Z",
+        profileId = "natural_travel",
+        modelId = "qwen",
+        filename = "Mapped.NEF",
+    }
+)
+local learningPending = LearningSessionStore.get(
+    LearningPhotoIdentity.forPhoto(mappedPhoto)
+)
+assertEqual(
+    learningPending.sessionId,
+    "11111111-1111-4111-8111-111111111111"
+)
+learningPending.filename = "Changed.NEF"
+assertEqual(
+    LearningSessionStore.get(
+        LearningPhotoIdentity.forPhoto(mappedPhoto)
+    ).filename,
+    "Mapped.NEF"
+)
+assertTrue(learningPending.baselineSettings == nil)
+LearningSessionStore.remove(LearningPhotoIdentity.forPhoto(mappedPhoto))
+assertTrue(
+    LearningSessionStore.get(
+        LearningPhotoIdentity.forPhoto(mappedPhoto)
+    ) == nil
+)
 
 local decodedValues = assert(Json.decode(
     '{"array":[1,false,null],"false_value":false,'
@@ -2025,5 +2586,60 @@ assertTrue(Json.encode({ value = math.huge }) == nil)
 local circular = {}
 circular.self = circular
 assertTrue(Json.encode(circular) == nil)
+
+local diagnosticOperation = PendingOperation.new({
+    requestedStyleId = "auto",
+    effectiveStyleId = "natural_travel",
+    styleSelectionMode = "auto",
+    styleSelectionReason = "Scenic travel subject",
+    editingIntensity = "strong",
+    sceneConfidence = 0.91,
+})
+assertEqual(diagnosticOperation.requestedStyleId, "auto")
+assertEqual(diagnosticOperation.effectiveStyleId, "natural_travel")
+assertEqual(diagnosticOperation.editingIntensity, "strong")
+
+local styleSummary = BatchSummary.new(2, "develop")
+styleSummary.profileId = "auto"
+styleSummary.confirmationMode = "always"
+styleSummary.models = {}
+styleSummary.resolvedModels = {}
+styleSummary.examples = {}
+BatchSummary.recordStyle(styleSummary, diagnosticOperation)
+BatchSummary.recordStyle(styleSummary, PendingOperation.new({
+    effectiveStyleId = "architecture",
+    editingIntensity = "moderate",
+}))
+assertEqual(styleSummary.effectiveStyles.natural_travel, 1)
+assertEqual(styleSummary.effectiveStyles.architecture, 1)
+assertEqual(styleSummary.editingIntensities.strong, 1)
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(styleSummary, {})
+assertTrue(lastDialog.message:find("Selection: Auto", 1, true) ~= nil)
+assertTrue(lastDialog.message:find("Applied style: Multiple", 1, true) ~= nil)
+
+local analysisSummary = BatchSummary.new(1, "analyze")
+analysisSummary.analyzed = 1
+analysisSummary.profileId = "auto"
+analysisSummary.styleDisplayName = "Auto"
+analysisSummary.modelDisplayName = "Gemma"
+analysisSummary.modelId = "gemma"
+analysisSummary.resolvedModels = { ["gemma-4-31b"] = true }
+analysisSummary.analysisExamples = {
+    {
+        filename = "Scenic.NEF",
+        primarySubject = "Mountain landscape",
+        lighting = "daylight",
+        sceneCategory = "scenic_travel",
+        effectiveStyleId = "natural_travel",
+        editingIntensity = "strong",
+        priorities = { "Recover sky detail", "Improve tonal separation" },
+    },
+}
+lastDialog = nil
+AnalysisSummaryDialog.show(analysisSummary)
+assertTrue(lastDialog.message:find("Photo Analysis", 1, true) ~= nil)
+assertTrue(lastDialog.message:find("Mountain landscape", 1, true) ~= nil)
+assertTrue(lastDialog.message:find("Natural Travel", 1, true) ~= nil)
 
 print("Lua assertions passed: " .. tostring(assertions))

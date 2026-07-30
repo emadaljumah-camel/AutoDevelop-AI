@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field, model_validator
 
 from autodevelop.models.common import (
     CurrentDevelopSettings,
+    LearningRequestOptions,
     NonBlankString,
     PhotoExif,
     ProcessingOptions,
@@ -106,4 +107,8 @@ class DevelopRequest(_PhotoRequest):
                 }
             ]
         }
+    )
+    learning: LearningRequestOptions = Field(
+        default_factory=LearningRequestOptions,
+        description="Optional personalized-learning control.",
     )

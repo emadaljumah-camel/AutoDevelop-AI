@@ -33,7 +33,8 @@ def test_plugin_manager_populates_all_required_properties() -> None:
         "backendBaseUrl",
         "styleProfileId",
         "requestTimeoutText",
-        "applyCrop",
+        "applyCompositionCrop",
+        "applyLeveling",
         "confirmationMode",
         "loggingLevel",
         "connectionState",
@@ -164,3 +165,20 @@ def test_reset_defaults_repopulates_state_and_clears_status() -> None:
     assert "PluginManagerController.populate(" in source
     assert 'properties.validationMessage = errors[1] or ""' in controller
     assert 'properties.connectionStatusText = "Not tested"' in controller
+
+
+def test_learning_preferences_and_async_status_are_present() -> None:
+    source = _read("PluginManager.lua")
+    preferences = _read("lib/Preferences.lua")
+    controller = _read("lib/PluginManagerController.lua")
+    for key in (
+        "learningEnabled",
+        "learningCaptureBaseline",
+        "learningShowSummary",
+    ):
+        assert key in source
+        assert key in preferences
+        assert key in controller
+    assert "Backend Learning Status" in source
+    assert "LrTasks.startAsyncTask" in source
+    assert "LearningClient.status" in source

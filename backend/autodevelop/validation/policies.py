@@ -6,19 +6,22 @@ SLIDER_CLAMPED_LOW: Final = "slider_clamped_low"
 SLIDER_CLAMPED_HIGH: Final = "slider_clamped_high"
 SLIDER_NOT_ALLOWED: Final = "slider_not_allowed"
 INVALID_NUMERIC_VALUE: Final = "invalid_numeric_value"
+HDR_RECOMMENDATION_REJECTED: Final = "hdr_recommendation_rejected"
 
 CROP_NOT_ALLOWED: Final = "crop_not_allowed"
 CROP_MISSING_BOUNDS: Final = "crop_missing_bounds"
 CROP_INVALID_BOUNDS: Final = "crop_invalid_bounds"
 CROP_EDGE_LIMIT_EXCEEDED: Final = "crop_edge_limit_exceeded"
 CROP_AREA_TOO_SMALL: Final = "crop_area_too_small"
-CROP_ANGLE_CLAMPED: Final = "crop_angle_clamped"
-CROP_ANGLE_NOT_ALLOWED: Final = "crop_angle_not_allowed"
 CROP_CONFIDENCE_REQUIRED: Final = "crop_confidence_required"
 CROP_CONFIDENCE_TOO_LOW: Final = "crop_confidence_too_low"
 CROP_VALUES_REMOVED_WHEN_NOT_RECOMMENDED: Final = (
     "crop_values_removed_when_not_recommended"
 )
+
+LEVELING_NOT_ALLOWED: Final = "leveling_not_allowed"
+LEVELING_ANGLE_CLAMPED: Final = "leveling_angle_clamped"
+LEVELING_INVALID_STATE: Final = "leveling_invalid_state"
 
 DENOISE_NOT_ALLOWED: Final = "denoise_not_allowed"
 DENOISE_AMOUNT_CLAMPED_LOW: Final = "denoise_amount_clamped_low"

@@ -1,17 +1,18 @@
 {
   "id": "landscape_impact",
   "display_name": "Landscape Impact",
-  "description": "Stronger landscape rendering with richer color, local contrast, and atmospheric depth.",
+  "description": "The strongest believable landscape treatment with bold tonal range, rich color, local definition, and atmospheric depth.",
   "version": "1.0",
   "editing_goals": [
-    "Increase landscape depth",
-    "Protect and recover highlights",
-    "Build rich but believable color"
+    "Create the strongest believable scenic treatment with bold tonal range and meaningful whites and blacks",
+    "Build strong foreground, midground, and background separation in sky, water, foliage, and mountains",
+    "Use substantial but controlled Texture, Clarity, Dehaze, and Vibrance when justified while protecting recoverable detail"
   ],
   "cautions": [
-    "Avoid artificial HDR appearance",
+    "Avoid artificial tone-mapped appearance",
     "Avoid dehaze halos",
-    "Avoid neon foliage and skies"
+    "Avoid neon foliage and skies",
+    "Avoid applying maximum intensity when the actual scene does not support it"
   ],
   "slider_ranges": {
     "Exposure2012": {"min": -1.0, "max": 1.0, "preferred": 0.1},
@@ -26,18 +27,24 @@
     "Vibrance": {"min": 5.0, "max": 45.0, "preferred": 24.0},
     "Saturation": {"min": -5.0, "max": 15.0, "preferred": 3.0},
     "Temperature": {"min": 3500.0, "max": 7800.0, "preferred": 5600.0},
-    "Tint": {"min": -20.0, "max": 20.0, "preferred": 0.0},
-    "CropAngle": {"min": -6.0, "max": 6.0, "preferred": 0.0}
+    "Tint": {"min": -20.0, "max": 20.0, "preferred": 0.0}
   },
   "crop_policy": {
     "allow_crop": true,
-    "allow_leveling": true,
     "max_edge_crop": 0.15,
     "minimum_retained_area": 0.7,
-    "maximum_absolute_angle": 6.0,
     "minimum_confidence": 0.6,
     "require_confidence": false,
     "preserve_aspect_ratio": false
+  },
+  "leveling_policy": {
+    "allow_leveling": true,
+    "maximum_absolute_angle": 6.0,
+    "guidance": [
+      "Correct subtle but credible horizon or waterline errors",
+      "Do not use naturally sloping terrain as a false horizon",
+      "Preserve scale and atmosphere independently from leveling"
+    ]
   },
   "denoise_policy": {
     "allow_denoise": true,

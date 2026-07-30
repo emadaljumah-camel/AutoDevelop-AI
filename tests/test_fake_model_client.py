@@ -353,13 +353,12 @@ def test_landscape_returns_valid_conservative_crop() -> None:
         "right": 0.98,
         "top": 0.03,
         "bottom": 0.97,
-        "angle": 0.0,
         "confidence": 0.88,
-        "reason": "Remove narrow edge distractions and preserve the horizon.",
+        "reason": "Remove narrow edge distractions.",
     }
 
 
-def test_architecture_returns_valid_crop_with_signed_angle() -> None:
+def test_architecture_returns_independent_crop_and_leveling() -> None:
     response = asyncio.run(
         FakeModelClient(scenario="architecture").analyze(_analyze_request())
     )
@@ -368,7 +367,9 @@ def test_architecture_returns_valid_crop_with_signed_angle() -> None:
     assert response.crop.recommended is True
     assert response.crop.left == 0.02
     assert response.crop.right == 0.98
-    assert response.crop.angle == 0.4
+    assert response.leveling.recommended is True
+    assert response.leveling.angle == 0.4
+    assert response.leveling.mode == "vertical"
 
 
 @pytest.mark.parametrize(
@@ -453,15 +454,24 @@ def test_non_denoise_scenarios_have_no_amount(scenario: str) -> None:
     assert response.denoise.amount is None
 
 
-def test_analyze_edit_plan_uses_request_profile_id() -> None:
+def test_analyze_edit_plan_uses_registered_manual_profile_id() -> None:
     response = asyncio.run(
         FakeModelClient().analyze(
-            _analyze_request(style_profile="request_profile")
+            _analyze_request(style_profile="architecture")
         )
     )
 
     assert response.edit_plan is not None
-    assert response.edit_plan.style_profile == "request_profile"
+    assert response.edit_plan.style_profile == "architecture"
+
+
+def test_analyze_rejects_unsupported_profile_id() -> None:
+    with pytest.raises(ValueError, match="Unsupported style profile"):
+        asyncio.run(
+            FakeModelClient().analyze(
+                _analyze_request(style_profile="request_profile")
+            )
+        )
 
 
 def test_develop_edit_plan_uses_supplied_profile_id(

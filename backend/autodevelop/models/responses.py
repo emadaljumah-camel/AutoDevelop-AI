@@ -10,12 +10,18 @@ from autodevelop.models.common import (
     CropRecommendation,
     DenoiseRecommendation,
     DevelopSettings,
+    EditingIntensity,
     EditPlan,
+    HdrRecommendation,
+    LearningDiagnostics,
+    LevelingRecommendation,
     NonBlankString,
     NonNegativeInteger,
     ProcessingWarning,
     TechnicalAnalysis,
     TransportModel,
+    StyleSelectionMode,
+    UnitFloat,
 )
 
 ResponseStatus = Literal["success", "partial", "error"]
@@ -41,6 +47,30 @@ class _ProcessingResponseBase(_ResponseBase):
     status: ResponseStatus = Field(
         description="Overall processing outcome.",
     )
+    requested_style_id: NonBlankString = Field(
+        default="natural_travel",
+        description="Style selection requested by the caller, including Auto.",
+    )
+    effective_style_id: NonBlankString = Field(
+        default="natural_travel",
+        description="Concrete registered style selected by the trusted backend.",
+    )
+    style_selection_mode: StyleSelectionMode = Field(
+        default="manual",
+        description="Whether style selection was automatic or a manual override.",
+    )
+    style_selection_reason: NonBlankString = Field(
+        default="Manual style override",
+        description="Short sanitized backend-owned selection reason.",
+    )
+    editing_intensity: EditingIntensity = Field(
+        default="moderate",
+        description="Qualitative editing intensity selected by the backend.",
+    )
+    scene_confidence: UnitFloat | None = Field(
+        default=None,
+        description="Confidence of the scene interpretation used for selection.",
+    )
     analysis: TechnicalAnalysis | None = Field(
         default=None,
         description="Optional technical analysis.",
@@ -51,7 +81,15 @@ class _ProcessingResponseBase(_ResponseBase):
     )
     crop: CropRecommendation | None = Field(
         default=None,
-        description="Optional crop recommendation.",
+        description="Optional composition-crop recommendation.",
+    )
+    leveling: LevelingRecommendation = Field(
+        default_factory=lambda: LevelingRecommendation(
+            recommended=False,
+            angle=0,
+            mode="none",
+        ),
+        description="Independent rotational-leveling recommendation.",
     )
     denoise: DenoiseRecommendation | None = Field(
         default=None,
@@ -84,6 +122,12 @@ class AnalyzeResponse(_ProcessingResponseBase):
                     "request_id": "11111111-1111-4111-8111-111111111111",
                     "filename": "DSC_0001.NEF",
                     "status": "success",
+                    "requested_style_id": "auto",
+                    "effective_style_id": "natural_travel",
+                    "style_selection_mode": "auto",
+                    "style_selection_reason": "Scenic travel subject",
+                    "editing_intensity": "strong",
+                    "scene_confidence": 0.93,
                     "analysis": {
                         "scene_type": "landscape",
                         "main_subject": "mountain lake",
@@ -109,9 +153,13 @@ class AnalyzeResponse(_ProcessingResponseBase):
                         "right": 0.98,
                         "top": 0.03,
                         "bottom": 0.97,
-                        "angle": -0.4,
                         "confidence": 0.86,
-                        "reason": "Level the horizon.",
+                        "reason": "Tighten the composition around the main subject.",
+                    },
+                    "leveling": {
+                        "recommended": True,
+                        "angle": -0.4,
+                        "mode": "horizon",
                     },
                     "denoise": {
                         "recommended": False,
@@ -152,6 +200,12 @@ class DevelopResponse(_ProcessingResponseBase):
                     "request_id": "22222222-2222-4222-8222-222222222222",
                     "filename": "DSC_0002.NEF",
                     "status": "success",
+                    "requested_style_id": "auto",
+                    "effective_style_id": "landscape_impact",
+                    "style_selection_mode": "auto",
+                    "style_selection_reason": "Dramatic scenic landscape",
+                    "editing_intensity": "strong",
+                    "scene_confidence": 0.95,
                     "analysis": {
                         "scene_type": "landscape",
                         "main_subject": "coastline",
@@ -167,7 +221,7 @@ class DevelopResponse(_ProcessingResponseBase):
                         "confidence": 0.95,
                     },
                     "edit_plan": {
-                        "style_profile": "natural_travel",
+                        "style_profile": "landscape_impact",
                         "goals": ["Recover highlights", "Enhance depth"],
                         "cautions": ["Avoid oversaturating the sky"],
                     },
@@ -185,11 +239,6 @@ class DevelopResponse(_ProcessingResponseBase):
                         "Saturation": 2.0,
                         "Temperature": 5750.0,
                         "Tint": 6.0,
-                        "CropLeft": 0.02,
-                        "CropRight": 0.98,
-                        "CropTop": 0.03,
-                        "CropBottom": 0.97,
-                        "CropAngle": -0.4,
                     },
                     "crop": {
                         "recommended": True,
@@ -197,9 +246,13 @@ class DevelopResponse(_ProcessingResponseBase):
                         "right": 0.98,
                         "top": 0.03,
                         "bottom": 0.97,
-                        "angle": -0.4,
                         "confidence": 0.88,
                         "reason": "Remove narrow edge distractions.",
+                    },
+                    "leveling": {
+                        "recommended": True,
+                        "angle": -0.4,
+                        "mode": "horizon",
                     },
                     "denoise": {
                         "recommended": False,
@@ -233,6 +286,14 @@ class DevelopResponse(_ProcessingResponseBase):
     develop_settings: DevelopSettings | None = Field(
         default=None,
         description="Optional Lightroom develop recommendations.",
+    )
+    enable_hdr: HdrRecommendation = Field(
+        default_factory=lambda: HdrRecommendation(recommended=False),
+        description="Backend-validated Lightroom HDR edit-mode recommendation.",
+    )
+    learning: LearningDiagnostics | None = Field(
+        default=None,
+        description="Optional backend-owned personalization diagnostics.",
     )
 
 

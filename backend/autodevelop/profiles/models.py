@@ -17,6 +17,7 @@ PROFILE_SLIDER_NAMES = frozenset(DevelopSettings.model_fields) - {
     "CropRight",
     "CropTop",
     "CropBottom",
+    "CropAngle",
 }
 NonNegativeFiniteFloat = Annotated[FiniteFloat, Field(ge=0)]
 
@@ -56,22 +57,16 @@ class SliderRange(_ProfileModel):
 
 
 class CropPolicy(_ProfileModel):
-    """Style intent governing future crop and leveling recommendations."""
+    """Style intent governing composition-crop recommendations."""
 
     allow_crop: bool = Field(
         description="Whether crop recommendations are allowed.",
-    )
-    allow_leveling: bool = Field(
-        description="Whether leveling recommendations are allowed.",
     )
     max_edge_crop: UnitFloat = Field(
         description="Maximum intended crop fraction from any single edge.",
     )
     minimum_retained_area: UnitFloat = Field(
         description="Minimum fraction of image area a crop must retain.",
-    )
-    maximum_absolute_angle: NonNegativeFiniteFloat = Field(
-        description="Maximum intended absolute leveling angle in degrees.",
     )
     minimum_confidence: UnitFloat = Field(
         description="Minimum confidence required for a crop recommendation.",
@@ -82,6 +77,20 @@ class CropPolicy(_ProfileModel):
     )
     preserve_aspect_ratio: bool = Field(
         description="Whether future crop recommendations should preserve aspect ratio.",
+    )
+
+
+class LevelingPolicy(_ProfileModel):
+    """Style intent governing rotational-leveling recommendations."""
+
+    allow_leveling: bool = Field(
+        description="Whether rotational-leveling recommendations are allowed.",
+    )
+    maximum_absolute_angle: NonNegativeFiniteFloat = Field(
+        description="Maximum permitted absolute rotation angle in degrees.",
+    )
+    guidance: list[NonBlankString] = Field(
+        description="Profile-specific leveling sensitivity and cautions.",
     )
 
 
@@ -146,7 +155,10 @@ class StyleProfile(_ProfileModel):
         description="Safe intent ranges keyed by canonical Lightroom slider name.",
     )
     crop_policy: CropPolicy = Field(
-        description="Crop and leveling intent for this style.",
+        description="Composition-crop intent for this style.",
+    )
+    leveling_policy: LevelingPolicy = Field(
+        description="Rotational-leveling intent for this style.",
     )
     denoise_policy: DenoisePolicy = Field(
         description="Denoise intent for this style.",

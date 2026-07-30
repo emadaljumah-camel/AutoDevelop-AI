@@ -41,7 +41,7 @@ def test_registry_fields_are_unique_and_descriptions_are_nonblank() -> None:
 
 
 def test_registry_default_and_lookup_behavior() -> None:
-    assert DEFAULT_STYLE_ID == "natural_travel"
+    assert DEFAULT_STYLE_ID == "auto"
     assert get_style("documentary") is not None
     assert get_style("missing") is None
     assert is_valid_style_id("natural_travel")

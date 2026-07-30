@@ -66,6 +66,61 @@ def test_library_menu_files_are_real_relative_lua_scripts() -> None:
         ), f"{title!r} references a missing or case-mismatched script"
 
 
+def test_learning_feedback_menu_and_read_only_workflow_are_registered() -> None:
+    menu_items = _library_menu_items()
+    assert menu_items["Capture Editing Feedback"] == "CaptureEditingFeedback.lua"
+    wrapper = _read("CaptureEditingFeedback.lua")
+    command = _read("lib/LearningFeedbackCommand.lua")
+    assert 'ModuleLoader.load("lib/LearningFeedbackCommand.lua")' in wrapper
+    assert "LearningFeedbackDialog.confirm(summary)" in command
+    assert command.index("LearningFeedbackDialog.confirm(summary)") < command.index(
+        "LearningClient.captureFeedback"
+    )
+    for forbidden in (
+        "applyDevelopSettings",
+        "withWriteAccessDo",
+        "setRawMetadata",
+        "setFormattedMetadata",
+        "setSelectedPhotos",
+        "setTargetPhoto",
+    ):
+        assert forbidden not in command
+
+
+def test_learning_baseline_occurs_after_apply_and_outside_apply_service() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+    apply_service = _read("lib/ApplyService.lua")
+    assert command.index("ApplyService.applyBatch") < command.index(
+        "LearningBaselineService.recordApplied"
+    )
+    assert "LearningBaselineService" not in apply_service
+    assert "LearningClient" not in apply_service
+
+
+def test_learning_identity_is_sha256_and_tracking_is_plugin_owned() -> None:
+    identity = _read("lib/LearningPhotoIdentity.lua")
+    sha = _read("lib/Sha256.lua")
+    store = _read("lib/LearningSessionStore.lua")
+    preferences = _read("lib/Preferences.lua")
+    assert "Sha256.digest(canonicalIdentity(photo))" in identity
+    assert "function Sha256.digest" in sha
+    assert "Preferences.getLearningPendingSessions" in store
+    assert "learningPendingSessions" in preferences
+    for forbidden in (
+        "setRawMetadata",
+        "setFormattedMetadata",
+        "addKeyword",
+        "setRating",
+    ):
+        assert forbidden not in identity + store
+
+
+def test_learning_response_is_optional_and_strictly_validated() -> None:
+    validation = _read("lib/Validation.lua")
+    assert "learning = true" in validation
+    assert "validateLearning(response.learning)" in validation
+
+
 def test_primary_menu_scripts_delegate_directly_to_commands() -> None:
     analyze_entry = _read("AnalyzeSelectedPhotos.lua")
     auto_develop_entry = _read("AutoDevelopSelectedPhotos.lua")
@@ -301,7 +356,7 @@ def test_default_style_profile_has_one_plugin_source_of_truth() -> None:
     assert "StyleProfiles.isValidId(styleProfile)" in builder
     assert "StyleProfiles.getChoices()" in preferences
     assert "StyleProfiles.getDefaultId()" in preferences
-    assert 'local defaultId = "natural_travel"' in styles
+    assert 'local defaultId = "auto"' in styles
 
 
 def test_style_dialog_precedes_all_processing_in_both_commands() -> None:
@@ -394,9 +449,13 @@ def test_style_summaries_include_display_name_and_stable_id() -> None:
     analyze_dialog = _read("dialogs/AnalysisSummaryDialog.lua")
     develop_dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
 
-    for dialog in (analyze_dialog, develop_dialog):
-        assert '"Style: "' in dialog
-        assert '"Profile ID: "' in dialog
+    assert '"Photo Analysis"' in analyze_dialog
+    assert '"Recommended style: "' in analyze_dialog
+    assert "example.effectiveStyleId" in analyze_dialog
+    assert '"Style"' in develop_dialog
+    assert '"Selection: "' in develop_dialog
+    assert '"Applied style: "' in develop_dialog
+    assert '"Editing intensity: "' in develop_dialog
 
 
 def test_only_apply_service_uses_catalog_develop_writes() -> None:
@@ -414,6 +473,25 @@ def test_only_apply_service_uses_catalog_develop_writes() -> None:
     assert "ApiClient" not in apply_service
     assert "PreviewExporter" not in apply_service
     assert "LrDialogs" not in apply_service
+
+
+def test_hdr_mode_is_categorical_capability_gated_and_apply_service_owned() -> None:
+    mapper = _read("lib/DevelopSettingsMapper.lua")
+    exif = _read("lib/ExifMapper.lua")
+    builder = _read("lib/RequestBuilder.lua")
+    validation = _read("lib/Validation.lua")
+    preparation = _read("lib/PreparationService.lua")
+    apply_service = _read("lib/ApplyService.lua")
+
+    assert "HDREditMode" not in mapper
+    assert "function ExifMapper.hdrEditSupported" in exif
+    assert "hdr_edit_supported" in builder
+    assert 'hdr_workflow = "unknown"' in builder
+    assert "validateHdr(response.enable_hdr)" in validation
+    assert "decoded.enable_hdr.recommended == true" in preparation
+    assert "safeSettings.HDREditMode = 1" in apply_service
+    assert "sanitizeRestore(operation.originalSettings)" in apply_service
+    assert "applyDevelopSettings" not in preparation
 
 
 def test_auto_develop_confirmation_precedes_catalog_application() -> None:
@@ -592,8 +670,8 @@ def test_develop_post_response_lifecycle_markers_are_safe_and_ordered() -> None:
         "response_validation_completed",
         "develop_mapping_started",
         "develop_mapping_completed",
-        "crop_mapping_started",
-        "crop_mapping_completed",
+        "geometry_mapping_started",
+        "geometry_mapping_completed",
         "pending_operation_build_started",
         "pending_operation_build_completed",
     )
@@ -663,7 +741,9 @@ def test_progress_and_confirmation_preferences_are_integrated() -> None:
     assert "if preparationDecision.cancelled then" in develop
     assert "elseif preparationDecision.terminalFailure then" in develop
     assert "operation.cropDisabled" in preparation
+    assert "operation.levelingDisabled" in preparation
     assert "application.cropApplied" in develop
+    assert "application.levelingApplied" in develop
     assert "confirmation_mode=" in develop
 
 
@@ -821,11 +901,11 @@ def test_develop_mapping_is_allow_listed_and_preserves_process_version() -> None
     assert "ProcessVersion" not in mapper
     assert "CameraProfile" not in mapper
     assert "WhiteBalance" not in mapper
-    assert "CropLeft = crop.left" in crop_mapper
-    assert "CropRight = crop.right" in crop_mapper
-    assert "CropTop = crop.top" in crop_mapper
-    assert "CropBottom = crop.bottom" in crop_mapper
-    assert "CropAngle = crop.angle" in crop_mapper
+    assert "CropLeft = applyCrop and crop.left" in crop_mapper
+    assert "CropRight = applyCrop and crop.right" in crop_mapper
+    assert "CropTop = applyCrop and crop.top" in crop_mapper
+    assert "CropBottom = applyCrop and crop.bottom" in crop_mapper
+    assert "and leveling.angle or currentSettings.CropAngle" in crop_mapper
 
 
 def test_no_unrelated_lightroom_mutation_apis_are_used() -> None:
@@ -851,6 +931,53 @@ def test_no_unrelated_lightroom_mutation_apis_are_used() -> None:
 
     for operation in forbidden:
         assert operation not in plugin_source
+
+
+def test_feedback_preview_is_backend_authoritative_and_precedes_save() -> None:
+    command = _read("lib/LearningFeedbackCommand.lua")
+    mapper = _read("lib/ExifMapper.lua")
+    session_store = _read("lib/LearningSessionStore.lua")
+    api_client = _read("lib/ApiClient.lua")
+    config = _read("lib/Config.lua")
+
+    preview = command.index("LearningClient.previewFeedback")
+    dialog = command.index("LearningFeedbackDialog.confirm")
+    save = command.index("LearningClient.captureFeedback")
+    assert preview < dialog < save
+    assert "local thresholds" not in command
+    assert "significantCount" not in command
+    assert "baselineSettings" not in session_store
+    assert "LrTasks.pcall(function()" in mapper
+    assert "return photo:getDevelopSettings()" in mapper
+    assert "local ok, source = pcall" not in mapper
+    assert "learningFeedbackPreview" in api_client
+    assert "/learning/feedback/preview" in config
+
+
+def test_auto_develop_completion_exposes_learning_diagnostics() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+    summary = _read("lib/BatchSummary.lua")
+    dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
+    validation = _read("lib/Validation.lua")
+    config = _read("lib/Config.lua")
+
+    assert "BatchSummary.recordLearning(summary, value.learning)" in command
+    assert "function BatchSummary.recordLearning" in summary
+    for field in (
+        "minimum_sample_count",
+        "average_similarity",
+    ):
+        assert field in validation
+    for label in (
+        "Learning",
+        "Usable feedback samples:",
+        "Similar samples found:",
+        "Average similarity:",
+        "Personalization:",
+        "Reason:",
+    ):
+        assert label in dialog
+    assert "learningShowSummary = true" in config
 
 
 def test_plugin_does_not_depend_on_reference_directory() -> None:

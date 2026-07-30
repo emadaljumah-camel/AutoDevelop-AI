@@ -1,5 +1,6 @@
 local Json = ModuleLoader.load("lib/Json.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
+local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
 
 local Validation = {}
 
@@ -11,12 +12,21 @@ local developResponseFields = {
     analysis = true,
     edit_plan = true,
     crop = true,
+    leveling = true,
     denoise = true,
     warnings = true,
     model = true,
     resolved_model = true,
     processing_duration_ms = true,
     develop_settings = true,
+    learning = true,
+    requested_style_id = true,
+    effective_style_id = true,
+    style_selection_mode = true,
+    style_selection_reason = true,
+    editing_intensity = true,
+    scene_confidence = true,
+    enable_hdr = true,
 }
 
 local function hasOnlyFields(value, allowed)
@@ -30,6 +40,16 @@ end
 
 local function validUnitNumber(value)
     return Utils.isFiniteNumber(value) and value >= 0 and value <= 1
+end
+
+local function validNonNegativeInteger(value)
+    return Utils.isFiniteNumber(value)
+        and value >= 0
+        and value == math.floor(value)
+end
+
+local function validPositiveInteger(value)
+    return validNonNegativeInteger(value) and value >= 1
 end
 
 local function isAbsent(value)
@@ -66,19 +86,28 @@ local function validateCrop(crop)
     if isAbsent(crop) then
         return true
     end
-    if type(crop) ~= "table" or type(crop.recommended) ~= "boolean" then
+    if type(crop) ~= "table"
+        or not hasOnlyFields(crop, {
+            recommended = true,
+            left = true,
+            right = true,
+            top = true,
+            bottom = true,
+            confidence = true,
+            reason = true,
+        })
+        or type(crop.recommended) ~= "boolean" then
         return false
     end
     if not isAbsent(crop.confidence)
         and not validUnitNumber(crop.confidence) then
         return false
     end
-    if not isAbsent(crop.angle)
-        and not Utils.isFiniteNumber(crop.angle) then
-        return false
-    end
     if not crop.recommended then
-        return true
+        return isAbsent(crop.left)
+            and isAbsent(crop.right)
+            and isAbsent(crop.top)
+            and isAbsent(crop.bottom)
     end
     if not validUnitNumber(crop.left)
         or not validUnitNumber(crop.right)
@@ -87,6 +116,28 @@ local function validateCrop(crop)
         return false
     end
     return crop.left < crop.right and crop.top < crop.bottom
+end
+
+local function validateLeveling(leveling)
+    if type(leveling) ~= "table"
+        or not hasOnlyFields(leveling, {
+            recommended = true,
+            angle = true,
+            mode = true,
+        })
+        or type(leveling.recommended) ~= "boolean"
+        or not Utils.isFiniteNumber(leveling.angle) then
+        return false
+    end
+    local activeModes = {
+        horizon = true,
+        vertical = true,
+        both = true,
+    }
+    if leveling.recommended then
+        return activeModes[leveling.mode] == true
+    end
+    return leveling.angle == 0 and leveling.mode == "none"
 end
 
 local function validateDenoise(denoise)
@@ -103,6 +154,18 @@ local function validateDenoise(denoise)
     end
     return isAbsent(denoise.confidence)
         or validUnitNumber(denoise.confidence)
+end
+
+local function validateHdr(enableHdr)
+    if type(enableHdr) ~= "table" then
+        return false
+    end
+    return hasOnlyFields(enableHdr, {
+        recommended = true,
+        reason = true,
+    })
+        and type(enableHdr.recommended) == "boolean"
+        and isAbsent(enableHdr.reason)
 end
 
 local function validateWarnings(warnings)
@@ -136,6 +199,96 @@ local function validateWarnings(warnings)
     return itemCount == highestIndex
 end
 
+local function validateLearning(learning)
+    if isAbsent(learning) then
+        return true
+    end
+    if type(learning) ~= "table" then
+        return false
+    end
+    local allowed = {
+        enabled = true,
+        personalization_applied = true,
+        usable_sample_count = true,
+        retrieved_sample_count = true,
+        minimum_sample_count = true,
+        average_similarity = true,
+        feature_type = true,
+        reason = true,
+    }
+    local reasons = {
+        disabled = true,
+        database_unavailable = true,
+        embedding_unavailable = true,
+        insufficient_samples = true,
+        no_similar_samples = true,
+        retrieval_unavailable = true,
+    }
+    if not hasOnlyFields(learning, allowed)
+        or type(learning.enabled) ~= "boolean"
+        or type(learning.personalization_applied) ~= "boolean"
+        or not validNonNegativeInteger(learning.usable_sample_count)
+        or not validNonNegativeInteger(learning.retrieved_sample_count)
+        or not validPositiveInteger(learning.minimum_sample_count)
+        or (
+            not isAbsent(learning.average_similarity)
+            and not validUnitNumber(learning.average_similarity)
+        ) then
+        return false
+    end
+    if not isAbsent(learning.feature_type)
+        and (
+            type(learning.feature_type) ~= "string"
+            or not Utils.trim(learning.feature_type)
+            or #learning.feature_type > 100
+        ) then
+        return false
+    end
+    return isAbsent(learning.reason)
+        or (
+            type(learning.reason) == "string"
+            and reasons[learning.reason] == true
+        )
+end
+
+local function validateStyleDiagnostics(response, request)
+    if response.requested_style_id ~= request.options.style_profile
+        or not StyleProfiles.isValidId(response.requested_style_id)
+        or not StyleProfiles.isConcreteId(response.effective_style_id)
+        or type(response.style_selection_reason) ~= "string"
+        or not Utils.trim(response.style_selection_reason)
+        or #response.style_selection_reason > 200 then
+        return false
+    end
+    if response.style_selection_mode == "manual" then
+        if response.requested_style_id ~= response.effective_style_id then
+            return false
+        end
+    elseif response.style_selection_mode == "auto" then
+        if response.requested_style_id ~= "auto" then
+            return false
+        end
+    else
+        return false
+    end
+    local intensities = {
+        conservative = true,
+        moderate = true,
+        strong = true,
+        very_strong = true,
+    }
+    if not intensities[response.editing_intensity]
+        or (
+            not isAbsent(response.scene_confidence)
+            and not validUnitNumber(response.scene_confidence)
+        )
+        or type(response.edit_plan) ~= "table"
+        or response.edit_plan.style_profile ~= response.effective_style_id then
+        return false
+    end
+    return true
+end
+
 function Validation.validateAnalyzeResponse(response, request)
     if type(response) ~= "table" then
         return false, "Response was not a JSON object."
@@ -158,6 +311,21 @@ function Validation.validateAnalyzeResponse(response, request)
     end
     if type(response.edit_plan) ~= "table" then
         return false, "Response edit_plan was missing."
+    end
+    if not validateCrop(response.crop) then
+        return false, "Response crop recommendation was invalid."
+    end
+    if not validateLeveling(response.leveling) then
+        return false, "Response leveling recommendation was invalid."
+    end
+    if not validateDenoise(response.denoise) then
+        return false, "Response denoise recommendation was invalid."
+    end
+    if not validateWarnings(response.warnings) then
+        return false, "Response warnings were invalid."
+    end
+    if not validateStyleDiagnostics(response, request) then
+        return false, "Response style diagnostics were invalid."
     end
     local modelIdentifier =
         Validation.validateModelIdentifier(response.model)
@@ -214,11 +382,23 @@ function Validation.validateDevelopResponse(response, request)
     if not validateCrop(response.crop) then
         return false, "Response crop recommendation was invalid."
     end
+    if not validateLeveling(response.leveling) then
+        return false, "Response leveling recommendation was invalid."
+    end
     if not validateDenoise(response.denoise) then
         return false, "Response denoise recommendation was invalid."
     end
+    if not validateHdr(response.enable_hdr) then
+        return false, "Response HDR recommendation was invalid."
+    end
     if not validateWarnings(response.warnings) then
         return false, "Response warnings were invalid."
+    end
+    if not validateLearning(response.learning) then
+        return false, "Response learning diagnostics were invalid."
+    end
+    if not validateStyleDiagnostics(response, request) then
+        return false, "Response style diagnostics were invalid."
     end
     return true, nil, modelIdentifier, resolvedModel
 end

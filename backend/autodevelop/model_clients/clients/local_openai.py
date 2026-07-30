@@ -44,7 +44,7 @@ class LocalOpenAIClient:
         payload = {
             "model": self.model,
             "temperature": 0.1,
-            "response_format": {"type": "json_object"},
+            "response_format": {"type": "text"},
             "messages": [
                 {
                     "role": "user",

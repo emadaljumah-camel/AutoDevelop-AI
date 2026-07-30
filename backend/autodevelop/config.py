@@ -1,9 +1,10 @@
 """Application configuration."""
 
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import Field, PrivateAttr, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,6 +12,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from autodevelop.config_models import normalize_safe_http_url
 
 ConfigurationSource = Literal["environment", "yaml", "built-in"]
+_LEARNING_ENVIRONMENT_FIELDS = frozenset(
+    {
+        "learning_enabled",
+        "learning_db",
+        "learning_min_samples",
+        "learning_max_results",
+        "learning_min_similarity",
+        "learning_max_candidate_pool",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -49,11 +60,49 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr = SecretStr("")
     gemini_model: str = "gemini-2.5-flash"
     gemini_timeout_seconds: float = Field(default=120.0, ge=10, le=600)
+    learning_enabled: bool = True
+    learning_db: Path = (
+        Path(__file__).resolve().parents[2]
+        / "data"
+        / "autodevelop_learning.sqlite3"
+    )
+    learning_min_samples: int = Field(default=3, ge=1, le=100)
+    learning_max_results: int = Field(default=5, ge=1, le=20)
+    learning_min_similarity: float = Field(default=0.70, ge=0, le=1)
+    learning_max_candidate_pool: int = Field(default=100, ge=1)
 
     _yaml_loaded: bool = PrivateAttr(default=False)
     _configuration_sources: dict[str, ConfigurationSource] = PrivateAttr(
         default_factory=dict
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: Callable[[], dict[str, Any]],
+        env_settings: Callable[[], dict[str, Any]],
+        dotenv_settings: Callable[[], dict[str, Any]],
+        file_secret_settings: Callable[[], dict[str, Any]],
+    ) -> tuple[Callable[[], dict[str, Any]], ...]:
+        """Exclude non-secret learning settings from environment sources."""
+
+        def without_learning(
+            source: Callable[[], dict[str, Any]],
+        ) -> dict[str, Any]:
+            values = source()
+            return {
+                key: value
+                for key, value in values.items()
+                if key not in _LEARNING_ENVIRONMENT_FIELDS
+            }
+
+        return (
+            init_settings,
+            lambda: without_learning(env_settings),
+            lambda: without_learning(dotenv_settings),
+            file_secret_settings,
+        )
 
     @field_validator(
         "default_model",
@@ -101,6 +150,16 @@ class Settings(BaseSettings):
         if not definition.selectable:
             raise ValueError("default_model is not selectable")
         return value
+
+    @field_validator("learning_db")
+    @classmethod
+    def resolve_learning_database_path(cls, value: Path) -> Path:
+        """Resolve relative overrides from the stable application root."""
+
+        path = value.expanduser()
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[2] / path
+        return path.resolve(strict=False)
 
     def set_configuration_metadata(
         self,

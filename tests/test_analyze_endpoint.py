@@ -177,7 +177,7 @@ def test_lifespan_initializes_and_reuses_one_profile_loader(
         assert second.status_code == 200
         assert application.state.style_profile_loader is loader
         assert loader.reload_calls == 1
-        assert loader.cached_profile_calls == 2
+        assert loader.cached_profile_calls == 4
 
 
 def test_analyze_requests_use_no_filesystem_after_startup(
@@ -558,13 +558,13 @@ def test_style_profile_loader_dependency_can_be_overridden(
     loader = RecordingProfileLoader(profile)
     app.dependency_overrides[get_style_profile_loader] = lambda: loader
     body = _request_body()
-    body["options"]["style_profile"] = "virtual_profile"
+    body["options"]["style_profile"] = "natural_travel"
 
     response = client.post("/autodevelop/v1/analyze", json=body)
 
     assert response.status_code == 200
-    assert loader.requested_profile_id == "virtual_profile"
-    assert response.json()["edit_plan"]["style_profile"] == "virtual_profile"
+    assert loader.requested_profile_id == "natural_travel"
+    assert response.json()["edit_plan"]["style_profile"] == "natural_travel"
 
 
 def test_health_endpoint_still_works(client: TestClient) -> None:

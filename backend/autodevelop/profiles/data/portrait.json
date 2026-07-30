@@ -1,17 +1,18 @@
 {
   "id": "portrait",
   "display_name": "Portrait",
-  "description": "Natural portrait rendering with protected skin tone and gentle texture treatment.",
+  "description": "Visually polished, flattering portrait rendering with realistic skin, meaningful separation, and controlled tonal depth.",
   "version": "1.0",
   "editing_goals": [
-    "Preserve natural skin",
-    "Use soft texture and clarity",
-    "Keep color flattering and realistic"
+    "Create a clearly finished portrait with flattering tonal depth, healthy realistic skin color, and immediate subject emphasis",
+    "Use moderate global impact with conservative skin-local Texture, Clarity, and Dehaze",
+    "Create meaningful subject and background separation without artificial skin treatment or a weak natural rendering"
   ],
   "cautions": [
     "Avoid aggressive clarity",
     "Avoid oversaturated skin",
-    "Avoid excessive denoise smoothing"
+    "Avoid excessive denoise smoothing",
+    "Do not interpret natural as flat, timid, or under-edited"
   ],
   "slider_ranges": {
     "Exposure2012": {"min": -0.75, "max": 1.0, "preferred": 0.15},
@@ -26,18 +27,24 @@
     "Vibrance": {"min": -10.0, "max": 20.0, "preferred": 6.0},
     "Saturation": {"min": -12.0, "max": 8.0, "preferred": -1.0},
     "Temperature": {"min": 4000.0, "max": 7500.0, "preferred": 5600.0},
-    "Tint": {"min": -18.0, "max": 22.0, "preferred": 3.0},
-    "CropAngle": {"min": -3.0, "max": 3.0, "preferred": 0.0}
+    "Tint": {"min": -18.0, "max": 22.0, "preferred": 3.0}
   },
   "crop_policy": {
     "allow_crop": true,
-    "allow_leveling": true,
     "max_edge_crop": 0.08,
     "minimum_retained_area": 0.85,
-    "maximum_absolute_angle": 3.0,
     "minimum_confidence": 0.75,
     "require_confidence": false,
     "preserve_aspect_ratio": true
+  },
+  "leveling_policy": {
+    "allow_leveling": true,
+    "maximum_absolute_angle": 3.0,
+    "guidance": [
+      "Correct only obvious accidental camera roll",
+      "Do not infer level from shoulder lines, facial asymmetry, or pose",
+      "Preserve deliberate portrait framing"
+    ]
   },
   "denoise_policy": {
     "allow_denoise": true,

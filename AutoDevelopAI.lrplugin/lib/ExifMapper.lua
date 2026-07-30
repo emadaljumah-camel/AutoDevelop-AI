@@ -1,3 +1,5 @@
+local LrTasks = import("LrTasks")
+
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local ExifMapper = {}
@@ -137,25 +139,38 @@ function ExifMapper.mapExif(photo)
 end
 
 function ExifMapper.mapDevelopSettings(photo)
-    local mapped = {}
     if not photo or type(photo.getDevelopSettings) ~= "function" then
-        return mapped
+        return nil, "develop_settings_unavailable"
     end
 
-    local ok, source = pcall(function()
+    local ok, source = LrTasks.pcall(function()
         return photo:getDevelopSettings()
     end)
     if not ok or type(source) ~= "table" then
-        return mapped
+        return nil, "develop_settings_unavailable"
     end
 
+    local mapped = {}
     for _, key in ipairs(developKeys) do
         local value = source[key]
         if Utils.isFiniteNumber(value) then
             mapped[key] = value
         end
     end
-    return mapped
+    return mapped, nil
+end
+
+function ExifMapper.hdrEditSupported(photo)
+    if not photo or type(photo.getDevelopSettings) ~= "function" then
+        return false
+    end
+    local ok, source = LrTasks.pcall(function()
+        return photo:getDevelopSettings()
+    end)
+    if not ok or type(source) ~= "table" then
+        return false
+    end
+    return source.HDREditMode == 0 or source.HDREditMode == 1
 end
 
 function ExifMapper.isSupportedPhoto(photo)

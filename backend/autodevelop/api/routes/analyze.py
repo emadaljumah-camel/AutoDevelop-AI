@@ -10,6 +10,7 @@ from autodevelop.api.dependencies import (
     get_model_client,
     get_model_resolver,
     get_runtime_settings,
+    get_safety_validator,
     get_style_profile_loader,
 )
 from autodevelop.api.exception_handlers import error_response
@@ -25,8 +26,19 @@ from autodevelop.model_clients import (
     ModelResolver,
 )
 from autodevelop.model_clients.response_validation import validate_model_response
-from autodevelop.models import AnalyzeRequest, AnalyzeResponse, ErrorResponse
-from autodevelop.profiles import ProfileNotFoundError, StyleProfileLoader
+from autodevelop.models import (
+    AnalyzeRequest,
+    AnalyzeResponse,
+    ErrorResponse,
+    ProcessingWarning,
+)
+from autodevelop.profiles import (
+    AUTO_STYLE_ID,
+    ProfileNotFoundError,
+    StyleProfileLoader,
+    is_valid_style_request_id,
+)
+from autodevelop.validation import SafetyValidator
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +76,18 @@ async def analyze_photo(
         StyleProfileLoader,
         Depends(get_style_profile_loader),
     ],
+    safety_validator: Annotated[
+        SafetyValidator,
+        Depends(get_safety_validator),
+    ],
 ) -> AnalyzeResponse | JSONResponse:
     """Validate the selected profile and return model-generated analysis."""
 
     try:
-        profile_loader.get_cached_profile(request.options.style_profile)
+        if request.options.style_profile != AUTO_STYLE_ID:
+            profile_loader.get_cached_profile(request.options.style_profile)
+        if not is_valid_style_request_id(request.options.style_profile):
+            raise ProfileNotFoundError(request.options.style_profile)
         selection = resolve_model_request(
             request,
             settings=settings,
@@ -94,6 +113,44 @@ async def analyze_photo(
             response,
             expected_type=AnalyzeResponse,
             expected_resolved_model=resolution.resolved_model,
+        )
+        profile = profile_loader.get_cached_profile(response.effective_style_id)
+        validation_result = safety_validator.validate(
+            settings=None,
+            crop=response.crop,
+            leveling=response.leveling,
+            denoise=response.denoise,
+            profile=profile,
+            analysis=response.analysis,
+            options=request.options,
+        )
+        validation_warnings = [
+            ProcessingWarning(
+                code=issue.code,
+                message=issue.message,
+                field=issue.field,
+                severity=issue.severity,
+            )
+            for issue in validation_result.issues
+        ]
+        response = response.model_copy(
+            update={
+                "crop": (
+                    validation_result.crop.model_copy(deep=True)
+                    if validation_result.crop is not None
+                    else None
+                ),
+                "leveling": validation_result.leveling.model_copy(deep=True),
+                "denoise": (
+                    validation_result.denoise.model_copy(deep=True)
+                    if validation_result.denoise is not None
+                    else None
+                ),
+                "warnings": [
+                    *(warning.model_copy(deep=True) for warning in response.warnings),
+                    *validation_warnings,
+                ],
+            }
         )
         logger.info(
             (

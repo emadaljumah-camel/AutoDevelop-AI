@@ -6,18 +6,26 @@ local preferenceKeys = {
     "backendBaseUrl",
     "styleProfileId",
     "modelProfileId",
-    "applyCrop",
+    "applyCompositionCrop",
+    "applyLeveling",
     "confirmationMode",
     "loggingLevel",
+    "learningEnabled",
+    "learningCaptureBaseline",
+    "learningShowSummary",
 }
 
 local getters = {
     backendBaseUrl = Preferences.getBackendBaseUrl,
     styleProfileId = Preferences.getStyleProfileId,
     modelProfileId = Preferences.getModelProfileId,
-    applyCrop = Preferences.getApplyCrop,
+    applyCompositionCrop = Preferences.getApplyCompositionCrop,
+    applyLeveling = Preferences.getApplyLeveling,
     confirmationMode = Preferences.getConfirmationMode,
     loggingLevel = Preferences.getLoggingLevel,
+    learningEnabled = Preferences.getLearningEnabled,
+    learningCaptureBaseline = Preferences.getLearningCaptureBaseline,
+    learningShowSummary = Preferences.getLearningShowSummary,
 }
 
 local function addValidationError(errors, reason)
@@ -46,6 +54,9 @@ function PluginManagerController.populate(properties)
     properties.connectionStatusText = "Not tested"
     properties.connectionTestRunning = false
     properties.canTestConnection = true
+    properties.learningStatusRunning = false
+    properties.canCheckLearningStatus = true
+    properties.learningStatusText = "Not checked"
     properties.validationMessage = errors[1] or ""
 end
 

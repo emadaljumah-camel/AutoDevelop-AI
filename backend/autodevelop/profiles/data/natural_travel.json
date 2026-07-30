@@ -1,17 +1,18 @@
 {
   "id": "natural_travel",
   "display_name": "Natural Travel",
-  "description": "Natural travel rendering with moderate contrast and realistic people, skies, and color.",
+  "description": "Strong premium travel rendering with tonal depth, rich believable color, atmospheric separation, and crisp natural detail.",
   "version": "1.0",
   "editing_goals": [
-    "Preserve natural color",
-    "Add moderate tonal separation",
-    "Retain realistic skin and skies"
+    "Create a strong premium travel-photography appearance with rich believable color and crisp natural detail",
+    "Build deep tonal and atmospheric separation across foreground, midground, and background",
+    "Enhance attractive skies, water, natural greens, and warm light when present"
   ],
   "cautions": [
-    "Avoid heavy clarity",
-    "Avoid excessive dehaze",
-    "Avoid oversaturated foliage"
+    "Preserve realistic skin and sky color",
+    "Keep clarity and dehaze restrained enough to remain believable",
+    "Avoid oversaturated or muddy foliage",
+    "Avoid timid contrast or an unfinished merely corrected result"
   ],
   "slider_ranges": {
     "Exposure2012": {"min": -1.0, "max": 1.0, "preferred": 0.0},
@@ -26,18 +27,24 @@
     "Vibrance": {"min": -10.0, "max": 30.0, "preferred": 12.0},
     "Saturation": {"min": -10.0, "max": 12.0, "preferred": 0.0},
     "Temperature": {"min": 3500.0, "max": 7500.0, "preferred": 5500.0},
-    "Tint": {"min": -20.0, "max": 20.0, "preferred": 0.0},
-    "CropAngle": {"min": -5.0, "max": 5.0, "preferred": 0.0}
+    "Tint": {"min": -20.0, "max": 20.0, "preferred": 0.0}
   },
   "crop_policy": {
     "allow_crop": true,
-    "allow_leveling": true,
     "max_edge_crop": 0.12,
     "minimum_retained_area": 0.75,
-    "maximum_absolute_angle": 5.0,
     "minimum_confidence": 0.65,
     "require_confidence": false,
     "preserve_aspect_ratio": false
+  },
+  "leveling_policy": {
+    "allow_leveling": true,
+    "maximum_absolute_angle": 5.0,
+    "guidance": [
+      "Correct obvious accidental horizon and waterline tilt",
+      "Preserve natural framing and environmental context",
+      "Do not confuse sloping terrain or irregular structures with camera roll"
+    ]
   },
   "denoise_policy": {
     "allow_denoise": true,

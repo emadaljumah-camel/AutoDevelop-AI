@@ -57,6 +57,12 @@ function RequestBuilder.buildDevelop(photo, previewPath, options)
     request.options.dry_run = options.dryRun == true
     request.options.preserve_current_adjustments =
         options.preserveCurrentAdjustments ~= false
+    request.options.hdr_edit_supported =
+        ExifMapper.hdrEditSupported(photo)
+    request.options.hdr_workflow = "unknown"
+    request.learning = {
+        enabled = options.learningEnabled ~= false,
+    }
     return request
 end
 

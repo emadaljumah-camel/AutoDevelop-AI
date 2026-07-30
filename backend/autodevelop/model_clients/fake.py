@@ -11,9 +11,10 @@ from autodevelop.models import (
     DevelopResponse,
     DevelopSettings,
     EditPlan,
+    LevelingRecommendation,
     TechnicalAnalysis,
 )
-from autodevelop.profiles import StyleProfile
+from autodevelop.profiles import SceneSignals, StyleProfile, select_style
 
 _SUPPORTED_SCENARIOS = frozenset(
     {
@@ -26,6 +27,7 @@ _SUPPORTED_SCENARIOS = frozenset(
         "landscape",
         "portrait",
         "architecture",
+        "documentary",
         "invalid_output",
     }
 )
@@ -35,6 +37,7 @@ _FILENAME_SCENARIOS = (
     "portrait",
     "landscape",
     "architecture",
+    "documentary",
     "underexposed",
     "overexposed",
 )
@@ -152,6 +155,20 @@ _ANALYSIS_DATA: dict[str, dict[str, object]] = {
         "has_sky": True,
         "confidence": 0.90,
     },
+    "documentary": {
+        "scene_type": "documentary",
+        "main_subject": "candid people",
+        "lighting": "available light",
+        "exposure_assessment": "balanced",
+        "white_balance_assessment": "authentic",
+        "dynamic_range": "moderate",
+        "noise_level": "low",
+        "horizon_status": "level",
+        "visible_people": 2,
+        "has_faces": True,
+        "has_sky": False,
+        "confidence": 0.91,
+    },
 }
 
 _PLAN_DATA: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
@@ -185,7 +202,14 @@ _PLAN_DATA: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
     "architecture": (
         ("Control highlights", "Enhance structural detail"),
-        ("Keep leveling and crop conservative",),
+        (
+            "Keep composition cropping conservative",
+            "Apply rotational leveling only when a reliable reference supports it",
+        ),
+    ),
+    "documentary": (
+        ("Preserve atmosphere", "Maintain authentic color"),
+        ("Avoid dramatic color grading",),
     ),
 }
 
@@ -296,6 +320,67 @@ _DEVELOP_SETTINGS: dict[str, dict[str, float]] = {
     },
 }
 
+_DEVELOP_SETTINGS["documentary"] = dict(_DEVELOP_SETTINGS["neutral"])
+
+
+def _scene_signals(scenario: str) -> SceneSignals:
+    values = {
+        "landscape": dict(
+            primary_subject_type="landscape",
+            primary_subject="mountain landscape",
+            scene_category="scenic_travel",
+            lighting_type="daylight",
+            dynamic_range="high",
+            color_character="balanced",
+            confidence=0.92,
+            editing_priorities=["Improve tonal separation", "Recover sky detail"],
+        ),
+        "architecture": dict(
+            primary_subject_type="architecture",
+            primary_subject="building",
+            scene_category="architecture",
+            architecture_dominant=True,
+            lighting_type="daylight",
+            dynamic_range="high",
+            confidence=0.9,
+        ),
+        "portrait": dict(
+            primary_subject_type="person",
+            primary_subject="portrait",
+            scene_category="portrait",
+            people_present=True,
+            portrait_dominant=True,
+            lighting_type="daylight",
+            confidence=0.92,
+        ),
+        "documentary": dict(
+            primary_subject_type="people",
+            primary_subject="candid people",
+            scene_category="documentary",
+            people_present=True,
+            documentary_context=True,
+            lighting_type="daylight",
+            confidence=0.91,
+        ),
+        "night": dict(
+            primary_subject_type="nightscape",
+            primary_subject="night scene",
+            scene_category="night",
+            night_scene=True,
+            lighting_type="low_light",
+            dynamic_range="high",
+            confidence=0.9,
+        ),
+    }.get(
+        scenario,
+        {
+            "primary_subject_type": "unknown",
+            "scene_category": "unknown",
+            "confidence": 0.0,
+        },
+    )
+    return SceneSignals.model_validate(values)
+
 
 class FakeModelClient(ModelClient):
     """Return deterministic model-like recommendations without external access."""
@@ -320,6 +405,10 @@ class FakeModelClient(ModelClient):
         """Return deterministic analysis for a validated request."""
 
         scenario = self._select_scenario(request)
+        selection = select_style(
+            request.options.style_profile,
+            _scene_signals(scenario),
+        )
         self._record(request)
         self._raise_for_invalid_output(scenario)
         return AnalyzeResponse(
@@ -327,12 +416,19 @@ class FakeModelClient(ModelClient):
             request_id=request.request_id,
             filename=request.filename,
             status="success",
+            requested_style_id=selection.requested_style_id,
+            effective_style_id=selection.effective_style_id,
+            style_selection_mode=selection.mode,
+            style_selection_reason=selection.reason,
+            editing_intensity=selection.editing_intensity,
+            scene_confidence=selection.scene.confidence,
             analysis=self._build_analysis(scenario),
             edit_plan=self._build_edit_plan(
                 scenario,
-                request.options.style_profile,
+                selection.effective_style_id,
             ),
             crop=self._build_crop(scenario, request.options.include_crop),
+            leveling=self._build_leveling(scenario),
             denoise=self._build_denoise(
                 scenario,
                 request.options.include_denoise,
@@ -352,22 +448,33 @@ class FakeModelClient(ModelClient):
         """Return deterministic raw develop recommendations."""
 
         scenario = self._select_scenario(request)
+        selection = select_style(
+            request.options.style_profile,
+            _scene_signals(scenario),
+        )
         self._record(request)
         self._raise_for_invalid_output(scenario)
         profile_id = (
-            profile.id if profile is not None else request.options.style_profile
+            profile.id if profile is not None else selection.effective_style_id
         )
         return DevelopResponse(
             schema_version="1.0",
             request_id=request.request_id,
             filename=request.filename,
             status="success",
+            requested_style_id=selection.requested_style_id,
+            effective_style_id=profile_id,
+            style_selection_mode=selection.mode,
+            style_selection_reason=selection.reason,
+            editing_intensity=selection.editing_intensity,
+            scene_confidence=selection.scene.confidence,
             analysis=self._build_analysis(scenario),
             edit_plan=self._build_edit_plan(scenario, profile_id),
             develop_settings=DevelopSettings.model_validate(
                 _DEVELOP_SETTINGS[scenario]
             ),
             crop=self._build_crop(scenario, request.options.include_crop),
+            leveling=self._build_leveling(scenario),
             denoise=self._build_denoise(
                 scenario,
                 request.options.include_denoise,
@@ -457,9 +564,8 @@ class FakeModelClient(ModelClient):
                 right=0.98,
                 top=0.03,
                 bottom=0.97,
-                angle=0.0,
                 confidence=0.88,
-                reason="Remove narrow edge distractions and preserve the horizon.",
+                reason="Remove narrow edge distractions.",
             )
         if scenario == "architecture":
             return CropRecommendation(
@@ -468,14 +574,27 @@ class FakeModelClient(ModelClient):
                 right=0.98,
                 top=0.02,
                 bottom=0.98,
-                angle=0.4,
                 confidence=0.90,
-                reason="Apply conservative leveling around the building.",
+                reason="Improve architectural frame balance.",
             )
         return CropRecommendation(
             recommended=False,
             confidence=0.95,
             reason="No crop change is needed for this fake scenario.",
+        )
+
+    @staticmethod
+    def _build_leveling(scenario: str) -> LevelingRecommendation:
+        if scenario == "architecture":
+            return LevelingRecommendation(
+                recommended=True,
+                angle=0.4,
+                mode="vertical",
+            )
+        return LevelingRecommendation(
+            recommended=False,
+            angle=0,
+            mode="none",
         )
 
     @staticmethod

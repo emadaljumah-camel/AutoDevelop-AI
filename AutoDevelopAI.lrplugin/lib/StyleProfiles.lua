@@ -1,14 +1,22 @@
 local StyleProfiles = {}
 
-local defaultId = "natural_travel"
+local defaultId = "auto"
 
 local styles = {
+    {
+        id = "auto",
+        displayName = "Auto",
+        description =
+            "Automatically choose the best built-in style for each photo.",
+        sortOrder = 1,
+        selectionMode = true,
+    },
     {
         id = "natural_travel",
         displayName = "Natural Travel",
         description =
             "Balanced, natural edits for travel and general photography.",
-        sortOrder = 1,
+        sortOrder = 2,
     },
     {
         id = "landscape_impact",
@@ -16,7 +24,7 @@ local styles = {
         description =
             "Stronger depth, contrast, atmosphere, and color separation "
             .. "for landscapes.",
-        sortOrder = 2,
+        sortOrder = 3,
     },
     {
         id = "architecture",
@@ -24,7 +32,7 @@ local styles = {
         description =
             "Clean tonal control, structure, highlight protection, and "
             .. "restrained color.",
-        sortOrder = 3,
+        sortOrder = 4,
     },
     {
         id = "stock_neutral",
@@ -32,7 +40,7 @@ local styles = {
         description =
             "Neutral, commercially usable edits with controlled contrast "
             .. "and saturation.",
-        sortOrder = 4,
+        sortOrder = 5,
     },
     {
         id = "portrait",
@@ -40,7 +48,7 @@ local styles = {
         description =
             "Gentle skin-friendly contrast, protected highlights, and "
             .. "restrained texture.",
-        sortOrder = 5,
+        sortOrder = 6,
     },
     {
         id = "night",
@@ -48,7 +56,7 @@ local styles = {
         description =
             "Controlled shadows, protected highlights, noise-aware "
             .. "contrast, and balanced color.",
-        sortOrder = 6,
+        sortOrder = 7,
     },
     {
         id = "documentary",
@@ -56,7 +64,7 @@ local styles = {
         description =
             "Realistic, restrained edits that preserve atmosphere, "
             .. "context, and authentic color.",
-        sortOrder = 7,
+        sortOrder = 8,
     },
 }
 
@@ -74,6 +82,7 @@ local function copyStyle(style)
         displayName = style.displayName,
         description = style.description,
         sortOrder = style.sortOrder,
+        selectionMode = style.selectionMode == true,
     }
 end
 
@@ -97,6 +106,10 @@ end
 
 function StyleProfiles.isValidId(id)
     return type(id) == "string" and stylesById[id] ~= nil
+end
+
+function StyleProfiles.isConcreteId(id)
+    return StyleProfiles.isValidId(id) and id ~= "auto"
 end
 
 function StyleProfiles.getDisplayName(id)

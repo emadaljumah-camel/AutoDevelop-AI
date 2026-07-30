@@ -3,6 +3,12 @@
   "request_id": "33345678-1234-4abc-8abc-1234567890ab",
   "filename": "Mapped.NEF",
   "status": "success",
+  "requested_style_id": "natural_travel",
+  "effective_style_id": "natural_travel",
+  "style_selection_mode": "manual",
+  "style_selection_reason": "Manual style override",
+  "editing_intensity": "strong",
+  "scene_confidence": 0.0,
   "analysis": {
     "scene_type": "general",
     "main_subject": "general scene",
@@ -11,6 +17,9 @@
     "white_balance_assessment": "neutral",
     "dynamic_range": "moderate",
     "noise_level": "low",
+    "highlight_recoverability": "unknown",
+    "shadow_recoverability": "unknown",
+    "severe_underexposure": false,
     "horizon_status": "level",
     "visible_people": 0,
     "has_faces": false,
@@ -33,15 +42,23 @@
     "right": null,
     "top": null,
     "bottom": null,
-    "angle": null,
     "confidence": 0.95,
     "reason": "No crop change is needed for this fake scenario."
+  },
+  "leveling": {
+    "recommended": false,
+    "angle": 0.0,
+    "mode": "none"
   },
   "denoise": {
     "recommended": false,
     "amount": null,
     "confidence": 0.9,
     "reason": "Denoise is not needed for this fake scenario."
+  },
+  "enable_hdr": {
+    "recommended": false,
+    "reason": null
   },
   "warnings": [],
   "model": "gpt_oss",
@@ -66,5 +83,6 @@
     "CropTop": null,
     "CropBottom": null,
     "CropAngle": null
-  }
+  },
+  "learning": null
 }
