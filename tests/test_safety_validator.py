@@ -41,6 +41,7 @@ def _validate(
     leveling: LevelingRecommendation | None = None,
     analysis: TechnicalAnalysis | None = None,
     options: ProcessingOptions | None = None,
+    iso: int | None = None,
 ) -> ValidationResult:
     return validator.validate(
         settings=settings,
@@ -51,6 +52,7 @@ def _validate(
         leveling=leveling,
         analysis=analysis,
         options=options,
+        iso=iso,
     )
 
 
@@ -615,13 +617,13 @@ def test_denoise_none_passes_through(
     assert _validate(validator, profile).denoise is None
 
 
-def test_valid_recommended_denoise_passes(
+def test_exact_preset_denoise_amount_passes(
     validator: SafetyValidator,
     profile: StyleProfile,
 ) -> None:
     denoise = DenoiseRecommendation(
         recommended=True,
-        amount=20.0,
+        amount=25.0,
         confidence=0.8,
         reason="Visible noise.",
     )
@@ -630,6 +632,30 @@ def test_valid_recommended_denoise_passes(
 
     assert result.denoise == denoise
     assert result.issues == []
+
+
+def test_denoise_below_profile_iso_is_rejected(
+    validator: SafetyValidator,
+    profile: StyleProfile,
+) -> None:
+    denoise = DenoiseRecommendation(
+        recommended=True,
+        amount=25.0,
+        confidence=0.8,
+    )
+
+    result = _validate(
+        validator,
+        profile,
+        denoise=denoise,
+        iso=profile.denoise_policy.minimum_iso - 1,
+    )
+
+    assert result.denoise is not None
+    assert result.denoise.recommended is False
+    assert result.denoise.amount is None
+    assert result.issues[0].code == policies.DENOISE_ISO_TOO_LOW
+    assert result.rejected_fields == ["denoise"]
 
 
 def test_denoise_amount_below_minimum_is_clamped(
@@ -645,8 +671,11 @@ def test_denoise_amount_below_minimum_is_clamped(
     result = _validate(validator, profile, denoise=denoise)
 
     assert result.denoise is not None
-    assert result.denoise.amount == 0.0
-    assert result.issues[0].code == policies.DENOISE_AMOUNT_CLAMPED_LOW
+    assert result.denoise.amount == 25.0
+    assert [issue.code for issue in result.issues] == [
+        policies.DENOISE_AMOUNT_CLAMPED_LOW,
+        policies.DENOISE_AMOUNT_QUANTIZED,
+    ]
 
 
 def test_denoise_amount_above_maximum_is_clamped(
@@ -662,8 +691,11 @@ def test_denoise_amount_above_maximum_is_clamped(
     result = _validate(validator, profile, denoise=denoise)
 
     assert result.denoise is not None
-    assert result.denoise.amount == 38.0
-    assert result.issues[0].code == policies.DENOISE_AMOUNT_CLAMPED_HIGH
+    assert result.denoise.amount == 25.0
+    assert [issue.code for issue in result.issues] == [
+        policies.DENOISE_AMOUNT_CLAMPED_HIGH,
+        policies.DENOISE_AMOUNT_QUANTIZED,
+    ]
 
 
 def test_recommended_denoise_without_amount_warns_without_inventing_value(

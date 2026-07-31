@@ -69,6 +69,7 @@ def _baseline(
             "CropBottom": 1.0,
         },
         "exif_context": {
+            "file_format": "RAW",
             "camera": "Camera",
             "iso": 400,
             "capture_time_category": "day",

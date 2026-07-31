@@ -4,6 +4,7 @@ package.path = "AutoDevelopAI.lrplugin/?.lua;"
 
 local assertions = 0
 local fakePreferences = {}
+local fakeDevelopPresetFolders = {}
 local logged = {
     error = {},
     warning = {},
@@ -37,6 +38,9 @@ _G.import = function(name)
         return {
             activeCatalog = function()
                 return {}
+            end,
+            developPresetFolders = function()
+                return fakeDevelopPresetFolders
             end,
         }
     end
@@ -240,6 +244,8 @@ local DevelopModeMapper =
     ModuleLoader.load("lib/DevelopModeMapper.lua")
 local PendingOperation = ModuleLoader.load("lib/PendingOperation.lua")
 local ApplyService = ModuleLoader.load("lib/ApplyService.lua")
+local DenoisePresetService =
+    ModuleLoader.load("lib/DenoisePresetService.lua")
 local Sha256 = ModuleLoader.load("lib/Sha256.lua")
 local LearningPhotoIdentity =
     ModuleLoader.load("lib/LearningPhotoIdentity.lua")
@@ -685,9 +691,18 @@ local mappedPhoto = photo({
     Tint = 0 / 0,
 })
 local exif = ExifMapper.mapExif(mappedPhoto)
+assertEqual(exif.file_format, "RAW")
 assertEqual(exif.camera, "Nikon Z 8")
 assertEqual(exif.iso, 800)
 assertTrue(exif.shutter_speed == nil, "missing EXIF must be omitted")
+local stringIsoExif = ExifMapper.mapExif(photo({
+    isoSpeedRating = "3600",
+}))
+assertEqual(stringIsoExif.iso, 3600)
+local formattedIsoExif = ExifMapper.mapExif(photo({}, {
+    isoSpeedRating = "ISO 3,600",
+}))
+assertEqual(formattedIsoExif.iso, 3600)
 local datedExif = ExifMapper.mapExif(photo({
     dateTimeOriginalISO8601 = "2026-07-29T10:30:15+03:00",
 }))
@@ -703,6 +718,69 @@ assertTrue(
     missingDateExif.capture_date == nil,
     "unsupported captureTime must not be used"
 )
+
+local denoisePreset50 = {
+    getName = function()
+        return "AutoDevelop AI - Denoise 50"
+    end,
+}
+fakeDevelopPresetFolders = {
+    {
+        getDevelopPresets = function()
+            return { denoisePreset50 }
+        end,
+    },
+}
+local denoiseSource = photo({
+    localIdentifier = 70,
+    fileName = "Denoise_Source.NEF",
+    fileFormat = "RAW",
+}, nil, {
+    ColorNoiseReduction = 25,
+    FilterList = {},
+})
+local denoiseCapability = DenoisePresetService.prepare(
+    denoiseSource,
+    denoiseSource:getDevelopSettings(),
+    50
+)
+assertEqual(denoiseCapability.ready, true)
+assertEqual(denoiseCapability.amount, 50)
+assertTrue(denoiseCapability.preset == denoisePreset50)
+assertEqual(
+    denoiseCapability.presetName,
+    "AutoDevelop AI - Denoise 50"
+)
+assertEqual(denoiseCapability.originalSettings.ColorNoiseReduction, 25)
+assertTrue(type(denoiseCapability.originalSettings.FilterList) == "table")
+
+local missingDenoisePreset = DenoisePresetService.prepare(
+    denoiseSource,
+    denoiseSource:getDevelopSettings(),
+    25
+)
+assertEqual(missingDenoisePreset.ready, false)
+assertEqual(missingDenoisePreset.code, "denoise_preset_missing")
+
+local jpegDenoise = DenoisePresetService.prepare(
+    photo({ fileFormat = "JPEG", fileName = "not-raw.jpg" }),
+    { FilterList = {} },
+    50
+)
+assertEqual(jpegDenoise.ready, false)
+assertEqual(jpegDenoise.code, "denoise_source_unsupported")
+
+local alreadyDenoised = DenoisePresetService.prepare(
+    denoiseSource,
+    {
+        FilterList = {
+            Filters = { { Title = "Denoise" } },
+        },
+    },
+    50
+)
+assertEqual(alreadyDenoised.ready, false)
+assertEqual(alreadyDenoised.code, "denoise_already_enabled")
 local zeroGps = ExifMapper.mapExif(photo({
     gps = { latitude = 0, longitude = 0 },
 }))
@@ -2122,7 +2200,16 @@ local pending = PendingOperation.new({
     originalSettings = originalForApply,
     mappedSettings = mappedDevelop,
     compositionCropIncluded = true,
-    denoiseRecommended = true,
+    denoise = {
+        recommended = true,
+        included = true,
+        amount = 50,
+        confidence = 0.9,
+        reason = "ISO 3600 indicates strong high-ISO noise risk.",
+        presetName = "AutoDevelop AI - Denoise 50",
+    },
+    denoisePreset = denoisePreset50,
+    denoiseOriginalSettings = { FilterList = {} },
     warnings = developResponse.warnings,
     model = developResponse.model,
 })
@@ -2173,6 +2260,72 @@ assertEqual(safeOperation.applicationStatus, "applied")
 assertEqual(appliedSettings.Exposure2012, 0)
 assertTrue(appliedSettings.UnknownSetting == nil)
 assertEqual(safeOperation.mappedSettings.UnknownSetting, 123)
+
+local denoiseApplyEvents = {}
+local denoiseApplyPhoto = {
+    applyDevelopPreset = function(_, preset)
+        assertTrue(insideWrite, "preset apply must run inside write access")
+        assertTrue(preset == denoisePreset50)
+        denoiseApplyEvents[#denoiseApplyEvents + 1] = "preset"
+    end,
+    applyDevelopSettings = function(_, values)
+        assertTrue(insideWrite, "settings apply must run inside write access")
+        denoiseApplyEvents[#denoiseApplyEvents + 1] = "settings"
+        appliedSettings = Utils.deepCopy(values)
+    end,
+}
+local denoiseApplyOperation = PendingOperation.new({
+    photo = denoiseApplyPhoto,
+    mappedSettings = { Exposure2012 = 0.4 },
+    finalSettings = { Exposure2012 = 0.4 },
+    originalSettings = { Exposure2012 = 0 },
+    denoise = {
+        recommended = true,
+        included = true,
+        amount = 50,
+        confidence = 0.9,
+        reason = "ISO 3600 indicates strong high-ISO noise risk.",
+        presetName = "AutoDevelop AI - Denoise 50",
+    },
+    denoisePreset = denoisePreset50,
+    denoiseOriginalSettings = {
+        FilterList = {},
+        ColorNoiseReduction = 25,
+    },
+})
+local denoiseApplyResult = ApplyService.applyOne(
+    fakeCatalog,
+    denoiseApplyOperation
+)
+assertEqual(denoiseApplyResult.applied, 1)
+assertEqual(denoiseApplyEvents[1], "preset")
+assertEqual(denoiseApplyEvents[2], "settings")
+assertEqual(denoiseApplyOperation.denoiseApplied, true)
+
+local denoiseOnlyOperation = PendingOperation.new({
+    photo = denoiseApplyPhoto,
+    finalSettings = {},
+    originalSettings = {},
+    denoise = {
+        recommended = true,
+        included = true,
+        amount = 50,
+        confidence = 0.9,
+        presetName = "AutoDevelop AI - Denoise 50",
+    },
+    denoisePreset = denoisePreset50,
+    denoiseOriginalSettings = { FilterList = {} },
+})
+local denoiseOnlyDisplay =
+    PendingOperation.inspectDisplayContract(denoiseOnlyOperation)
+assertEqual(denoiseOnlyDisplay.canApply, true)
+assertEqual(denoiseOnlyDisplay.finalCount, 1)
+local denoiseOnlyResult = ApplyService.applyOne(
+    fakeCatalog,
+    denoiseOnlyOperation
+)
+assertEqual(denoiseOnlyResult.applied, 1)
+assertEqual(denoiseOnlyOperation.denoiseApplied, true)
 
 appliedSettings = nil
 local hdrOperation = PendingOperation.new({
@@ -2284,7 +2437,16 @@ local reviewOperation = PendingOperation.new({
     uprightConfidence = 0.91,
     hdrRecommended = true,
     enableHdr = true,
-    denoiseRecommended = true,
+    denoise = {
+        recommended = true,
+        included = true,
+        amount = 50,
+        confidence = 0.9,
+        reason = "ISO 3600 indicates strong high-ISO noise risk.",
+        presetName = "AutoDevelop AI - Denoise 50",
+    },
+    denoisePreset = denoisePreset50,
+    denoiseOriginalSettings = { FilterList = {} },
     learning = {
         enabled = true,
         retrieved_sample_count = 5,
@@ -2355,7 +2517,21 @@ assertTrue(
 )
 assertTrue(
     table.concat(review.processingLines, "\n"):find(
-        "Denoise will be applied: No",
+        "Denoise will be applied: Yes",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(review.processingLines, "\n"):find(
+        "Denoise amount: 50",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(review.processingLines, "\n"):find(
+        "Denoise preset: AutoDevelop AI - Denoise 50",
         1,
         true
     ) ~= nil
@@ -2855,6 +3031,44 @@ assertTrue(
 )
 assertTrue(restoreOperation.applyError:find("token=secret", 1, true) == nil)
 
+local denoiseRestoreCalls = 0
+local restoredDenoiseFilter = nil
+local denoiseFailingPhoto = {
+    applyDevelopPreset = function()
+        assertTrue(insideWrite)
+    end,
+    applyDevelopSettings = function(_, values)
+        denoiseRestoreCalls = denoiseRestoreCalls + 1
+        if denoiseRestoreCalls == 1 then
+            error("simulated Develop failure after Denoise preset")
+        end
+        restoredValue = values.Exposure2012
+        restoredDenoiseFilter = values.FilterList
+    end,
+}
+local denoiseRestoreOperation = PendingOperation.new({
+    photo = denoiseFailingPhoto,
+    finalSettings = { Exposure2012 = 0.5 },
+    originalSettings = { Exposure2012 = 0 },
+    denoise = {
+        recommended = true,
+        included = true,
+        amount = 50,
+        confidence = 0.9,
+    },
+    denoisePreset = denoisePreset50,
+    denoiseOriginalSettings = { FilterList = {} },
+})
+local denoiseRestoreResult = ApplyService.applyOne(
+    fakeCatalog,
+    denoiseRestoreOperation
+)
+assertEqual(denoiseRestoreResult.restoredAfterFailure, 1)
+assertEqual(denoiseRestoreOperation.denoiseApplied, false)
+assertEqual(restoredValue, 0)
+assertTrue(type(restoredDenoiseFilter) == "table")
+assertEqual(next(restoredDenoiseFilter), nil)
+
 local singleApplyOperation = PendingOperation.new({
     photo = successfulPhoto,
     mappedSettings = { Exposure2012 = 0.5 },
@@ -2936,6 +3150,10 @@ local baselineOperation = PendingOperation.new({
     hdrDecision = {
         contraindications = {},
     },
+    exifContext = {
+        file_format = "RAW",
+        iso = 3600,
+    },
 })
 baselineOperation.applicationStatus = "applied"
 fakeHttpResponder = function(body)
@@ -2971,6 +3189,8 @@ assertEqual(postedBaseline.recommendation_modes.upright, "full")
 assertEqual(postedBaseline.recommendation_modes.hdr_enabled, true)
 assertEqual(postedBaseline.applied_modes.upright, "full")
 assertEqual(postedBaseline.applied_modes.hdr_enabled, true)
+assertEqual(postedBaseline.exif_context.file_format, "RAW")
+assertEqual(postedBaseline.exif_context.iso, 3600)
 assertTrue(postedBaseline.hdr_decision ~= nil)
 assertTrue(postedBaseline.hdr_decision.contraindications == nil)
 

@@ -334,6 +334,8 @@ local function hdr(operation, originalSettings, finalSettings)
 end
 
 local function processing(operation)
+    local denoise = type(operation.denoise) == "table"
+        and operation.denoise or {}
     local lines = {}
     lines[#lines + 1] = "Denoise: "
         .. (
@@ -342,7 +344,30 @@ local function processing(operation)
             or "Not recommended"
         )
     lines[#lines + 1] = "Denoise will be applied: "
-        .. (operation.denoiseApplied and "Yes" or "No")
+        .. (operation.denoiseIncluded and "Yes" or "No")
+    if operation.denoiseRecommended then
+        lines[#lines + 1] = "Denoise amount: "
+            .. (
+                Utils.isFiniteNumber(denoise.amount)
+                and tostring(denoise.amount)
+                or "Unavailable"
+            )
+        lines[#lines + 1] = "Denoise confidence: "
+            .. confidenceText(denoise.confidence)
+        lines[#lines + 1] = "Denoise preset: "
+            .. Utils.safeMessage(
+                denoise.presetName,
+                operation.denoiseIncluded
+                    and "Resolved" or "Unavailable"
+            )
+        lines[#lines + 1] = "Denoise reason: "
+            .. Utils.safeMessage(
+                operation.denoiseIncluded
+                    and denoise.reason
+                    or denoise.unavailableReason,
+                "No reason supplied"
+            )
+    end
     lines[#lines + 1] =
         "Dust removal: Not part of this prepared operation"
     return lines
@@ -430,6 +455,9 @@ function PendingOperationReview.build(operation)
         settingCount = settingCount + 1
     end
     if finalSettings.HDREditMode ~= nil then
+        settingCount = settingCount + 1
+    end
+    if operation.denoiseIncluded == true then
         settingCount = settingCount + 1
     end
     return {

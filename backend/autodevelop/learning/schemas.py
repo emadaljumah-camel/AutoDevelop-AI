@@ -36,6 +36,7 @@ class LearningSchema(BaseModel):
 
 
 class LearningExifContext(LearningSchema):
+    file_format: str | None = Field(default=None, max_length=20)
     camera: str | None = Field(default=None, max_length=200)
     lens: str | None = Field(default=None, max_length=200)
     iso: int | None = Field(default=None, ge=1, le=6_553_600)

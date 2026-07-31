@@ -164,8 +164,8 @@ ERROR_RESPONSE_DATA = {
 }
 
 PUBLIC_SCHEMA_HASHES = {
-    AnalyzeRequest: "4b20b401c2c03245cda87e9cd6989d2cded5387e148d71f898c7fb6e06fffb25",
-    DevelopRequest: "22711b5208dcb7f551ba0cbeefc4a272ca0d0829ab181ccaf15f7ffb977faba3",
+    AnalyzeRequest: "4517ffdbdb7f9530adb538036133ad1a54a31569c55dab74b806d066f528cdb0",
+    DevelopRequest: "d26a8cc68d0b9675e82422852762698e96168280f4cea0ce70f96e3a3fa9cc48",
     AnalyzeResponse: "35129c750611b35c79e87ff53997d2818fc9784006a00b90895fa939073adc87",
     DevelopResponse: "f65703721fed6a8e9b96f477980dbf803b9dff6801fa2dc569a7706abb7ff44d",
     ErrorResponse: "527d0bbd9b728522f146a539d44bc433c39e7988db3926cda467ce9cdec9994e",

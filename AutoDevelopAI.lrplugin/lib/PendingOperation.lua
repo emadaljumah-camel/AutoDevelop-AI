@@ -27,6 +27,18 @@ function PendingOperation.new(values)
         confidence = values.hdrConfidence or 0,
         reason = values.hdrReason,
     })
+    local denoiseValues = values.denoise or {}
+    local denoise = {
+        recommended = denoiseValues.recommended == true
+            or values.denoiseRecommended == true,
+        included = denoiseValues.included == true,
+        amount = denoiseValues.amount,
+        confidence = denoiseValues.confidence,
+        reason = denoiseValues.reason,
+        unavailableReason = denoiseValues.unavailableReason,
+        unavailableCode = denoiseValues.unavailableCode,
+        presetName = denoiseValues.presetName,
+    }
     return {
         photo = values.photo,
         photoKey = values.photoKey,
@@ -55,7 +67,14 @@ function PendingOperation.new(values)
         levelingIncluded = values.levelingIncluded == true,
         levelingMode = values.levelingMode,
         levelingAngle = values.levelingAngle,
-        denoiseRecommended = values.denoiseRecommended == true,
+        denoise = denoise,
+        denoiseRecommended = denoise.recommended,
+        denoiseIncluded = denoise.included,
+        denoisePreset = values.denoisePreset,
+        denoiseOriginalSettings = Utils.deepCopy(
+            values.denoiseOriginalSettings or {}
+        ),
+        denoiseApplied = false,
         upright = upright,
         uprightRecommended = upright.recommended == true,
         uprightMode = upright.mode or "off",
@@ -83,6 +102,14 @@ function PendingOperation.inspectDisplayContract(operation)
     local finalSettings = operation.finalSettings
     local originalCount = countSettings(originalSettings)
     local finalCount = countSettings(finalSettings)
+    local denoisePrepared = operation.denoiseIncluded == true
+        and operation.denoisePreset ~= nil
+        and type(operation.denoiseOriginalSettings) == "table"
+        and type(operation.denoiseOriginalSettings.FilterList) == "table"
+    if denoisePrepared then
+        originalCount = originalCount + 1
+        finalCount = finalCount + 1
+    end
     local missingOriginalCount = 0
     if type(finalSettings) == "table" then
         for key in pairs(finalSettings) do

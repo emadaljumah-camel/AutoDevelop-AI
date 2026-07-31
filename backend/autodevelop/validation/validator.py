@@ -16,6 +16,7 @@ from autodevelop.models import (
     UprightMode,
     UprightRecommendation,
 )
+from autodevelop.denoise_decision import PRESET_AMOUNTS
 from autodevelop.profiles import StyleProfile
 from autodevelop.validation import policies
 from autodevelop.validation.models import (
@@ -102,6 +103,7 @@ class SafetyValidator:
         upright: UprightRecommendation | None = None,
         analysis: TechnicalAnalysis | None = None,
         options: ProcessingOptions | None = None,
+        iso: int | None = None,
     ) -> ValidationResult:
         """Return safe copies without mutating any source model."""
 
@@ -110,7 +112,12 @@ class SafetyValidator:
         safe_crop = self._validate_crop(crop, profile, state)
         safe_leveling = self._validate_leveling(leveling, profile, state)
         safe_upright = self._validate_upright(upright, profile, state)
-        safe_denoise = self._validate_denoise(denoise, profile, state)
+        safe_denoise = self._validate_denoise(
+            denoise,
+            profile,
+            state,
+            iso,
+        )
         safe_hdr = self._validate_hdr(
             enable_hdr,
             analysis,
@@ -578,6 +585,7 @@ class SafetyValidator:
         denoise: DenoiseRecommendation | None,
         profile: StyleProfile,
         state: _ValidationState,
+        iso: int | None,
     ) -> DenoiseRecommendation | None:
         if denoise is None:
             return None
@@ -599,6 +607,12 @@ class SafetyValidator:
             return self._clean_nonrecommended_denoise(denoise, state)
         if not profile.denoise_policy.allow_denoise:
             return self._reject_denoise(denoise, state, policies.DENOISE_NOT_ALLOWED)
+        if iso is not None and iso < profile.denoise_policy.minimum_iso:
+            return self._reject_denoise(
+                denoise,
+                state,
+                policies.DENOISE_ISO_TOO_LOW,
+            )
 
         confidence = denoise.confidence
         if confidence is not None and not _is_finite_number(confidence):
@@ -659,6 +673,39 @@ class SafetyValidator:
                 action=ValidationAction.CLAMPED,
             )
             amount = adjusted
+
+        if amount is not None:
+            available = tuple(
+                preset_amount
+                for preset_amount in PRESET_AMOUNTS
+                if profile.denoise_policy.minimum_amount
+                <= preset_amount
+                <= profile.denoise_policy.maximum_amount
+            )
+            if not available:
+                return self._reject_denoise(
+                    denoise,
+                    state,
+                    policies.DENOISE_NOT_ALLOWED,
+                )
+            quantized = min(
+                available,
+                key=lambda preset_amount: (
+                    abs(preset_amount - amount),
+                    preset_amount,
+                ),
+            )
+            if quantized != amount:
+                state.add_issue(
+                    code=policies.DENOISE_AMOUNT_QUANTIZED,
+                    message="Denoise amount was quantized to an available preset.",
+                    field_name="denoise.amount",
+                    original_value=amount,
+                    adjusted_value=quantized,
+                    action=ValidationAction.CLAMPED,
+                    track_field="denoise",
+                )
+                amount = quantized
 
         return DenoiseRecommendation.model_validate(
             {

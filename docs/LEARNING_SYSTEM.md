@@ -33,7 +33,9 @@ and aggregated as separate behavioral signals. Crop-bound changes never become
 leveling preferences, and `CropAngle` changes never become composition-crop
 preferences. Both can be significant in the same feedback event. Signed deltas
 use the dedicated learning schema rather than absolute DevelopSettings
-validation. AI Denoise is not applied or learned as a develop slider.
+validation. AI Denoise is applied through verified Lightroom-native presets,
+not through a numeric Develop setting. Its photo-specific `FilterList` is
+captured only for safe rollback and is not persisted as a learning value.
 
 Transform Upright and HDR Edit Mode are categorical signals rather than numeric
 sliders. Baselines carry original, recommended, and applied mode state in

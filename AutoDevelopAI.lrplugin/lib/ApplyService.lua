@@ -5,6 +5,8 @@ local DevelopModeMapper =
     ModuleLoader.load("lib/DevelopModeMapper.lua")
 local DevelopSettingsMapper =
     ModuleLoader.load("lib/DevelopSettingsMapper.lua")
+local DenoisePresetService =
+    ModuleLoader.load("lib/DenoisePresetService.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local ApplyService = {}
@@ -65,6 +67,30 @@ local function countSettings(settings)
         count = count + 1
     end
     return count
+end
+
+local function restoreForOperation(operation)
+    local restore = sanitizeRestore(operation.originalSettings)
+    local denoiseRestore = DenoisePresetService.sanitizeRestore(
+        operation.denoiseOriginalSettings
+    )
+    for key, value in pairs(denoiseRestore) do
+        restore[key] = value
+    end
+    return restore
+end
+
+local function validDenoiseOperation(operation)
+    if operation.denoiseIncluded ~= true then
+        return true
+    end
+    return operation.denoisePreset ~= nil
+        and type(operation.denoise) == "table"
+        and DenoisePresetService.isSupportedAmount(
+            operation.denoise.amount
+        )
+        and type(operation.denoiseOriginalSettings) == "table"
+        and type(operation.denoiseOriginalSettings.FilterList) == "table"
 end
 
 function ApplyService.captureOriginal(currentSettings, mappedSettings)
@@ -198,9 +224,15 @@ function ApplyService.applyBatch(catalog, operations, options)
                     onProgress(index, #operations, operation)
 
                     local finalSettings = operation.finalSettings
-                    if not ApplyService.validateFinalSettings(
-                        finalSettings
-                    ) then
+                    local finalSettingCount = countSettings(finalSettings)
+                    local finalSettingsValid = finalSettingCount == 0
+                        or ApplyService.validateFinalSettings(finalSettings)
+                    if not finalSettingsValid
+                        or not validDenoiseOperation(operation)
+                        or (
+                            finalSettingCount == 0
+                            and operation.denoiseIncluded ~= true
+                        ) then
                         operation.applicationStatus = "not_applied"
                         operation.applyErrorCategory = "apply_failed"
                         operation.applyErrorCode =
@@ -208,17 +240,28 @@ function ApplyService.applyBatch(catalog, operations, options)
                         result.notApplied = result.notApplied + 1
                     else
                         local applyOk = LrTasks.pcall(function()
-                            operation.photo:applyDevelopSettings(
-                                finalSettings,
-                                "AutoDevelop AI"
-                            )
+                            if operation.denoiseIncluded == true then
+                                operation.photo:applyDevelopPreset(
+                                    operation.denoisePreset,
+                                    "AutoDevelop AI"
+                                )
+                            end
+                            if finalSettingCount > 0 then
+                                operation.photo:applyDevelopSettings(
+                                    finalSettings,
+                                    "AutoDevelop AI"
+                                )
+                            end
                         end)
                         if applyOk then
+                            operation.denoiseApplied =
+                                operation.denoiseIncluded == true
                             operation.applicationStatus = "applied"
                             result.applied = result.applied + 1
                         else
+                            operation.denoiseApplied = false
                             local restoreSettings =
-                                sanitizeRestore(operation.originalSettings)
+                                restoreForOperation(operation)
                             local restoreOk = false
                             if countSettings(restoreSettings) > 0 then
                                 restoreOk = LrTasks.pcall(function()

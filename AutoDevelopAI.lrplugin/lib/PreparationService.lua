@@ -9,6 +9,8 @@ local DevelopSettingsMapper =
     ModuleLoader.load("lib/DevelopSettingsMapper.lua")
 local DevelopModeMapper =
     ModuleLoader.load("lib/DevelopModeMapper.lua")
+local DenoisePresetService =
+    ModuleLoader.load("lib/DenoisePresetService.lua")
 local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
 local Logger = ModuleLoader.load("lib/Logger.lua")
@@ -358,6 +360,29 @@ local function prepareDevelopPhotoBody(
         and levelingRecommended
     local denoiseRecommended = type(decoded.denoise) == "table"
         and decoded.denoise.recommended == true
+    local denoiseCapability = {
+        ready = false,
+        code = "denoise_not_recommended",
+    }
+    if denoiseRecommended then
+        denoiseCapability = DenoisePresetService.prepare(
+            photo,
+            currentSettings,
+            decoded.denoise.amount
+        )
+    end
+    local denoiseIncluded = denoiseRecommended
+        and denoiseCapability.ready == true
+    local operationWarnings = Utils.deepCopy(decoded.warnings or {})
+    if denoiseRecommended and not denoiseIncluded then
+        operationWarnings[#operationWarnings + 1] = {
+            code = denoiseCapability.code or "denoise_unavailable",
+            message = denoiseCapability.reason
+                or "Lightroom AI Denoise could not be prepared.",
+            field = "denoise",
+            severity = "warning",
+        }
+    end
     mappedSettings = mergeSettings(mappedSettings, mappedGeometry)
     local uprightRecommended = type(decoded.upright) == "table"
         and decoded.upright.recommended == true
@@ -389,7 +414,7 @@ local function prepareDevelopPhotoBody(
         enableHdr
     )
     local settingCount = countSettings(finalSettings)
-    if settingCount == 0 then
+    if settingCount == 0 and not denoiseIncluded then
         return "skipped", {
             cropDisabled = cropDisabled,
             cropRecommended = cropRecommended,
@@ -398,6 +423,7 @@ local function prepareDevelopPhotoBody(
             levelingAngle = levelingRecommended
                 and decoded.leveling.angle or nil,
             denoiseRecommended = denoiseRecommended,
+            denoiseIncluded = false,
             uprightRecommended = uprightRecommended,
             hdrRecommended = hdrRecommended,
         }
@@ -446,6 +472,21 @@ local function prepareDevelopPhotoBody(
         levelingMode = decoded.leveling.mode,
         levelingAngle = decoded.leveling.angle,
         denoiseRecommended = denoiseRecommended,
+        denoise = {
+            recommended = denoiseRecommended,
+            included = denoiseIncluded,
+            amount = type(decoded.denoise) == "table"
+                and decoded.denoise.amount or nil,
+            confidence = type(decoded.denoise) == "table"
+                and decoded.denoise.confidence or nil,
+            reason = type(decoded.denoise) == "table"
+                and decoded.denoise.reason or nil,
+            unavailableReason = denoiseCapability.reason,
+            unavailableCode = denoiseCapability.code,
+            presetName = denoiseCapability.presetName,
+        },
+        denoisePreset = denoiseCapability.preset,
+        denoiseOriginalSettings = denoiseCapability.originalSettings,
         upright = {
             recommended = uprightRecommended,
             mode = decoded.upright.mode,
@@ -464,11 +505,12 @@ local function prepareDevelopPhotoBody(
             hdrEditMode = currentSettings.HDREditMode,
             hdrMaxValue = currentSettings.HDRMaxValue,
         },
-        warnings = Utils.deepCopy(decoded.warnings or {}),
+        warnings = operationWarnings,
         model = validatedModel,
         resolvedModel = decoded.resolved_model,
         processingDurationMs = decoded.processing_duration_ms,
         exifContext = {
+            file_format = request.exif.file_format,
             camera = request.exif.camera,
             lens = request.exif.lens,
             iso = request.exif.iso,

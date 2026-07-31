@@ -47,6 +47,32 @@ local function putPositive(target, key, value, integerOnly)
     target[key] = value
 end
 
+local function normalizedIso(photo)
+    local raw = Utils.safeRawMetadata(photo, "isoSpeedRating")
+    local numeric = type(raw) == "number" and raw or tonumber(raw)
+    if Utils.isFiniteNumber(numeric)
+        and numeric > 0
+        and numeric == math.floor(numeric) then
+        return numeric
+    end
+
+    local formatted = Utils.safeFormattedMetadata(
+        photo,
+        "isoSpeedRating"
+    )
+    if type(formatted) ~= "string" then
+        return nil
+    end
+    local digits = formatted:match("%d[%d,%s]*")
+    numeric = digits and tonumber((digits:gsub("[,%s]", ""))) or nil
+    if Utils.isFiniteNumber(numeric)
+        and numeric > 0
+        and numeric == math.floor(numeric) then
+        return numeric
+    end
+    return nil
+end
+
 local function cameraName(photo)
     local make = Utils.trim(Utils.safeRawMetadata(photo, "cameraMake"))
     local model = Utils.trim(Utils.safeRawMetadata(photo, "cameraModel"))
@@ -91,13 +117,16 @@ end
 
 function ExifMapper.mapExif(photo)
     local exif = {}
+    exif.file_format = Utils.trim(
+        Utils.safeRawMetadata(photo, "fileFormat")
+    )
     exif.camera = cameraName(photo)
     exif.lens = Utils.trim(Utils.safeRawMetadata(photo, "lens"))
 
     putPositive(
         exif,
         "iso",
-        Utils.safeRawMetadata(photo, "isoSpeedRating"),
+        normalizedIso(photo),
         true
     )
     putPositive(exif, "aperture", Utils.safeRawMetadata(photo, "aperture"))

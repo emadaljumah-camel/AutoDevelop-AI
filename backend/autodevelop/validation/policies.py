@@ -36,6 +36,8 @@ DENOISE_AMOUNT_CLAMPED_LOW: Final = "denoise_amount_clamped_low"
 DENOISE_AMOUNT_CLAMPED_HIGH: Final = "denoise_amount_clamped_high"
 DENOISE_AMOUNT_MISSING: Final = "denoise_amount_missing"
 DENOISE_CONFIDENCE_TOO_LOW: Final = "denoise_confidence_too_low"
+DENOISE_ISO_TOO_LOW: Final = "denoise_iso_too_low"
+DENOISE_AMOUNT_QUANTIZED: Final = "denoise_amount_quantized"
 DENOISE_AMOUNT_REMOVED_WHEN_NOT_RECOMMENDED: Final = (
     "denoise_amount_removed_when_not_recommended"
 )

@@ -213,7 +213,9 @@ function BatchSummary.recordPrepared(summary, operation)
     if operation.denoiseRecommended == true then
         summary.denoiseRecommendedCount =
             (summary.denoiseRecommendedCount or 0) + 1
-        summary.denoiseIgnored = (summary.denoiseIgnored or 0) + 1
+        if operation.denoiseIncluded ~= true then
+            summary.denoiseIgnored = (summary.denoiseIgnored or 0) + 1
+        end
     end
 end
 

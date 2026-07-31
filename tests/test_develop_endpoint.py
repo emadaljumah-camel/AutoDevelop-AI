@@ -226,6 +226,7 @@ class RecordingSafetyValidator(SafetyValidator):
         upright: UprightRecommendation | None = None,
         analysis: TechnicalAnalysis | None = None,
         options: ProcessingOptions | None = None,
+        iso: int | None = None,
     ) -> ValidationResult:
         self.calls += 1
         self.settings = settings
@@ -245,6 +246,7 @@ class RecordingSafetyValidator(SafetyValidator):
             upright=upright,
             analysis=analysis,
             options=options,
+            iso=iso,
         )
 
 
@@ -546,7 +548,7 @@ def test_crop_is_sanitized_by_profile_policy(
                 amount=20.0,
                 confidence=0.9,
             ),
-            20.0,
+                25.0,
         ),
         (
             DenoiseRecommendation(
@@ -554,7 +556,7 @@ def test_crop_is_sanitized_by_profile_policy(
                 amount=90.0,
                 confidence=0.9,
             ),
-            38.0,
+                25.0,
         ),
         (
             DenoiseRecommendation(
@@ -589,6 +591,42 @@ def test_denoise_is_sanitized_by_profile_policy(
     else:
         assert safe_denoise["recommended"] is True
         assert safe_denoise["amount"] == expected
+
+
+def test_iso_3600_raw_forces_denoise_before_profile_limiting(
+    app: FastAPI,
+) -> None:
+    model_client = RecordingModelClient(
+        lambda request: _raw_response(
+            request,
+            denoise=DenoiseRecommendation(
+                recommended=False,
+                amount=None,
+                confidence=0.2,
+                reason="The preview appears clean.",
+            ),
+        )
+    )
+    validator = RecordingSafetyValidator()
+    _set_overrides(
+        app,
+        model_client=model_client,
+        safety_validator=validator,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/autodevelop/v1/develop",
+            json=_request_body(exif={"iso": 3600, "file_format": "RAW"}),
+        )
+
+    assert response.status_code == 200
+    assert validator.denoise is not None
+    assert validator.denoise.recommended is True
+    assert validator.denoise.amount == 50.0
+    assert validator.denoise.confidence == 0.9
+    assert response.json()["denoise"]["recommended"] is True
+    assert response.json()["denoise"]["amount"] == 25.0
 
 
 def test_model_and_validator_warnings_merge_deterministically_without_duplicates(

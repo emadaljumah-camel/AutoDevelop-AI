@@ -41,6 +41,29 @@ Lightroom preference. HDR is not enabled or disabled by the selected style
 profile. RAW eligibility, Lightroom capability, workflow, dynamic-range, noise,
 and exposure safeguards remain authoritative.
 
+AI Denoise is a technical RAW-processing decision rather than a Develop
+slider. ISO 3200 through 6399 proactively selects amount 50, ISO 6400 and above
+selects 75, and ISO 1600 through 3199 selects 25 when scene analysis also
+reports high noise. Lower-confidence model recommendations still pass through
+the selected profile's ISO, confidence, and maximum-amount safeguards. The
+validated amount is quantized to a verified preset without exceeding the
+profile maximum.
+
+The Lightroom plug-in applies Denoise through native Develop presets so that
+Lightroom generates its photo-specific AI `FilterList`. Create these presets
+in Lightroom with only the Denoise/AI Edit setting selected:
+
+- `AutoDevelop AI - Denoise 25`
+- `AutoDevelop AI - Denoise 50`
+- `AutoDevelop AI - Denoise 75`
+
+Only the preset required by a recommendation must exist. Denoise is prepared
+only for supported RAW or DNG sources with a restorable current state. The
+preset is applied before ordinary Develop settings; a combined apply failure
+restores both the original Develop values and the captured Denoise state.
+Missing presets and unsupported sources produce visible warnings instead of
+silently claiming Denoise was applied.
+
 The plug-in exposes separate **Apply composition crop** and **Apply leveling
 correction** preferences. Existing installations migrate the former
 **Apply Crop** value to both controls, preserving an existing disabled choice.
@@ -156,7 +179,8 @@ Upright preferences are scoped to the effective style. HDR feedback is
 retrieved globally because HDR is based on scene need rather than style.
 
 Learning does not fine-tune models, monitor Lightroom in the background, or
-upload data. Its SQLite database defaults to
+upload data. AI Denoise application is not learned as a numeric Develop
+slider. Its SQLite database defaults to
 `data/autodevelop_learning.sqlite3`. See
 [docs/LEARNING_SYSTEM.md](docs/LEARNING_SYSTEM.md) for storage, privacy,
 configuration, reset, and backup details.

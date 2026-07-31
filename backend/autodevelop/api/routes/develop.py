@@ -17,6 +17,7 @@ from autodevelop.api.exception_handlers import error_response
 from autodevelop.api.model_errors import model_error_response
 from autodevelop.api.model_selection import resolve_model_request
 from autodevelop.config import Settings
+from autodevelop.denoise_decision import decide_denoise
 from autodevelop.hdr_decision import decide_hdr
 from autodevelop.model_clients import (
     ModelClient,
@@ -320,16 +321,24 @@ async def develop_photo(
             minimum_samples=settings.learning_min_samples,
             evidence=raw_response.hdr_decision,
         )
+        proposed_denoise = decide_denoise(
+            raw_response.denoise,
+            iso=request.exif.iso,
+            file_format=request.exif.file_format,
+            analysis=raw_response.analysis,
+            options=request.options,
+        )
         validation_result = safety_validator.validate(
             settings=raw_response.develop_settings,
             crop=raw_response.crop,
             leveling=raw_response.leveling,
             upright=raw_response.upright,
-            denoise=raw_response.denoise,
+            denoise=proposed_denoise,
             profile=profile,
             enable_hdr=proposed_hdr,
             analysis=raw_response.analysis,
             options=request.options,
+            iso=request.exif.iso,
         )
         hdr_rejected = "enable_hdr" in validation_result.rejected_fields
         hdr_diagnostics = hdr_diagnostics.model_copy(
@@ -396,6 +405,10 @@ async def develop_photo(
             "validated_hdr_confidence=%.2f hdr_decision_basis=%s "
             "hdr_decision_confidence=%s scene_hdr_inconsistent=%s "
             "hdr_contraindications=%s hdr_rejected=%s hdr_off_reason=%s "
+            "source_iso=%s source_format=%s raw_denoise_recommended=%s "
+            "raw_denoise_amount=%s proposed_denoise_recommended=%s "
+            "proposed_denoise_amount=%s validated_denoise_recommended=%s "
+            "validated_denoise_amount=%s denoise_rejected=%s "
             "clamped=%d removed=%d"
         ),
         request.request_id,
@@ -444,6 +457,38 @@ async def develop_photo(
         ),
         hdr_diagnostics.hdr_rejected,
         hdr_diagnostics.hdr_rejection_reason or "<none>",
+        request.exif.iso if request.exif.iso is not None else "<none>",
+        request.exif.file_format or "<none>",
+        (
+            raw_response.denoise.recommended
+            if raw_response.denoise is not None
+            else "<none>"
+        ),
+        (
+            raw_response.denoise.amount
+            if raw_response.denoise is not None
+            and raw_response.denoise.amount is not None
+            else "<none>"
+        ),
+        proposed_denoise.recommended if proposed_denoise is not None else "<none>",
+        (
+            proposed_denoise.amount
+            if proposed_denoise is not None
+            and proposed_denoise.amount is not None
+            else "<none>"
+        ),
+        (
+            validation_result.denoise.recommended
+            if validation_result.denoise is not None
+            else "<none>"
+        ),
+        (
+            validation_result.denoise.amount
+            if validation_result.denoise is not None
+            and validation_result.denoise.amount is not None
+            else "<none>"
+        ),
+        "denoise" in validation_result.rejected_fields,
         len(validation_result.clamped_fields),
         len(validation_result.removed_fields),
     )

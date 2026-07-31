@@ -86,6 +86,12 @@ class TransportModel(BaseModel):
 class PhotoExif(TransportModel):
     """Normalized EXIF metadata supplied by the Lightroom plug-in."""
 
+    file_format: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=20,
+        description="Lightroom source format such as RAW, DNG, JPEG, or TIFF.",
+    )
     camera: str | None = Field(
         default=None,
         description="Camera manufacturer and model, when available.",

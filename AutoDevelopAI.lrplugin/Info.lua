@@ -18,28 +18,16 @@ return {
             file = "AutoDevelopSelectedPhotos.lua",
         },
         {
-            title = "Analyze Selected Photos",
-            file = "AnalyzeSelectedPhotos.lua",
-        },
-        {
             title = "Capture Editing Feedback",
             file = "CaptureEditingFeedback.lua",
         },
         {
-            title = "Apply Recommended Crop",
-            file = "ApplyRecommendedCrop.lua",
-        },
-        {
-            title = "Style Profiles",
-            file = "StyleProfiles.lua",
+            title = "Analyze Selected Photos",
+            file = "AnalyzeSelectedPhotos.lua",
         },
         {
             title = "Settings",
             file = "Settings.lua",
-        },
-        {
-            title = "Logs",
-            file = "Logs.lua",
         },
     },
 }

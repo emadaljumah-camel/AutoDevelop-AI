@@ -66,6 +66,25 @@ def test_library_menu_files_are_real_relative_lua_scripts() -> None:
         ), f"{title!r} references a missing or case-mismatched script"
 
 
+def test_menu_order_excludes_unimplemented_placeholder_commands() -> None:
+    info = _read("Info.lua")
+    items = _library_menu_items()
+
+    assert list(items) == [
+        "Auto Develop Selected Photos",
+        "Capture Editing Feedback",
+        "Analyze Selected Photos",
+        "Settings",
+    ]
+    for title, script in (
+        ("Apply Recommended Crop", "ApplyRecommendedCrop.lua"),
+        ("Style Profiles", "StyleProfiles.lua"),
+        ("Logs", "Logs.lua"),
+    ):
+        assert title not in info
+        assert script not in info
+
+
 def test_learning_feedback_menu_and_read_only_workflow_are_registered() -> None:
     menu_items = _library_menu_items()
     assert menu_items["Capture Editing Feedback"] == "CaptureEditingFeedback.lua"
@@ -473,20 +492,22 @@ def test_style_summaries_include_display_name_and_stable_id() -> None:
     assert '"Editing intensity: "' in develop_dialog
 
 
-def test_only_apply_service_uses_catalog_develop_writes() -> None:
+def test_only_authorized_services_use_catalog_develop_writes() -> None:
     apply_service = _read("lib/ApplyService.lua")
-    other_source = "\n".join(
-        path.read_text(encoding="utf-8")
+    write_sources = {
+        path.relative_to(PLUGIN).as_posix()
         for path in PLUGIN.rglob("*.lua")
-        if path.name != "ApplyService.lua"
-    )
+        if "withWriteAccessDo" in path.read_text(encoding="utf-8")
+        or "applyDevelopSettings" in path.read_text(encoding="utf-8")
+    }
 
     assert "catalog:withWriteAccessDo(" in apply_service
     assert "operation.photo:applyDevelopSettings(" in apply_service
     assert "local finalSettings = operation.finalSettings" in apply_service
     assert "sanitize(operation.mappedSettings)" not in apply_service
-    assert "withWriteAccessDo" not in other_source
-    assert "applyDevelopSettings" not in other_source
+    assert write_sources == {
+        "lib/ApplyService.lua",
+    }
     assert "ApiClient" not in apply_service
     assert "PreviewExporter" not in apply_service
     assert "LrDialogs" not in apply_service
@@ -516,6 +537,45 @@ def test_hdr_mode_is_categorical_capability_gated_and_apply_service_owned() -> N
     assert "HDREditMode = 1" not in apply_path
     assert "sanitizeRestore(operation.originalSettings)" in apply_service
     assert "applyDevelopSettings" not in preparation
+
+
+def test_denoise_uses_verified_native_preset_pipeline() -> None:
+    exif = _read("lib/ExifMapper.lua")
+    service = _read("lib/DenoisePresetService.lua")
+    preparation = _read("lib/PreparationService.lua")
+    pending = _read("lib/PendingOperation.lua")
+    apply_service = _read("lib/ApplyService.lua")
+    review = _read("lib/PendingOperationReview.lua")
+    summary = _read("lib/BatchSummary.lua")
+
+    assert 'Utils.safeRawMetadata(photo, "fileFormat")' in exif
+    assert "exif.file_format" in exif
+    for amount in (25, 50, 75):
+        assert f'[{amount}] = "AutoDevelop AI - Denoise {amount}"' in service
+    assert "LrApplication.developPresetFolders()" in service
+    assert "folder:getDevelopPresets()" in service
+    assert "preset:getName()" in service
+    assert 'format ~= "RAW" and format ~= "DNG"' in service
+    assert "containsDenoise(currentSettings.FilterList)" in service
+    assert "original.FilterList = Utils.deepCopy" in service
+    assert "DenoisePresetService.prepare(" in preparation
+    assert "denoisePreset = denoiseCapability.preset" in preparation
+    assert "denoiseOriginalSettings = denoiseCapability.originalSettings" in preparation
+    assert "settingCount == 0 and not denoiseIncluded" in preparation
+    assert "denoisePreset = values.denoisePreset" in pending
+    assert "denoiseOriginalSettings = Utils.deepCopy" in pending
+    assert "operation.denoiseIncluded == true" in apply_service
+    assert 'operation.photo:applyDevelopPreset(' in apply_service
+    assert "restoreForOperation(operation)" in apply_service
+    apply_path = apply_service.index("operation.photo:applyDevelopPreset(")
+    settings_path = apply_service.index("operation.photo:applyDevelopSettings(")
+    assert apply_path < settings_path
+    assert "getDevelopSettings" not in apply_service
+    assert '"Denoise amount: "' in review
+    assert '"Denoise preset: "' in review
+    assert "operation.denoiseIncluded and \"Yes\" or \"No\"" in review
+    assert "if operation.denoiseIncluded ~= true then" in summary
+    assert "FilterList" not in _read("lib/DevelopSettingsMapper.lua")
 
 
 def test_hdr_preference_and_decision_diagnostics_are_carried_to_ui_and_learning() -> None:
