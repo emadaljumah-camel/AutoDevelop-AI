@@ -3,7 +3,7 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse
 
 from autodevelop.api.dependencies import (
@@ -17,6 +17,7 @@ from autodevelop.api.exception_handlers import error_response
 from autodevelop.api.model_errors import model_error_response
 from autodevelop.api.model_selection import resolve_model_request
 from autodevelop.config import Settings
+from autodevelop.hdr_decision import decide_hdr
 from autodevelop.model_clients import (
     ModelClient,
     ModelClientError,
@@ -114,7 +115,13 @@ def _build_final_response(
             else None
         ),
         develop_settings=validation_result.settings.model_copy(deep=True),
+        upright=validation_result.upright.model_copy(deep=True),
         enable_hdr=validation_result.enable_hdr.model_copy(deep=True),
+        hdr_decision=(
+            raw_response.hdr_decision.model_copy(deep=True)
+            if raw_response.hdr_decision is not None
+            else None
+        ),
         crop=(
             validation_result.crop.model_copy(deep=True)
             if validation_result.crop is not None
@@ -176,15 +183,23 @@ async def develop_photo(
         SafetyValidator,
         Depends(get_safety_validator),
     ],
+    endpoint_attempt: Annotated[
+        int | None,
+        Header(alias="X-Autodevelop-Attempt", ge=1, le=10),
+    ] = None,
 ) -> DevelopResponse | JSONResponse:
     """Return sanitized recommendations without applying Lightroom edits."""
 
     profile_id = request.options.style_profile
     logger.info(
-        "Develop request started request_id=%s filename=%s profile=%s",
+        (
+            "Develop request started request_id=%s filename=%s profile=%s "
+            "endpoint_attempt=%d"
+        ),
         request.request_id,
         request.filename,
         profile_id,
+        endpoint_attempt or 1,
     )
 
     profile = None
@@ -255,10 +270,19 @@ async def develop_photo(
         )
         return model_error_response(request, exc)
     except ModelResponseError as exc:
+        diagnostics = getattr(exc, "diagnostics", None)
         logger.warning(
-            "Develop model response invalid request_id=%s filename=%s",
+            (
+                "Develop model response invalid request_id=%s filename=%s "
+                "endpoint_attempt=%d phase=%s stage=%s diagnostic_code=%s field=%s"
+            ),
             request.request_id,
             request.filename,
+            endpoint_attempt or 1,
+            getattr(diagnostics, "phase", None) or "<unknown>",
+            getattr(diagnostics, "stage", None) or "<unknown>",
+            getattr(diagnostics, "diagnostic_code", None) or exc.code,
+            getattr(diagnostics, "field_path", None) or "<none>",
         )
         return model_error_response(request, exc)
     except ModelClientError as exc:
@@ -287,15 +311,49 @@ async def develop_photo(
             profile = profile_loader.get_cached_profile(
                 raw_response.effective_style_id
             )
+        proposed_hdr, hdr_diagnostics = decide_hdr(
+            raw_response.enable_hdr,
+            filename=request.filename,
+            analysis=raw_response.analysis,
+            options=request.options,
+            learning=raw_response.learning,
+            minimum_samples=settings.learning_min_samples,
+            evidence=raw_response.hdr_decision,
+        )
         validation_result = safety_validator.validate(
             settings=raw_response.develop_settings,
             crop=raw_response.crop,
             leveling=raw_response.leveling,
+            upright=raw_response.upright,
             denoise=raw_response.denoise,
             profile=profile,
-            enable_hdr=raw_response.enable_hdr,
+            enable_hdr=proposed_hdr,
             analysis=raw_response.analysis,
             options=request.options,
+        )
+        hdr_rejected = "enable_hdr" in validation_result.rejected_fields
+        hdr_diagnostics = hdr_diagnostics.model_copy(
+            update={
+                "validated_hdr_enabled": (
+                    validation_result.enable_hdr.enabled
+                ),
+                "validated_hdr_confidence": (
+                    validation_result.enable_hdr.confidence
+                ),
+                "hdr_rejected": hdr_diagnostics.hdr_rejected or hdr_rejected,
+                "hdr_rejection_reason": (
+                    hdr_diagnostics.hdr_rejection_reason
+                    or (
+                        "insufficient_dynamic_range"
+                        if hdr_rejected
+                        else None
+                    )
+                ),
+            },
+            deep=True,
+        )
+        raw_response = raw_response.model_copy(
+            update={"hdr_decision": hdr_diagnostics}
         )
         final_response = _build_final_response(
             raw_response,
@@ -303,9 +361,15 @@ async def develop_photo(
         )
     except Exception:
         logger.error(
-            "Develop safety validation failed request_id=%s filename=%s",
+            (
+                "Develop safety validation failed request_id=%s filename=%s "
+                "endpoint_attempt=%d phase=final_develop "
+                "stage=safety_validation_failed "
+                "diagnostic_code=safety_validation_failed"
+            ),
             request.request_id,
             request.filename,
+            endpoint_attempt or 1,
         )
         return error_response(
             request,
@@ -321,7 +385,18 @@ async def develop_photo(
             "effective_style=%s "
             "model=%s provider=%s resolved_model=%s outcome=%s duration_ms=%s "
             "validation_issues=%d "
-            "crop_rejected=%s clamped=%d removed=%d"
+            "crop_rejected=%s upright_mode=%s upright_confidence=%.2f "
+            "upright_rejected=%s scene_hdr_candidate=%s "
+            "scene_hdr_confidence=%.2f base_scene_evidence_score=%.2f "
+            "hdr_learning_bonus=%.2f hdr_preference_bonus=%.2f "
+            "combined_hdr_evidence_score=%.2f hdr_evidence_score=%.2f "
+            "hdr_learning_applied=%s hdr_learning_enable_rate=%s "
+            "hdr_learning_sample_count=%d raw_hdr_recommended=%s "
+            "raw_hdr_confidence=%.2f validated_hdr_enabled=%s "
+            "validated_hdr_confidence=%.2f hdr_decision_basis=%s "
+            "hdr_decision_confidence=%s scene_hdr_inconsistent=%s "
+            "hdr_contraindications=%s hdr_rejected=%s hdr_off_reason=%s "
+            "clamped=%d removed=%d"
         ),
         request.request_id,
         request.filename,
@@ -334,6 +409,41 @@ async def develop_photo(
         raw_response.processing_duration_ms,
         len(validation_result.issues),
         "crop" in validation_result.rejected_fields,
+        validation_result.upright.mode.value,
+        validation_result.upright.confidence,
+        "upright" in validation_result.rejected_fields,
+        hdr_diagnostics.scene_hdr_candidate,
+        hdr_diagnostics.scene_hdr_confidence,
+        hdr_diagnostics.base_scene_evidence_score,
+        hdr_diagnostics.learning_bonus,
+        hdr_diagnostics.user_preference_bonus,
+        hdr_diagnostics.combined_evidence_score,
+        hdr_diagnostics.hdr_evidence_score,
+        hdr_diagnostics.hdr_learning_applied,
+        (
+            f"{hdr_diagnostics.hdr_learning_enable_rate:.2f}"
+            if hdr_diagnostics.hdr_learning_enable_rate is not None
+            else "<none>"
+        ),
+        hdr_diagnostics.hdr_learning_sample_count,
+        hdr_diagnostics.raw_hdr_recommended,
+        hdr_diagnostics.raw_hdr_confidence or 0.0,
+        validation_result.enable_hdr.enabled,
+        validation_result.enable_hdr.confidence,
+        hdr_diagnostics.decision_basis,
+        (
+            f"{hdr_diagnostics.decision_confidence:.2f}"
+            if hdr_diagnostics.decision_confidence is not None
+            else "<none>"
+        ),
+        hdr_diagnostics.scene_hdr_inconsistent,
+        (
+            ",".join(hdr_diagnostics.contraindications)
+            if hdr_diagnostics.contraindications
+            else "<none>"
+        ),
+        hdr_diagnostics.hdr_rejected,
+        hdr_diagnostics.hdr_rejection_reason or "<none>",
         len(validation_result.clamped_fields),
         len(validation_result.removed_fields),
     )

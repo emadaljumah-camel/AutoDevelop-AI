@@ -6,6 +6,9 @@ function BatchSummary.new(selected, kind, startedAt)
     return {
         kind = kind,
         selected = selected or 0,
+        attempted = 0,
+        processed = 0,
+        prepared = 0,
         analyzed = 0,
         ready = 0,
         applied = 0,
@@ -22,6 +25,12 @@ function BatchSummary.new(selected, kind, startedAt)
         levelingDisabled = 0,
         levelingAngleMinimum = nil,
         levelingAngleMaximum = nil,
+        cropAppliedCount = 0,
+        levelingAppliedCount = 0,
+        hdrRecommendedCount = 0,
+        hdrAppliedCount = 0,
+        denoiseRecommendedCount = 0,
+        denoiseAppliedCount = 0,
         denoiseIgnored = 0,
         warningCount = 0,
         cancelled = false,
@@ -47,6 +56,8 @@ function BatchSummary.new(selected, kind, startedAt)
         showLearningSummary = false,
         effectiveStyles = {},
         editingIntensities = {},
+        models = {},
+        resolvedModels = {},
     }
 end
 
@@ -170,6 +181,127 @@ function BatchSummary.recordLearning(summary, learning)
         summary.learningSimilarityCount =
             (summary.learningSimilarityCount or 0) + 1
     end
+end
+
+function BatchSummary.markAttempted(summary)
+    summary.attempted = (summary.attempted or 0) + 1
+end
+
+function BatchSummary.recordPrepared(summary, operation)
+    if type(summary) ~= "table" or type(operation) ~= "table" then
+        return
+    end
+    summary.prepared = (summary.prepared or 0) + 1
+    summary.ready = (summary.ready or 0) + 1
+    BatchSummary.recordStyle(summary, operation)
+    BatchSummary.recordGeometry(summary, operation)
+    BatchSummary.recordLearning(summary, operation.learning)
+    summary.warningCount =
+        (summary.warningCount or 0) + #(operation.warnings or {})
+    if type(operation.model) == "string"
+        and operation.model ~= "" then
+        summary.models[operation.model] = true
+    end
+    if type(operation.resolvedModel) == "string"
+        and operation.resolvedModel ~= "" then
+        summary.resolvedModels[operation.resolvedModel] = true
+    end
+    if operation.hdrRecommended == true then
+        summary.hdrRecommendedCount =
+            (summary.hdrRecommendedCount or 0) + 1
+    end
+    if operation.denoiseRecommended == true then
+        summary.denoiseRecommendedCount =
+            (summary.denoiseRecommendedCount or 0) + 1
+        summary.denoiseIgnored = (summary.denoiseIgnored or 0) + 1
+    end
+end
+
+function BatchSummary.recordSkipped(summary)
+    if type(summary) ~= "table" then
+        return
+    end
+    summary.processed = (summary.processed or 0) + 1
+    summary.skipped = (summary.skipped or 0) + 1
+end
+
+local function applicationFailure(operation, application)
+    if (application.restoredAfterFailure or 0) > 0
+        or (application.failedNotRestored or 0) > 0 then
+        return {
+            category = operation.applyErrorCategory or "apply_failed",
+            code = operation.applyErrorCode or "lightroom_apply_failed",
+        }
+    end
+    if application.writeError then
+        return {
+            category =
+                application.writeErrorCategory or "write_access_failed",
+            code = application.writeErrorCode
+                or "catalog_write_access_failed",
+        }
+    end
+    if (application.notApplied or 0) > 0
+        and application.cancelled ~= true then
+        return {
+            category = "apply_failed",
+            code = "operation_not_applied",
+        }
+    end
+    return nil
+end
+
+function BatchSummary.recordApplication(summary, operation, application)
+    if type(summary) ~= "table"
+        or type(operation) ~= "table"
+        or type(application) ~= "table" then
+        return
+    end
+    summary.processed = (summary.processed or 0) + 1
+    summary.applied =
+        (summary.applied or 0) + (application.applied or 0)
+    summary.restoredAfterFailure =
+        (summary.restoredAfterFailure or 0)
+        + (application.restoredAfterFailure or 0)
+    summary.failedNotRestored =
+        (summary.failedNotRestored or 0)
+        + (application.failedNotRestored or 0)
+
+    if operation.applicationStatus == "applied" then
+        if operation.compositionCropIncluded then
+            summary.cropAppliedCount =
+                (summary.cropAppliedCount or 0) + 1
+        end
+        if operation.levelingIncluded then
+            summary.levelingAppliedCount =
+                (summary.levelingAppliedCount or 0) + 1
+        end
+        if operation.enableHdr then
+            summary.hdrAppliedCount =
+                (summary.hdrAppliedCount or 0) + 1
+        end
+        if operation.denoiseApplied then
+            summary.denoiseAppliedCount =
+                (summary.denoiseAppliedCount or 0) + 1
+        end
+    end
+
+    local failure = applicationFailure(operation, application)
+    if failure then
+        BatchSummary.addFailure(
+            summary,
+            operation.displayFilename or operation.filename or "Photo",
+            failure
+        )
+    end
+end
+
+function BatchSummary.recordProcessedFailure(summary, filename, failure)
+    if type(summary) ~= "table" then
+        return
+    end
+    summary.processed = (summary.processed or 0) + 1
+    BatchSummary.addFailure(summary, filename, failure)
 end
 
 function BatchSummary.markNotProcessed(summary, count)

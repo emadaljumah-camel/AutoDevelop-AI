@@ -22,7 +22,9 @@ local function buildBase(photo, previewPath, options)
     if not Utils.isUuid(requestId) then
         return nil, "Request ID generator returned an invalid UUID."
     end
-    local filename = Utils.photoFilename(photo)
+    local photoIdentity = options.photoIdentity
+        or Utils.capturePhotoIdentity(photo)
+    local filename = photoIdentity.displayFilename
 
     local request = {
         schema_version = Config.SCHEMA_VERSION,
@@ -60,6 +62,8 @@ function RequestBuilder.buildDevelop(photo, previewPath, options)
     request.options.hdr_edit_supported =
         ExifMapper.hdrEditSupported(photo)
     request.options.hdr_workflow = "unknown"
+    request.options.hdr_preference =
+        options.hdrPreference or "balanced"
     request.learning = {
         enabled = options.learningEnabled ~= false,
     }

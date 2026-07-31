@@ -144,3 +144,147 @@ def test_schema_one_crop_angle_migrates_without_deleting_feedback(
         ).fetchone()[0]
     assert row == ('{"CropLeft":0.01}', '{"CropAngle":-0.7}', 1)
     assert count == 1
+
+
+def test_schema_two_rows_migrate_with_nullable_mode_fields(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "schema-two.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE learning_schema (
+                version INTEGER PRIMARY KEY,
+                applied_at_utc TEXT NOT NULL DEFAULT 'now'
+            )
+            """
+        )
+        connection.executescript(MIGRATIONS[1])
+        connection.executescript(MIGRATIONS[2])
+        connection.execute(
+            "INSERT INTO learning_schema(version) VALUES (1), (2)"
+        )
+        connection.execute(
+            """
+            INSERT INTO learning_sessions (
+                session_id, request_id, request_hash, photo_key, filename,
+                profile_id, stable_model_id, resolved_model_id,
+                created_at_utc, baseline_captured_at_utc,
+                original_settings_json, recommendation_json,
+                applied_baseline_json, exif_context_json,
+                validation_summary_json, state, schema_version
+            ) VALUES (
+                'session', 'request', 'hash', 'photo', 'Legacy.NEF',
+                'natural_travel', 'qwen', 'qwen-model', 'now', 'now',
+                '{}', '{}', '{"Exposure2012":0}', '{}', '{}',
+                'feedback_captured', 2
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO learning_feedback (
+                feedback_id, session_id, captured_at_utc,
+                final_settings_json, delta_json, significant_delta_json,
+                crop_delta_json, crop_changed, leveling_delta_json,
+                leveling_changed, accepted_without_change, usable,
+                exclusion_reason, schema_version
+            ) VALUES (
+                'feedback', 'session', 'now', '{"Exposure2012":0}',
+                '{}', '{}', '{}', 0, '{}', 0, 1, 1, NULL, 2
+            )
+            """
+        )
+
+    LearningDatabase(path).initialize()
+
+    with sqlite3.connect(path) as connection:
+        session = connection.execute(
+            """
+            SELECT applied_upright_mode, applied_hdr_enabled,
+                   baseline_upright_mode, ai_upright_mode,
+                   baseline_hdr_enabled, ai_hdr_enabled,
+                   baseline_hdr_max_value
+            FROM learning_sessions
+            """
+        ).fetchone()
+        feedback = connection.execute(
+            """
+            SELECT final_upright_mode, final_hdr_enabled,
+                   upright_changed, upright_accepted,
+                   hdr_changed, hdr_accepted
+            FROM learning_feedback
+            """
+        ).fetchone()
+        version = connection.execute(
+            "SELECT MAX(version) FROM learning_schema"
+        ).fetchone()[0]
+    assert session == (None, None, None, None, None, None, None)
+    assert feedback == (None, None, None, None, None, None)
+    assert version == SCHEMA_VERSION
+
+
+def test_original_schema_three_database_receives_status_columns(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "original-schema-three.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE learning_schema (
+                version INTEGER PRIMARY KEY,
+                applied_at_utc TEXT NOT NULL DEFAULT 'now'
+            )
+            """
+        )
+        for version in (1, 2, 3):
+            connection.executescript(MIGRATIONS[version])
+            connection.execute(
+                "INSERT INTO learning_schema(version) VALUES (?)",
+                (version,),
+            )
+
+    LearningDatabase(path).initialize()
+
+    with sqlite3.connect(path) as connection:
+        version = connection.execute(
+            "SELECT MAX(version) FROM learning_schema"
+        ).fetchone()[0]
+        session_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(learning_sessions)"
+            )
+        }
+        feedback_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(learning_feedback)"
+            )
+        }
+
+    assert version == SCHEMA_VERSION
+    for column in (
+        "base_scene_evidence_score",
+        "hdr_learning_bonus",
+        "hdr_preference_bonus",
+        "combined_hdr_evidence_score",
+        "hdr_decision_basis",
+        "hdr_decision_confidence",
+        "scene_hdr_inconsistent",
+        "hdr_contraindications_json",
+    ):
+        assert column in session_columns
+    assert {
+        "baseline_upright_mode",
+        "ai_upright_mode",
+        "baseline_hdr_enabled",
+        "ai_hdr_enabled",
+        "baseline_hdr_max_value",
+    } <= session_columns
+    assert {
+        "upright_changed",
+        "upright_accepted",
+        "hdr_changed",
+        "hdr_accepted",
+    } <= feedback_columns

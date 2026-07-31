@@ -30,9 +30,16 @@ passes through the existing SafetyValidator before Lightroom can apply it.
 Composition cropping and rotational leveling are independent recommendations.
 Each photo can receive crop only, level only, both, or neither. Crop decisions
 address framing and visual hierarchy; leveling addresses accidental camera
-roll using reliable horizons or structural lines. Perspective/Upright
-correction is not implied. Lightroom combines accepted geometry into its crop
-fields only at application time.
+roll using reliable horizons or structural lines. Transform Upright is a third,
+independent categorical decision and is never simulated with `CropAngle`.
+Lightroom combines accepted crop and rotational-leveling geometry only at
+application time.
+
+HDR Edit Mode is also a first-class categorical decision. It is selected from
+current scene evidence, model confidence, optional global HDR feedback, and the
+Lightroom preference. HDR is not enabled or disabled by the selected style
+profile. RAW eligibility, Lightroom capability, workflow, dynamic-range, noise,
+and exposure safeguards remain authoritative.
 
 The plug-in exposes separate **Apply composition crop** and **Apply leveling
 correction** preferences. Existing installations migrate the former
@@ -102,6 +109,15 @@ environment or local `.env` file only.
 
 ## Run the backend
 
+On Windows, the repository launcher validates the virtual environment, starts
+the backend from the project root, and preserves the server exit code:
+
+```powershell
+.\start-backend.bat
+```
+
+The equivalent direct command is:
+
 ```powershell
 uvicorn autodevelop.main:app --app-dir backend --host 127.0.0.1 --port 8005
 ```
@@ -130,8 +146,14 @@ python -m pytest
 Phase 4 adds an optional local retrieval-based learning system. After a
 successful Auto Develop, the plug-in can save the applied baseline. Adjust the
 photo manually, select it, and run **AutoDevelop AI → Capture Editing
-Feedback**. After at least three similar same-style examples, future Develop
-requests may receive a compact aggregate preference block.
+Feedback**. The command first requests a read-only comparison preview, then
+saves feedback only after confirmation. A failed preview does not consume the
+pending baseline and can be retried.
+
+After at least three similar usable examples, future Develop requests may
+receive compact aggregate preferences. Slider, crop, rotational-leveling, and
+Upright preferences are scoped to the effective style. HDR feedback is
+retrieved globally because HDR is based on scene need rather than style.
 
 Learning does not fine-tune models, monitor Lightroom in the background, or
 upload data. Its SQLite database defaults to

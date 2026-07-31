@@ -46,7 +46,7 @@ def metadata_similarity(
 
 
 class LearningRetriever:
-    """Rank same-profile usable samples without external services."""
+    """Rank usable samples supplied by the caller without external services."""
 
     def retrieve(
         self,

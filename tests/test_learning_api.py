@@ -12,6 +12,7 @@ from autodevelop.api.dependencies import get_learning_service
 from autodevelop.config import Settings
 from autodevelop.learning.comparison import compare_feedback_settings
 from autodevelop.learning.schemas import (
+    DevelopModeState,
     DevelopSettingDeltas,
     FeedbackRequest,
 )
@@ -74,6 +75,208 @@ def _baseline(
         },
         "validation_summary": {"issue_count": 0},
     }
+
+
+def test_upright_and_hdr_changes_are_compared_and_persisted(
+    learning_client,
+) -> None:
+    client, database_path = learning_client
+    baseline = _baseline()
+    baseline["applied_modes"] = {
+        "upright": "off",
+        "upright_raw_value": 0,
+        "hdr_enabled": False,
+        "hdr_raw_value": 0,
+        "hdr_max_value": 2.3,
+    }
+    baseline["original_modes"] = {
+        "upright": "off",
+        "hdr_enabled": False,
+    }
+    baseline["recommendation_modes"] = {
+        "upright": "off",
+        "hdr_enabled": False,
+    }
+    stored = client.post(
+        "/autodevelop/v1/learning/baselines",
+        json=baseline,
+    )
+    assert stored.status_code == 200
+
+    feedback = client.post(
+        "/autodevelop/v1/learning/feedback",
+        json={
+            "schema_version": 1,
+            "session_id": baseline["session_id"],
+            "photo_key": PHOTO_KEY,
+            "final_settings": baseline["applied_baseline"],
+            "final_modes": {
+                "upright": "vertical",
+                "hdr_enabled": True,
+            },
+        },
+    )
+
+    assert feedback.status_code == 200
+    assert feedback.json()["accepted_without_change"] is False
+    assert feedback.json()["mode_changes"] == {
+        "upright": "vertical",
+        "hdr_enabled": True,
+    }
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT s.applied_upright_mode, s.applied_hdr_enabled,
+                   s.baseline_upright_mode, s.ai_upright_mode,
+                   s.baseline_hdr_enabled, s.ai_hdr_enabled,
+                   s.baseline_hdr_max_value,
+                   f.final_upright_mode, f.final_hdr_enabled,
+                   f.upright_changed, f.upright_accepted,
+                   f.hdr_changed, f.hdr_accepted
+            FROM learning_sessions AS s
+            JOIN learning_feedback AS f USING (session_id)
+            """
+        ).fetchone()
+    assert row == (
+        "off", 0, "off", "off", 0, 0, 2.3,
+        "vertical", 1, 1, 0, 1, 0,
+    )
+
+    status = client.get("/autodevelop/v1/learning/status")
+    assert status.status_code == 200
+    assert status.json()["upright_learning"] == {
+        "usable_sample_count": 1,
+        "change_count": 1,
+        "acceptance_count": 0,
+    }
+    assert status.json()["hdr_learning"] == {
+        "usable_sample_count": 1,
+        "change_count": 1,
+        "acceptance_count": 0,
+    }
+
+
+def test_hdr_decision_confidence_is_persisted_for_calibration(
+    learning_client,
+) -> None:
+    client, database_path = learning_client
+    baseline = _baseline()
+    baseline["hdr_decision"] = {
+        "scene_hdr_candidate": True,
+        "scene_hdr_confidence": 0.78,
+        "base_scene_evidence_score": 0.56,
+        "learning_bonus": 0.04,
+        "user_preference_bonus": 0.06,
+        "combined_evidence_score": 0.66,
+        "decision_basis": "disabled",
+        "decision_confidence": None,
+        "scene_hdr_inconsistent": False,
+        "contraindications": [],
+        "visual_evidence_score": 0.56,
+        "hdr_evidence_score": 0.66,
+        "hdr_learning_applied": True,
+        "hdr_learning_enable_rate": 0.91,
+        "hdr_learning_sample_count": 22,
+        "raw_hdr_recommended": False,
+        "raw_hdr_confidence": 0.64,
+        "validated_hdr_enabled": False,
+        "validated_hdr_confidence": 0.64,
+        "hdr_rejected": False,
+        "hdr_rejection_reason": "model_not_recommended",
+    }
+
+    response = client.post(
+        "/autodevelop/v1/learning/baselines",
+        json=baseline,
+    )
+
+    assert response.status_code == 200
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT scene_hdr_candidate, scene_hdr_confidence,
+                   base_scene_evidence_score, hdr_learning_bonus,
+                   hdr_preference_bonus, combined_hdr_evidence_score,
+                   hdr_decision_basis, hdr_decision_confidence,
+                   scene_hdr_inconsistent, hdr_contraindications_json,
+                   hdr_evidence_score, raw_hdr_recommended,
+                   raw_hdr_confidence, validated_hdr_enabled,
+                   validated_hdr_confidence, hdr_rejection_reason,
+                   hdr_personalization_applied, hdr_learning_enable_rate
+            FROM learning_sessions
+            WHERE session_id = ?
+            """,
+            (baseline["session_id"],),
+        ).fetchone()
+    assert row == (
+        1,
+        0.78,
+        0.56,
+        0.04,
+        0.06,
+        0.66,
+        "disabled",
+        None,
+        0,
+        "[]",
+        0.66,
+        0,
+        0.64,
+        0,
+        0.64,
+        "model_not_recommended",
+        1,
+        0.91,
+    )
+
+
+@pytest.mark.parametrize(
+    "contraindications",
+    [[], ["high_noise_risk"]],
+)
+def test_hdr_contraindication_lists_round_trip_into_feedback_preview(
+    learning_client,
+    contraindications: list[str],
+) -> None:
+    client, database_path = learning_client
+    baseline = _baseline()
+    baseline["hdr_decision"] = {
+        "contraindications": contraindications,
+    }
+
+    stored = client.post(
+        "/autodevelop/v1/learning/baselines",
+        json=baseline,
+    )
+    preview = client.post(
+        "/autodevelop/v1/learning/feedback/preview",
+        json={
+            "schema_version": 1,
+            "session_id": baseline["session_id"],
+            "photo_key": baseline["photo_key"],
+            "final_settings": baseline["applied_baseline"],
+            "final_modes": {},
+        },
+    )
+
+    assert stored.status_code == 200
+    assert preview.status_code == 200
+    assert preview.json()["accepted_without_change"] is True
+    with sqlite3.connect(database_path) as connection:
+        stored_json = connection.execute(
+            """
+            SELECT hdr_contraindications_json
+            FROM learning_sessions
+            WHERE session_id = ?
+            """,
+            (baseline["session_id"],),
+        ).fetchone()[0]
+    assert json.loads(stored_json) == contraindications
+
+
+def test_guided_upright_is_not_a_supported_learning_mode() -> None:
+    with pytest.raises(ValidationError):
+        DevelopModeState(upright="guided")
 
 
 def test_baseline_is_stored_idempotently_and_conflicts_are_rejected(

@@ -6,6 +6,11 @@ from typing import Any, TypeVar
 
 from pydantic import ValidationError
 
+from autodevelop.model_clients.diagnostics import (
+    InvalidResponseDiagnostics,
+    first_error_path,
+    validation_error_summary,
+)
 from autodevelop.model_clients.exceptions import InvalidModelResponseError
 from autodevelop.models import (
     AnalyzeRequest,
@@ -30,6 +35,7 @@ _PROVIDER_IDENTITY_FIELDS = (
 )
 _BACKEND_OWNED_FIELDS = (
     "learning",
+    "hdr_decision",
     "requested_style_id",
     "effective_style_id",
     "style_selection_mode",
@@ -43,7 +49,7 @@ def _normalize_legacy_geometry(
     payload: Mapping[str, Any],
     *,
     model_name: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], bool]:
     """Convert the legacy crop angle into the sole leveling structure."""
 
     normalized = dict(payload)
@@ -53,11 +59,18 @@ def _normalize_legacy_geometry(
             "leveling",
             {"recommended": False, "angle": 0.0, "mode": "none"},
         )
-        return normalized
+        return normalized, False
     if "leveling" in normalized:
         raise InvalidModelResponseError(
             "The provider response included conflicting geometry fields.",
             model_name=model_name,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="legacy_schema_normalization_failed",
+                diagnostic_code="conflicting_geometry_fields",
+                field_path="crop.angle",
+                legacy_normalization_attempted=True,
+            ),
         )
 
     normalized_crop = dict(crop)
@@ -69,7 +82,7 @@ def _normalize_legacy_geometry(
             "angle": 0.0,
             "mode": "none",
         }
-        return normalized
+        return normalized, True
     if (
         isinstance(legacy_angle, bool)
         or not isinstance(legacy_angle, (int, float))
@@ -78,13 +91,20 @@ def _normalize_legacy_geometry(
         raise InvalidModelResponseError(
             "The provider legacy crop angle was invalid.",
             model_name=model_name,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="legacy_schema_normalization_failed",
+                diagnostic_code="non_finite_value",
+                field_path="crop.angle",
+                legacy_normalization_attempted=True,
+            ),
         )
     normalized["leveling"] = {
         "recommended": True,
         "angle": float(legacy_angle),
         "mode": "horizon",
     }
-    return normalized
+    return normalized, True
 
 
 def validate_provider_payload_identity(
@@ -109,7 +129,32 @@ def validate_provider_payload_identity(
         raise InvalidModelResponseError(
             "The provider response identity was invalid.",
             model_name=expected_resolved_model,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="provider_schema_validation_failed",
+                diagnostic_code="provider_identity_mismatch",
+                field_path=next(
+                    field
+                    for field in _PROVIDER_IDENTITY_FIELDS
+                    if field in payload and payload[field] != expected[field]
+                ),
+            ),
         )
+
+
+def _schema_diagnostic_code(errors: tuple[Mapping[str, str], ...]) -> str:
+    if not errors:
+        return "schema_validation_failed"
+    error_type = errors[0].get("type", "")
+    if error_type == "missing":
+        return "missing_required_field"
+    if error_type == "extra_forbidden":
+        return "extra_forbidden_field"
+    if "finite" in error_type:
+        return "non_finite_value"
+    if error_type in {"literal_error", "enum"}:
+        return "unsupported_enum"
+    return "schema_validation_failed"
 
 
 def build_model_response(
@@ -131,11 +176,26 @@ def build_model_response(
         raise InvalidModelResponseError(
             "The provider response was not a JSON object.",
             model_name=expected_resolved_model,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="provider_schema_validation_failed",
+                diagnostic_code="top_level_not_object",
+            ),
         )
-    if any(field in payload for field in _BACKEND_OWNED_FIELDS):
+    backend_owned_field = next(
+        (field for field in _BACKEND_OWNED_FIELDS if field in payload),
+        None,
+    )
+    if backend_owned_field is not None:
         raise InvalidModelResponseError(
             "The provider response included a backend-owned field.",
             model_name=expected_resolved_model,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="provider_schema_validation_failed",
+                diagnostic_code="backend_owned_field",
+                field_path=backend_owned_field,
+            ),
         )
     validate_provider_payload_identity(
         payload,
@@ -147,7 +207,7 @@ def build_model_response(
         for field, value in payload.items()
         if field not in _PROVIDER_IDENTITY_FIELDS
     }
-    provider_content = _normalize_legacy_geometry(
+    provider_content, legacy_normalization_attempted = _normalize_legacy_geometry(
         provider_content,
         model_name=expected_resolved_model,
     )
@@ -159,6 +219,13 @@ def build_model_response(
         raise InvalidModelResponseError(
             "The provider response style identity was invalid.",
             model_name=expected_resolved_model,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="effective_style_mismatch",
+                diagnostic_code="effective_style_mismatch",
+                field_path="edit_plan.style_profile",
+                legacy_normalization_attempted=legacy_normalization_attempted,
+            ),
         )
     trusted_payload = {
         **provider_content,
@@ -177,9 +244,20 @@ def build_model_response(
     try:
         return response_type.model_validate(trusted_payload)
     except ValidationError as exc:
+        error_count, errors = validation_error_summary(exc)
+        diagnostic_code = _schema_diagnostic_code(errors)
         raise InvalidModelResponseError(
             "The provider response does not match the API contract.",
             model_name=expected_resolved_model,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="provider_schema_validation_failed",
+                diagnostic_code=diagnostic_code,
+                field_path=first_error_path(errors),
+                validation_errors=errors,
+                validation_error_count=error_count,
+                legacy_normalization_attempted=legacy_normalization_attempted,
+            ),
         ) from exc
 
 
@@ -202,6 +280,11 @@ def validate_model_response(
         raise InvalidModelResponseError(
             "The model client returned an unexpected response type.",
             model_name=safe_model_name,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="provider_schema_validation_failed",
+                diagnostic_code="unexpected_response_type",
+            ),
         )
 
     mismatches: list[str] = []
@@ -245,5 +328,11 @@ def validate_model_response(
         raise InvalidModelResponseError(
             "The model response identity was invalid.",
             model_name=safe_model_name,
+            code="provider_schema_mismatch",
+            diagnostics=InvalidResponseDiagnostics(
+                stage="effective_style_mismatch",
+                diagnostic_code="response_identity_mismatch",
+                field_path=mismatches[0],
+            ),
         )
     return response

@@ -64,6 +64,16 @@ function ProgressTracker:markCompleted(count)
     )
 end
 
+function ProgressTracker:setBatchCounts(counts)
+    counts = type(counts) == "table" and counts or {}
+    self.batchCounts = {
+        applied = math.max(0, tonumber(counts.applied) or 0),
+        skipped = math.max(0, tonumber(counts.skipped) or 0),
+        failed = math.max(0, tonumber(counts.failed) or 0),
+        processed = math.max(0, tonumber(counts.processed) or 0),
+    }
+end
+
 function ProgressTracker:elapsedSeconds()
     local elapsed = self.clock() - self.startedAt
     if not Utils.isFiniteNumber(elapsed) or elapsed < 0 then
@@ -81,6 +91,29 @@ function ProgressTracker:estimatedRemainingSeconds()
 end
 
 function ProgressTracker:caption()
+    if self.batchCounts then
+        local current = self.currentIndex or math.min(
+            self.total,
+            self.batchCounts.processed + 1
+        )
+        local remaining = math.max(
+            0,
+            self.total - self.batchCounts.processed
+        )
+        return table.concat({
+            "Processing photo "
+                .. tostring(current)
+                .. " of "
+                .. tostring(self.total),
+            "Current: " .. Utils.safeMessage(self.filename, "Preparing"),
+            "Applied: " .. tostring(self.batchCounts.applied),
+            "Skipped: " .. tostring(self.batchCounts.skipped),
+            "Failed: " .. tostring(self.batchCounts.failed),
+            "Remaining: " .. tostring(remaining),
+            "Elapsed: "
+                .. ProgressTracker.formatDuration(self:elapsedSeconds()),
+        }, "\n")
+    end
     local remaining = self:estimatedRemainingSeconds()
     local remainingText = remaining
         and ProgressTracker.formatDuration(remaining)

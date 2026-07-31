@@ -1,58 +1,138 @@
 {
   "id": "documentary",
   "display_name": "Documentary",
-  "description": "Authentic documentary rendering with meaningful professional finishing, visibility, separation, and subject emphasis.",
-  "version": "1.0",
+  "description": "Authentic documentary rendering with professional tonal finishing, natural color, meaningful subject separation, and faithful preservation of atmosphere and context.",
+
+  "version": "1.1",
+
   "editing_goals": [
-    "Preserve authenticity, local atmosphere, realistic color, and contextual detail",
-    "Improve visibility, tonal separation, and subject emphasis without flattening the scene",
-    "Create a professionally finished result while keeping available-light color and mood believable",
-    "Use meaningful moderate tonal and color adjustments without dramatic stylization"
+    "Produce a professionally finished documentary image while preserving the authenticity of the recorded scene.",
+    "Improve tonal separation, visibility, and subject emphasis without altering the visual story.",
+    "Maintain realistic available-light color and environmental atmosphere.",
+    "Enhance detail only where it improves readability and visual communication.",
+    "Deliver a polished image suitable for editorial and documentary stock libraries without introducing stylistic interpretation."
   ],
+
   "cautions": [
-    "Avoid artificial tone-mapped appearance",
-    "Avoid crushed shadows and excessive shadow lifting",
-    "Avoid excessive saturation, clarity, texture, and dehaze",
-    "Crop only for a clear composition benefit",
-    "Do not leave the image dull or unfinished in the name of authenticity"
+    "Never create an HDR or tone-mapped appearance.",
+    "Avoid excessive shadow lifting that changes the mood of the scene.",
+    "Avoid crushed blacks that hide important documentary detail.",
+    "Avoid exaggerated color, excessive Texture, Clarity, or Dehaze.",
+    "Avoid halos or obvious local processing.",
+    "Crop only when it clearly improves composition without changing documentary context.",
+    "Do not leave the image looking unfinished in the name of authenticity."
   ],
+
   "slider_ranges": {
-    "Exposure2012": {"min": -0.8, "max": 0.8, "preferred": 0.0},
-    "Contrast2012": {"min": -12.0, "max": 20.0, "preferred": 6.0},
-    "Highlights2012": {"min": -55.0, "max": 8.0, "preferred": -22.0},
-    "Shadows2012": {"min": -15.0, "max": 38.0, "preferred": 14.0},
-    "Whites2012": {"min": -15.0, "max": 18.0, "preferred": 4.0},
-    "Blacks2012": {"min": -18.0, "max": 12.0, "preferred": -5.0},
-    "Texture": {"min": -8.0, "max": 16.0, "preferred": 4.0},
-    "Clarity2012": {"min": -8.0, "max": 14.0, "preferred": 3.0},
-    "Dehaze": {"min": -4.0, "max": 10.0, "preferred": 2.0},
-    "Vibrance": {"min": -8.0, "max": 20.0, "preferred": 6.0},
-    "Saturation": {"min": -10.0, "max": 8.0, "preferred": 0.0},
-    "Temperature": {"min": 3200.0, "max": 7800.0, "preferred": 5500.0},
-    "Tint": {"min": -18.0, "max": 18.0, "preferred": 0.0}
+
+    "Exposure2012": {
+      "min": -0.8,
+      "max": 0.8,
+      "preferred": 0.05
+    },
+
+    "Contrast2012": {
+      "min": -12.0,
+      "max": 22.0,
+      "preferred": 8.0
+    },
+
+    "Highlights2012": {
+      "min": -60.0,
+      "max": 8.0,
+      "preferred": -26.0
+    },
+
+    "Shadows2012": {
+      "min": -15.0,
+      "max": 40.0,
+      "preferred": 16.0
+    },
+
+    "Whites2012": {
+      "min": -15.0,
+      "max": 20.0,
+      "preferred": 6.0
+    },
+
+    "Blacks2012": {
+      "min": -20.0,
+      "max": 12.0,
+      "preferred": -7.0
+    },
+
+    "Texture": {
+      "min": -8.0,
+      "max": 18.0,
+      "preferred": 5.0
+    },
+
+    "Clarity2012": {
+      "min": -8.0,
+      "max": 15.0,
+      "preferred": 4.0
+    },
+
+    "Dehaze": {
+      "min": -4.0,
+      "max": 12.0,
+      "preferred": 3.0
+    },
+
+    "Vibrance": {
+      "min": -8.0,
+      "max": 22.0,
+      "preferred": 8.0
+    },
+
+    "Saturation": {
+      "min": -10.0,
+      "max": 8.0,
+      "preferred": 0.0
+    },
+
+    "Temperature": {
+      "min": 3200.0,
+      "max": 7800.0,
+      "preferred": 5500.0
+    },
+
+    "Tint": {
+      "min": -18.0,
+      "max": 18.0,
+      "preferred": 0.0
+    }
   },
+
   "crop_policy": {
     "allow_crop": true,
     "max_edge_crop": 0.08,
     "minimum_retained_area": 0.88,
-    "minimum_confidence": 0.7,
+    "minimum_confidence": 0.70,
     "require_confidence": false,
     "preserve_aspect_ratio": false
   },
+
   "leveling_policy": {
     "allow_leveling": true,
     "maximum_absolute_angle": 3.0,
     "guidance": [
-      "Correct only clearly accidental rotational tilt",
-      "Preserve intentional or authentic dynamic framing",
-      "Do not sacrifice documentary context to make geometry formal"
+      "Correct only obvious accidental camera roll.",
+      "Preserve intentional dynamic framing.",
+      "Do not force formal geometry if it changes the documentary character of the image.",
+      "Prioritize truthful presentation over visual perfection."
     ]
+  },
+  "upright_policy": {
+    "allow_upright": true,
+    "allowed_modes": ["off", "level"],
+    "minimum_confidence": 0.85
   },
   "denoise_policy": {
     "allow_denoise": true,
-    "minimum_iso": 800,
+    "minimum_iso": 640,
     "minimum_amount": 0.0,
-    "maximum_amount": 30.0,
+    "maximum_amount": 35.0,
     "minimum_confidence": 0.65,
     "preserve_detail": true
   }

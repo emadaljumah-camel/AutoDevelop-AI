@@ -11,12 +11,15 @@ local logged = {
     debug = {},
 }
 local lastDialog = nil
+local lastModalDialogOptions = nil
 local lastPropertyTable = nil
 local modalDialogResult = "ok"
 local modalDialogMutator = nil
 local fakeHttpResponseBody = nil
 local fakeHttpResponseHeaders = { status = 200 }
+local fakeHttpResponder = nil
 local lastHttpPostBody = nil
+local lastHttpPostHeaders = nil
 
 _G._PLUGIN = {
     path = "AutoDevelopAI.lrplugin",
@@ -29,6 +32,26 @@ _G.import = function(name)
                 return parent .. "/" .. child
             end,
         }
+    end
+    if name == "LrApplication" then
+        return {
+            activeCatalog = function()
+                return {}
+            end,
+        }
+    end
+    if name == "LrProgressScope" then
+        return function()
+            return {}
+        end
+    end
+    if name == "LrFileUtils" then
+        return {}
+    end
+    if name == "LrExportSession" then
+        return function()
+            return {}
+        end
     end
     if name == "LrPrefs" then
         return {
@@ -74,10 +97,14 @@ _G.import = function(name)
                 }
             end,
             presentModalDialog = function(options)
+                lastModalDialogOptions = options
                 if modalDialogMutator then
                     modalDialogMutator(options, lastPropertyTable)
                 end
                 return modalDialogResult
+            end,
+            stopModalWithResult = function(_, result)
+                modalDialogResult = result
             end,
         }
     end
@@ -113,6 +140,8 @@ _G.import = function(name)
             "static_text",
             "popup_menu",
             "checkbox",
+            "push_button",
+            "scrolled_view",
         }) do
             factory[method] = function(_, specification)
                 return specification
@@ -136,8 +165,12 @@ _G.import = function(name)
     end
     if name == "LrHttp" then
         return {
-            post = function(_, body)
+            post = function(_, body, headers)
                 lastHttpPostBody = body
+                lastHttpPostHeaders = headers
+                if fakeHttpResponder then
+                    return fakeHttpResponder(body, headers)
+                end
                 return fakeHttpResponseBody, fakeHttpResponseHeaders
             end,
             get = function()
@@ -188,6 +221,7 @@ local Validation = ModuleLoader.load("lib/Validation.lua")
 local BatchPolicy = ModuleLoader.load("lib/BatchPolicy.lua")
 local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
 local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
+local ApiClient = ModuleLoader.load("lib/ApiClient.lua")
 local ApplicationGate = ModuleLoader.load("lib/ApplicationGate.lua")
 local BatchOperationRecorder =
     ModuleLoader.load("lib/BatchOperationRecorder.lua")
@@ -202,6 +236,8 @@ local ResultStore = ModuleLoader.load("lib/ResultStore.lua")
 local DevelopSettingsMapper =
     ModuleLoader.load("lib/DevelopSettingsMapper.lua")
 local CropMapper = ModuleLoader.load("lib/CropMapper.lua")
+local DevelopModeMapper =
+    ModuleLoader.load("lib/DevelopModeMapper.lua")
 local PendingOperation = ModuleLoader.load("lib/PendingOperation.lua")
 local ApplyService = ModuleLoader.load("lib/ApplyService.lua")
 local Sha256 = ModuleLoader.load("lib/Sha256.lua")
@@ -210,6 +246,57 @@ local LearningPhotoIdentity =
 local LearningSessionStore =
     ModuleLoader.load("lib/LearningSessionStore.lua")
 local LearningClient = ModuleLoader.load("lib/LearningClient.lua")
+local LearningBaselineService =
+    ModuleLoader.load("lib/LearningBaselineService.lua")
+local AutoDevelopCommand =
+    ModuleLoader.load("lib/AutoDevelopCommand.lua")
+local PendingOperationReview =
+    ModuleLoader.load("lib/PendingOperationReview.lua")
+local LearningFeedbackDialog =
+    ModuleLoader.load("dialogs/LearningFeedbackDialog.lua")
+
+local uprightMappings = {
+    off = 0,
+    auto = 1,
+    full = 2,
+    level = 3,
+    vertical = 4,
+}
+for mode, rawValue in pairs(uprightMappings) do
+    local encoded, encodeError = DevelopModeMapper.encodeUpright(mode)
+    assertEqual(encoded, rawValue)
+    assertTrue(encodeError == nil)
+    local decoded = DevelopModeMapper.decodeUpright(rawValue)
+    assertEqual(decoded.mode, mode)
+    assertEqual(decoded.rawValue, rawValue)
+    assertEqual(decoded.supported, true)
+end
+local unknownUpright = DevelopModeMapper.decodeUpright(99)
+assertEqual(unknownUpright.mode, "unknown")
+assertEqual(unknownUpright.rawValue, 99)
+assertEqual(unknownUpright.supported, false)
+local invalidUpright, invalidUprightError =
+    DevelopModeMapper.encodeUpright("guided")
+assertTrue(invalidUpright == nil)
+assertEqual(invalidUprightError, "unknown_upright_mode")
+local hdrOff = DevelopModeMapper.decodeHdr(0)
+assertEqual(hdrOff.enabled, false)
+assertEqual(hdrOff.rawValue, 0)
+assertEqual(hdrOff.supported, true)
+local hdrOn = DevelopModeMapper.decodeHdr(1)
+assertEqual(hdrOn.enabled, true)
+assertEqual(hdrOn.rawValue, 1)
+assertEqual(hdrOn.supported, true)
+local unknownHdr = DevelopModeMapper.decodeHdr(2)
+assertTrue(unknownHdr.enabled == nil)
+assertEqual(unknownHdr.rawValue, 2)
+assertEqual(unknownHdr.supported, false)
+assertEqual(DevelopModeMapper.encodeHdr(false), 0)
+assertEqual(DevelopModeMapper.encodeHdr(true), 1)
+local invalidHdr, invalidHdrError =
+    DevelopModeMapper.encodeHdr("true")
+assertTrue(invalidHdr == nil)
+assertEqual(invalidHdrError, "invalid_hdr_enabled")
 
 assertTrue(
     Utils == ModuleLoader.load("lib/Utils.lua"),
@@ -496,6 +583,60 @@ assertEqual(
     "Formatted Name.NEF",
     "filename must come from formatted metadata"
 )
+local rawFilenameFallback = photo({
+    localIdentifier = 19,
+    fileName = "Raw_Fallback.JPG",
+}, {
+    fileName = "",
+})
+local rawIdentity = Utils.capturePhotoIdentity(rawFilenameFallback)
+assertEqual(rawIdentity.photoId, "photo_19")
+assertEqual(rawIdentity.displayFilename, "Raw_Fallback.JPG")
+
+local pathFallback = photo({
+    localIdentifier = 20,
+    fileName = "",
+    path = "C:\\Photos\\Path_Fallback.DNG",
+}, {
+    fileName = "",
+})
+local pathIdentity = Utils.capturePhotoIdentity(pathFallback)
+assertEqual(pathIdentity.photoId, "photo_20")
+assertEqual(pathIdentity.displayFilename, "Path_Fallback.DNG")
+
+local internalOnly = photo({
+    localIdentifier = 283285,
+    fileName = "",
+}, {
+    fileName = "",
+})
+local internalIdentity = Utils.capturePhotoIdentity(internalOnly)
+assertEqual(internalIdentity.photoId, "photo_283285")
+assertEqual(internalIdentity.displayFilename, "photo_283285")
+
+local formattedReadCount = 0
+local rawFilenameReadCount = 0
+local capturedOncePhoto = {
+    localIdentifier = 21,
+    getFormattedMetadata = function(_, key)
+        if key == "fileName" then
+            formattedReadCount = formattedReadCount + 1
+            return "Captured_Once.NEF"
+        end
+        return nil
+    end,
+    getRawMetadata = function(_, key)
+        if key == "fileName" then
+            rawFilenameReadCount = rawFilenameReadCount + 1
+        end
+        return nil
+    end,
+}
+local capturedOnceIdentity =
+    Utils.capturePhotoIdentity(capturedOncePhoto)
+assertEqual(capturedOnceIdentity.displayFilename, "Captured_Once.NEF")
+assertEqual(formattedReadCount, 1)
+assertEqual(rawFilenameReadCount, 0)
 local sameNameFirst = photo({
     localIdentifier = 50,
     fileName = "same.nef",
@@ -537,7 +678,9 @@ local mappedPhoto = photo({
     Exposure2012 = 0,
     Contrast2012 = 12,
     Temperature = 5500,
+    PerspectiveUpright = 4,
     HDREditMode = 0,
+    HDRMaxValue = 2.3,
     UnsupportedSetting = 99,
     Tint = 0 / 0,
 })
@@ -613,6 +756,22 @@ assertTrue(
     settings.UnsupportedSetting == nil,
     "unsupported settings must be omitted"
 )
+local learningState = ExifMapper.mapLearningDevelopState(mappedPhoto)
+assertEqual(learningState.settings.Contrast2012, 12)
+assertEqual(learningState.modes.upright, "vertical")
+assertEqual(learningState.modes.hdr_enabled, false)
+assertEqual(learningState.diagnostics.HDRMaxValue, 2.3)
+assertTrue(learningState.settings.HDRMaxValue == nil)
+local filteredLearningSettings = ExifMapper.filterLearningSettings({
+    Exposure2012 = 0.4,
+    EnableTransform = true,
+    PerspectiveUpright = 2,
+    HDREditMode = 1,
+})
+assertEqual(filteredLearningSettings.Exposure2012, 0.4)
+assertTrue(filteredLearningSettings.EnableTransform == nil)
+assertTrue(filteredLearningSettings.PerspectiveUpright == nil)
+assertTrue(filteredLearningSettings.HDREditMode == nil)
 local manuallyEditedValues = {
     Contrast2012 = 25,
     Clarity2012 = 32,
@@ -669,6 +828,10 @@ fakeHttpResponseBody = assert(Json.encode({
     ignored_changes = {},
     crop_changes = {},
     leveling_changes = {},
+    mode_changes = {
+        upright = "vertical",
+        hdr_enabled = true,
+    },
 }))
 local previewResult = LearningClient.previewFeedback({
     schema_version = 1,
@@ -684,6 +847,8 @@ assertEqual(previewResult.significantChanges.Contrast2012.delta, 13)
 assertEqual(previewResult.significantChanges.Clarity2012.delta, 14)
 assertEqual(previewResult.significantChanges.Dehaze.delta, 12)
 assertEqual(previewResult.significantChanges.Vibrance.delta, 20)
+assertEqual(previewResult.modeChanges.upright, "vertical")
+assertEqual(previewResult.modeChanges.hdr_enabled, true)
 local postedPreview = assert(Json.decode(lastHttpPostBody))
 assertEqual(postedPreview.final_settings.Contrast2012, 25)
 assertEqual(postedPreview.final_settings.Clarity2012, 32)
@@ -691,6 +856,7 @@ assertEqual(postedPreview.final_settings.Dehaze, 18)
 assertEqual(postedPreview.final_settings.Vibrance, 38)
 assertTrue(postedPreview.final_settings.Contrast == nil)
 assertTrue(postedPreview.final_settings.Clarity == nil)
+assertTrue(type(postedPreview.final_modes) == "table")
 
 local request = assert(RequestBuilder.build(
     mappedPhoto,
@@ -1422,8 +1588,16 @@ local developResponse = {
         amount = 20,
         confidence = 0.9,
     },
+    upright = {
+        recommended = false,
+        mode = "off",
+        confidence = 0,
+        reason = Json.null,
+    },
     enable_hdr = {
         recommended = false,
+        enabled = false,
+        confidence = 0,
         reason = Json.null,
     },
     warnings = {
@@ -1498,7 +1672,7 @@ assertTrue(
     not Validation.validateDevelopResponse(developMissingHdr, developRequest)
 )
 local developInvalidHdrReason = Utils.deepCopy(developResponse)
-developInvalidHdrReason.enable_hdr.reason = "private provider detail"
+developInvalidHdrReason.enable_hdr.reason = 123
 assertTrue(
     not Validation.validateDevelopResponse(
         developInvalidHdrReason,
@@ -1510,6 +1684,14 @@ developInvalidHdrFlag.enable_hdr.recommended = 1
 assertTrue(
     not Validation.validateDevelopResponse(
         developInvalidHdrFlag,
+        developRequest
+    )
+)
+local developInvalidUpright = Utils.deepCopy(developResponse)
+developInvalidUpright.upright.mode = "guided"
+assertTrue(
+    not Validation.validateDevelopResponse(
+        developInvalidUpright,
         developRequest
     )
 )
@@ -1974,6 +2156,9 @@ local safeOperation = PendingOperation.new({
         Exposure2012 = 0,
         UnknownSetting = 123,
     },
+    finalSettings = {
+        Exposure2012 = 0,
+    },
     originalSettings = {
         Exposure2012 = 1,
     },
@@ -1997,6 +2182,10 @@ local hdrOperation = PendingOperation.new({
         Exposure2012 = 0.25,
         HDREditMode = 99,
     },
+    finalSettings = {
+        Exposure2012 = 0.25,
+        HDREditMode = 1,
+    },
     originalSettings = {
         Exposure2012 = 0,
         HDREditMode = 0,
@@ -2009,6 +2198,555 @@ local hdrApplyResult = ApplyService.applyBatch(
 assertEqual(hdrApplyResult.applied, 1)
 assertEqual(appliedSettings.Exposure2012, 0.25)
 assertEqual(appliedSettings.HDREditMode, 1)
+
+local preparedFinalSettings = ApplyService.prepareFinalSettings(
+    { Exposure2012 = 0.35 },
+    {
+        Exposure2012 = 0,
+        EnableTransform = false,
+        PerspectiveUpright = 0,
+        HDREditMode = 0,
+    },
+    "vertical",
+    true
+)
+assertEqual(preparedFinalSettings.Exposure2012, 0.35)
+assertEqual(preparedFinalSettings.EnableTransform, true)
+assertEqual(preparedFinalSettings.PerspectiveUpright, 4)
+assertEqual(preparedFinalSettings.HDREditMode, 1)
+assertTrue(ApplyService.validateFinalSettings(preparedFinalSettings))
+assertTrue(not ApplyService.validateFinalSettings({
+    Exposure2012 = 0.35,
+    UnsupportedSetting = 1,
+}))
+assertTrue(not ApplyService.validateFinalSettings({
+    PerspectiveUpright = 5,
+}))
+
+local exactSettingsReceived = nil
+local exactFinalSettings = { Exposure2012 = 0.45 }
+local exactOperation = PendingOperation.new({
+    photo = {
+        applyDevelopSettings = function(_, settings)
+            exactSettingsReceived = settings
+        end,
+    },
+    mappedSettings = { Exposure2012 = 0.4 },
+    finalSettings = exactFinalSettings,
+    originalSettings = { Exposure2012 = 0 },
+})
+local exactApplyResult =
+    ApplyService.applyOne(fakeCatalog, exactOperation)
+assertEqual(exactApplyResult.applied, 1)
+assertTrue(exactSettingsReceived == exactOperation.finalSettings)
+assertEqual(exactSettingsReceived.Exposure2012, 0.45)
+
+do
+local reviewOperation = PendingOperation.new({
+    originalSettings = {
+        Exposure2012 = 0,
+        Contrast2012 = 2,
+        Temperature = 5200,
+        Tint = 3,
+        CropLeft = 0,
+        CropRight = 1,
+        CropTop = 0,
+        CropBottom = 1,
+        CropAngle = 0,
+        EnableTransform = false,
+        PerspectiveUpright = 0,
+        HDREditMode = 0,
+    },
+    mappedSettings = {
+        Exposure2012 = 9,
+    },
+    finalSettings = {
+        Exposure2012 = 0.35,
+        Contrast2012 = 18,
+        Temperature = 5480,
+        Tint = 5,
+        CropLeft = 0.035,
+        CropRight = 0.972,
+        CropTop = 0.018,
+        CropBottom = 0.965,
+        CropAngle = -1.2,
+        EnableTransform = true,
+        PerspectiveUpright = 4,
+        HDREditMode = 1,
+    },
+    cropRecommended = true,
+    compositionCropIncluded = true,
+    levelingRecommended = true,
+    levelingIncluded = true,
+    levelingMode = "horizon",
+    uprightRecommended = true,
+    uprightMode = "vertical",
+    uprightConfidence = 0.91,
+    hdrRecommended = true,
+    enableHdr = true,
+    denoiseRecommended = true,
+    learning = {
+        enabled = true,
+        retrieved_sample_count = 5,
+        average_similarity = 1,
+        personalization_applied = true,
+    },
+    warnings = {
+        { message = "Warning 1" },
+        { message = "Warning 2" },
+        { message = "Warning 3" },
+        { message = "Warning 4" },
+        { message = "Warning 5" },
+        { message = "Warning 6" },
+    },
+})
+local review = PendingOperationReview.build(reviewOperation)
+assertEqual(reviewOperation.finalSettings.Exposure2012, 0.35)
+assertTrue(reviewOperation.finalSettings.change == nil)
+assertEqual(review.settingCount, 12)
+assertEqual(#review.developRows, 4)
+assertEqual(review.developRows[1].label, "Exposure")
+assertEqual(review.developRows[1].current, "0.00")
+assertEqual(review.developRows[1].proposed, "+0.35")
+assertEqual(review.developRows[1].change, "+0.35")
+assertEqual(review.developRows[1].proposedValue, 0.35)
+assertEqual(review.developRows[2].label, "Contrast")
+assertEqual(review.developRows[2].change, "+16")
+assertEqual(review.developRows[3].current, "5200 K")
+assertEqual(review.developRows[3].proposed, "5480 K")
+assertEqual(review.developRows[3].change, "+280 K")
+assertEqual(review.developRows[4].current, "+3")
+assertEqual(review.developRows[4].proposed, "+5")
+assertEqual(review.developRows[4].change, "+2")
+for _, settingRow in ipairs(review.developRows) do
+    assertTrue(settingRow.key ~= "Dehaze")
+end
+assertEqual(#review.geometryRows, 5)
+assertEqual(review.geometryRows[1].current, "0.000")
+assertEqual(review.geometryRows[1].proposed, "0.035")
+assertEqual(review.geometryRows[5].proposed, "-1.20\194\176")
+assertTrue(
+    table.concat(review.geometryLines, "\n"):find(
+        "Composition crop: Recommended - prepared for application",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(review.geometryLines, "\n"):find(
+        "Leveling: Recommended - prepared for application",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(review.uprightLines, "\n"):find(
+        "Current -> proposed: off -> vertical",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(review.hdrLines, "\n"):find(
+        "Enabled: Yes",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(review.processingLines, "\n"):find(
+        "Denoise will be applied: No",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(review.processingLines, "\n"):find(
+        "Dust removal: Not part of this prepared operation",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(review.learningLines, "\n"):find(
+        "Average similarity: 1.00",
+        1,
+        true
+    ) ~= nil
+)
+assertEqual(#review.warningLines, 6)
+assertEqual(review.warningLines[6], "+1 more warnings")
+
+local inactiveUprightOff = PendingOperationReview.build(
+    PendingOperation.new({
+        originalSettings = { Exposure2012 = 0 },
+        finalSettings = { Exposure2012 = 0.2 },
+        upright = {
+            recommended = false,
+            mode = "off",
+            confidence = 0,
+            reason = nil,
+        },
+        modeDiagnostics = { perspectiveUpright = 0 },
+    })
+)
+local inactiveUprightOffText =
+    table.concat(inactiveUprightOff.uprightLines, "\n")
+assertTrue(
+    inactiveUprightOffText:find(
+        "Current -> proposed: off -> off",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    inactiveUprightOffText:find(
+        "Reason: No Upright correction recommended",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(inactiveUprightOffText:find("unknown", 1, true) == nil)
+
+local inactiveUprightVertical = PendingOperationReview.build(
+    PendingOperation.new({
+        originalSettings = { Exposure2012 = 0 },
+        finalSettings = { Exposure2012 = 0.2 },
+        upright = {
+            recommended = false,
+            mode = "off",
+            confidence = 0,
+            reason = nil,
+        },
+        modeDiagnostics = { perspectiveUpright = 4 },
+    })
+)
+local inactiveUprightVerticalText =
+    table.concat(inactiveUprightVertical.uprightLines, "\n")
+assertTrue(
+    inactiveUprightVerticalText:find(
+        "Mode: vertical",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    inactiveUprightVerticalText:find(
+        "Current -> proposed: vertical -> vertical",
+        1,
+        true
+    ) ~= nil
+)
+
+local unavailableUpright = PendingOperationReview.build(
+    PendingOperation.new({
+        originalSettings = { Exposure2012 = 0 },
+        finalSettings = { Exposure2012 = 0.2 },
+    })
+)
+local unavailableUprightText =
+    table.concat(unavailableUpright.uprightLines, "\n")
+assertTrue(
+    unavailableUprightText:find(
+        "Current -> proposed: Unavailable (no change proposed)",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(unavailableUprightText:find("unknown", 1, true) == nil)
+
+local inactiveHdr = PendingOperationReview.build(
+    PendingOperation.new({
+        originalSettings = { Exposure2012 = 0 },
+        finalSettings = { Exposure2012 = 0.2 },
+        hdr = {
+            recommended = false,
+            enabled = false,
+            confidence = 0.20,
+            reason = nil,
+        },
+        hdrDecision = {
+            scene_hdr_candidate = false,
+            scene_hdr_confidence = 0.20,
+            base_scene_evidence_score = 0.18,
+            learning_bonus = 0.10,
+            user_preference_bonus = 0.08,
+            combined_evidence_score = 0.36,
+            decision_basis = "disabled",
+            decision_confidence = Json.null,
+            scene_hdr_inconsistent = false,
+            contraindications = {},
+            visual_evidence_score = 0.18,
+            hdr_evidence_score = 0.36,
+            hdr_learning_applied = true,
+            hdr_learning_enable_rate = 1.0,
+            hdr_learning_sample_count = 4,
+            raw_hdr_recommended = false,
+            raw_hdr_confidence = 0.20,
+            validated_hdr_enabled = false,
+            validated_hdr_confidence = 0.20,
+            hdr_rejected = false,
+            hdr_rejection_reason = "insufficient_evidence",
+        },
+        modeDiagnostics = { hdrEditMode = 0 },
+    })
+)
+local inactiveHdrText = table.concat(inactiveHdr.hdrLines, "\n")
+for _, expectedText in ipairs({
+    "Base scene evidence: 18%",
+    "Learning bonus: 10%",
+    "Preference bonus: 8%",
+    "Combined evidence: 36%",
+    "Decision basis: Disabled",
+    "Current -> proposed: Disabled -> Disabled",
+}) do
+    assertTrue(inactiveHdrText:find(expectedText, 1, true) ~= nil)
+end
+assertTrue(inactiveHdrText:find("nil", 1, true) == nil)
+
+local cropOnly = PendingOperationReview.build(
+    PendingOperation.new({
+        originalSettings = {
+            CropLeft = 0,
+            CropRight = 1,
+            CropTop = 0,
+            CropBottom = 1,
+            CropAngle = 0,
+        },
+        finalSettings = {
+            CropLeft = 0.1,
+            CropRight = 0.9,
+            CropTop = 0.1,
+            CropBottom = 0.9,
+            CropAngle = 0,
+        },
+        cropRecommended = true,
+        compositionCropIncluded = true,
+    })
+)
+assertTrue(
+    table.concat(cropOnly.geometryLines, "\n"):find(
+        "Leveling: Not needed",
+        1,
+        true
+    ) ~= nil
+)
+
+local levelOnly = PendingOperationReview.build(
+    PendingOperation.new({
+        originalSettings = {
+            CropLeft = 0,
+            CropRight = 1,
+            CropTop = 0,
+            CropBottom = 1,
+            CropAngle = 0,
+        },
+        finalSettings = {
+            CropLeft = 0,
+            CropRight = 1,
+            CropTop = 0,
+            CropBottom = 1,
+            CropAngle = -0.6,
+        },
+        levelingRecommended = true,
+        levelingIncluded = true,
+    })
+)
+assertTrue(
+    table.concat(levelOnly.geometryLines, "\n"):find(
+        "Current crop bounds will be preserved",
+        1,
+        true
+    ) ~= nil
+)
+
+local neither = PendingOperationReview.build(PendingOperation.new({}))
+assertEqual(#neither.geometryRows, 0)
+assertTrue(
+    table.concat(neither.geometryLines, "\n"):find(
+        "Composition crop: Not needed",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(neither.geometryLines, "\n"):find(
+        "Leveling: Not needed",
+        1,
+        true
+    ) ~= nil
+)
+
+local suppressed = PendingOperationReview.build({
+    originalSettings = {},
+    finalSettings = {},
+    cropRecommended = true,
+    cropDisabled = true,
+    levelingRecommended = true,
+    levelingDisabled = true,
+})
+assertTrue(
+    table.concat(suppressed.geometryLines, "\n"):find(
+        "Composition crop: Recommended - suppressed by preference",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    table.concat(suppressed.geometryLines, "\n"):find(
+        "Leveling: Recommended - suppressed by preference",
+        1,
+        true
+    ) ~= nil
+)
+
+local displayFixture = PendingOperation.new({
+    photo = {},
+    photoId = "photo_283285",
+    displayFilename = "DSC_2841.NEF",
+    filename = "DSC_2841.NEF",
+    requestId = "display-fixture",
+    requestedStyleId = "auto",
+    effectiveStyleId = "architecture",
+    editingIntensity = "moderate",
+    originalSettings = {
+        Exposure2012 = 0.0,
+        Contrast2012 = 0,
+        Highlights2012 = 0,
+        Shadows2012 = 0,
+        Whites2012 = 0,
+        Blacks2012 = 0,
+        Texture = 0,
+        Clarity2012 = 0,
+        Dehaze = 0,
+        Vibrance = 0,
+        Saturation = 0,
+        Temperature = 5200,
+        Tint = 3,
+    },
+    finalSettings = {
+        Exposure2012 = 0.35,
+        Contrast2012 = 18,
+        Highlights2012 = -42,
+        Shadows2012 = 31,
+        Whites2012 = 14,
+        Blacks2012 = -17,
+        Texture = 12,
+        Clarity2012 = 9,
+        Dehaze = 7,
+        Vibrance = 21,
+        Saturation = 2,
+        Temperature = 5480,
+        Tint = 5,
+    },
+})
+local displayReview = PendingOperationReview.build(displayFixture)
+assertEqual(#displayReview.developRows, 13)
+local displayText = table.concat(
+    AutoDevelopConfirmationDialog.photoLines(displayFixture, 1, 1),
+    "\n"
+)
+for _, expected in ipairs({
+    "Exposure",
+    "0.00",
+    "+0.35",
+    "Contrast",
+    "+18",
+    "Highlights",
+    "-42",
+    "Temperature",
+    "5200 K",
+    "5480 K",
+    "+280 K",
+    "Tint",
+    "+3",
+    "+5",
+}) do
+    assertTrue(displayText:find(expected, 1, true) ~= nil)
+end
+assertTrue(#displayText > #"Photo 1 of 1" + 500)
+assertTrue(displayText:find("Filename: DSC_2841.NEF", 1, true) ~= nil)
+assertTrue(displayText:find("Filename: photo_283285", 1, true) == nil)
+
+local displayContract =
+    PendingOperation.inspectDisplayContract(displayFixture)
+assertTrue(displayContract.canApply)
+assertTrue(displayContract.finalSettings == displayFixture.finalSettings)
+assertEqual(displayContract.finalCount, 13)
+
+local displayFailureSummary = BatchSummary.new(1, "develop")
+BatchSummary.recordApplication(
+    displayFailureSummary,
+    {
+        displayFilename = displayFixture.displayFilename,
+        filename = displayFixture.photoId,
+        applicationStatus = "not_applied",
+    },
+    {
+        applied = 0,
+        restoredAfterFailure = 0,
+        failedNotRestored = 0,
+        notApplied = 1,
+        cancelled = false,
+    }
+)
+assertEqual(
+    displayFailureSummary.failures[1].filename,
+    "DSC_2841.NEF"
+)
+
+local missingOriginal = {
+    filename = "Missing-Original.NEF",
+    originalSettings = {},
+    finalSettings = { Exposure2012 = 0.4 },
+}
+local missingOriginalReview =
+    PendingOperationReview.build(missingOriginal)
+assertEqual(missingOriginalReview.developRows[1].current, "\226\128\148")
+assertEqual(missingOriginalReview.developRows[1].proposed, "+0.40")
+assertTrue(missingOriginalReview.comparisonUnavailable)
+assertTrue(
+    table.concat(missingOriginalReview.warningLines, "\n"):find(
+        "Current-value comparison is unavailable",
+        1,
+        true
+    ) ~= nil
+)
+local missingOriginalText = table.concat(
+    AutoDevelopConfirmationDialog.photoLines(missingOriginal, 1, 1),
+    "\n"
+)
+for _, section in ipairs({
+    "Develop Settings",
+    "Geometry",
+    "Processing",
+    "Learning",
+    "Warnings",
+}) do
+    assertTrue(missingOriginalText:find(section, 1, true) ~= nil)
+end
+
+local responseInsteadOfOperation = {
+    filename = "Response.NEF",
+    result = { develop_settings = { Exposure2012 = 0.4 } },
+}
+local responseDisplay =
+    PendingOperation.inspectDisplayContract(responseInsteadOfOperation)
+assertEqual(
+    responseDisplay.diagnosticCode,
+    "missing_final_settings"
+)
+local namingMismatchDisplay =
+    PendingOperation.inspectDisplayContract({
+        filename = "Naming-Mismatch.NEF",
+        originalSettings = { Exposure2012 = 0 },
+        finalDevelopSettings = { Exposure2012 = 0.4 },
+    })
+assertEqual(
+    namingMismatchDisplay.diagnosticCode,
+    "missing_final_settings"
+)
+end
 
 local partialCropSettings = ApplyService.sanitize({
     Exposure2012 = 0,
@@ -2117,6 +2855,180 @@ assertTrue(
 )
 assertTrue(restoreOperation.applyError:find("token=secret", 1, true) == nil)
 
+local singleApplyOperation = PendingOperation.new({
+    photo = successfulPhoto,
+    mappedSettings = { Exposure2012 = 0.5 },
+    originalSettings = { Exposure2012 = 0 },
+})
+local singleApplyResult =
+    ApplyService.applyOne(fakeCatalog, singleApplyOperation)
+assertEqual(singleApplyResult.applied, 1)
+assertEqual(singleApplyOperation.applicationStatus, "applied")
+assertEqual(appliedSettings.Exposure2012, 0.5)
+
+local singleRestoreOperation = PendingOperation.new({
+    photo = failingPhoto,
+    mappedSettings = { Exposure2012 = 0.75 },
+    originalSettings = { Exposure2012 = 0 },
+})
+restoreCalls = 0
+local singleRestoreResult =
+    ApplyService.applyOne(fakeCatalog, singleRestoreOperation)
+assertEqual(singleRestoreResult.restoredAfterFailure, 1)
+assertEqual(singleRestoreOperation.applicationStatus, "restored")
+
+local invalidSingleApply = ApplyService.applyOne(fakeCatalog, nil)
+assertEqual(invalidSingleApply.applied, 0)
+assertEqual(invalidSingleApply.notApplied, 1)
+assertEqual(invalidSingleApply.writeErrorCode, "invalid_operation")
+
+local ignoredBaseline = LearningBaselineService.recordOne(
+    PendingOperation.new({
+        applicationStatus = "pending",
+    }),
+    {
+        backendBaseUrl = "http://127.0.0.1:8005",
+        requestTimeoutSeconds = 120,
+    }
+)
+assertEqual(ignoredBaseline.saved, 0)
+assertEqual(ignoredBaseline.failed, 0)
+
+local baselinePhoto = photo({
+    localIdentifier = 8247,
+    fileName = "DSC_8247.NEF",
+    fileFormat = "RAW",
+}, nil, {
+    Exposure2012 = 0.45,
+    PerspectiveUpright = 2,
+    HDREditMode = 1,
+})
+local baselineOperation = PendingOperation.new({
+    photo = baselinePhoto,
+    displayFilename = "DSC_8247.NEF",
+    filename = "DSC_8247.NEF",
+    requestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    profileId = "documentary",
+    model = "qwen",
+    resolvedModel = "qwen_qwen3-vl-32b-instruct",
+    originalSettings = {
+        Exposure2012 = 0.1,
+        EnableTransform = false,
+        PerspectiveUpright = 0,
+        HDREditMode = 0,
+    },
+    mappedSettings = {
+        Exposure2012 = 0.45,
+        EnableTransform = true,
+        PerspectiveUpright = 2,
+        HDREditMode = 1,
+    },
+    upright = {
+        recommended = true,
+        mode = "full",
+        confidence = 0.8,
+    },
+    hdr = {
+        recommended = true,
+        enabled = true,
+        confidence = 0.75,
+    },
+    hdrDecision = {
+        contraindications = {},
+    },
+})
+baselineOperation.applicationStatus = "applied"
+fakeHttpResponder = function(body)
+    local posted = assert(Json.decode(body))
+    return assert(Json.encode({
+        schema_version = 1,
+        session_id = posted.session_id,
+        state = "pending_feedback",
+        stored = true,
+    })), { status = 200 }
+end
+local storedBaseline = LearningBaselineService.recordOne(
+    baselineOperation,
+    {
+        backendBaseUrl = "http://127.0.0.1:8005",
+        requestTimeoutSeconds = 120,
+    }
+)
+assertEqual(storedBaseline.saved, 1)
+assertEqual(storedBaseline.failed, 0)
+local postedBaseline = assert(Json.decode(lastHttpPostBody))
+assertEqual(postedBaseline.original_settings.Exposure2012, 0.1)
+assertTrue(postedBaseline.original_settings.EnableTransform == nil)
+assertTrue(postedBaseline.original_settings.PerspectiveUpright == nil)
+assertTrue(postedBaseline.original_settings.HDREditMode == nil)
+assertEqual(postedBaseline.recommendation.Exposure2012, 0.45)
+assertTrue(postedBaseline.recommendation.EnableTransform == nil)
+assertTrue(postedBaseline.recommendation.PerspectiveUpright == nil)
+assertTrue(postedBaseline.recommendation.HDREditMode == nil)
+assertEqual(postedBaseline.original_modes.upright, "off")
+assertEqual(postedBaseline.original_modes.hdr_enabled, false)
+assertEqual(postedBaseline.recommendation_modes.upright, "full")
+assertEqual(postedBaseline.recommendation_modes.hdr_enabled, true)
+assertEqual(postedBaseline.applied_modes.upright, "full")
+assertEqual(postedBaseline.applied_modes.hdr_enabled, true)
+assertTrue(postedBaseline.hdr_decision ~= nil)
+assertTrue(postedBaseline.hdr_decision.contraindications == nil)
+
+baselineOperation.hdrDecision.contraindications = {
+    "high_noise_risk",
+}
+local storedBaselineWithContraindication =
+    LearningBaselineService.recordOne(
+        baselineOperation,
+        {
+            backendBaseUrl = "http://127.0.0.1:8005",
+            requestTimeoutSeconds = 120,
+        }
+    )
+assertEqual(storedBaselineWithContraindication.saved, 1)
+assertEqual(storedBaselineWithContraindication.failed, 0)
+local postedBaselineWithContraindication =
+    assert(Json.decode(lastHttpPostBody))
+assertEqual(
+    postedBaselineWithContraindication.hdr_decision.contraindications[1],
+    "high_noise_risk"
+)
+
+local warningsBeforeBaselineFailure = #logged.warning
+fakeHttpResponder = function()
+    return assert(Json.encode({
+        error = {
+            code = "request_validation_failed",
+            message = "private backend validation detail",
+            retryable = false,
+        },
+    })), { status = 422 }
+end
+local rejectedBaseline = LearningBaselineService.recordOne(
+    baselineOperation,
+    {
+        backendBaseUrl = "http://127.0.0.1:8005",
+        requestTimeoutSeconds = 120,
+    }
+)
+assertEqual(rejectedBaseline.saved, 0)
+assertEqual(rejectedBaseline.failed, 1)
+assertEqual(#logged.warning, warningsBeforeBaselineFailure + 1)
+local baselineFailureLog = logged.warning[#logged.warning]
+assertTrue(baselineFailureLog:find("filename=DSC_8247.NEF", 1, true) ~= nil)
+assertTrue(baselineFailureLog:find("status=422", 1, true) ~= nil)
+assertTrue(
+    baselineFailureLog:find("category=validation_error", 1, true) ~= nil
+)
+assertTrue(
+    baselineFailureLog:find("code=request_validation_failed", 1, true) ~= nil
+)
+assertTrue(
+    baselineFailureLog:find("private backend", 1, true) == nil
+)
+fakeHttpResponder = nil
+LearningSessionStore.remove(LearningPhotoIdentity.forPhoto(baselinePhoto))
+
 local failedRestorePhoto = {
     applyDevelopSettings = function()
         error("simulated apply and restore failure")
@@ -2140,17 +3052,31 @@ PendingOperation.clear(pendingList)
 assertEqual(#pendingList, 0)
 
 assertTrue(BatchPolicy.shouldRetry(
-    { ok = false, status = 500, category = "backend_error" },
+    {
+        ok = false,
+        status = 500,
+        category = "backend_error",
+        retryable = true,
+    },
     0,
     false
 ))
 assertTrue(BatchPolicy.shouldRetry(
-    { ok = false, status = 502, category = "backend_error" },
+    {
+        ok = false,
+        status = 502,
+        category = "backend_error",
+        retryable = true,
+    },
     0,
     false
 ))
 assertTrue(BatchPolicy.shouldRetry(
-    { ok = false, category = "model_timeout" },
+    {
+        ok = false,
+        category = "model_timeout",
+        retryable = true,
+    },
     0,
     false
 ))
@@ -2160,15 +3086,61 @@ assertTrue(not BatchPolicy.shouldRetry(
     false
 ))
 assertTrue(not BatchPolicy.shouldRetry(
-    { ok = false, status = 500, category = "backend_error" },
+    {
+        ok = false,
+        status = 500,
+        category = "backend_error",
+        retryable = true,
+    },
     1,
     false
 ))
 assertTrue(not BatchPolicy.shouldRetry(
-    { ok = false, status = 502, category = "backend_error" },
+    {
+        ok = false,
+        status = 502,
+        category = "backend_error",
+        retryable = true,
+    },
     0,
     true
 ))
+assertTrue(not BatchPolicy.shouldRetry(
+    {
+        ok = false,
+        status = 502,
+        category = "invalid_response",
+        retryable = false,
+    },
+    0,
+    false
+))
+
+fakeHttpResponseBody = Json.encode({
+    error = {
+        code = "provider_schema_mismatch",
+        message = "The selected model response did not match.",
+        retryable = false,
+    },
+})
+fakeHttpResponseHeaders = { status = 502 }
+local deterministicInvalid = ApiClient.develop(
+    { request_id = "attempt-test" },
+    {
+        baseUrl = "http://127.0.0.1:8005",
+        timeoutSeconds = 120,
+        endpointAttempt = 2,
+    }
+)
+assertEqual(deterministicInvalid.retryable, false)
+assertEqual(deterministicInvalid.category, "invalid_response")
+local attemptHeader = nil
+for _, header in ipairs(lastHttpPostHeaders or {}) do
+    if header.field == "X-Autodevelop-Attempt" then
+        attemptHeader = header.value
+    end
+end
+assertEqual(attemptHeader, "2")
 
 local summary = BatchSummary.new(5, "analyze")
 summary.analyzed = 2
@@ -2183,6 +3155,531 @@ assertEqual(summary.analyzed, 2)
 assertEqual(summary.failed, 1)
 assertEqual(summary.skipped, 1)
 assertEqual(summary.notProcessed, 1)
+
+do
+local incrementalSummary = BatchSummary.new(4, "develop")
+local incrementalOperation = PendingOperation.new({
+    photo = {},
+    filename = "Incremental.NEF",
+    requestId = "incremental-request",
+    requestedStyleId = "auto",
+    effectiveStyleId = "architecture",
+    editingIntensity = "strong",
+    originalSettings = { Exposure2012 = 0 },
+    mappedSettings = { Exposure2012 = 0.35 },
+    finalSettings = { Exposure2012 = 0.35 },
+    cropRecommended = true,
+    compositionCropIncluded = true,
+    levelingRecommended = true,
+    levelingIncluded = true,
+    levelingAngle = -0.6,
+    hdrRecommended = true,
+    enableHdr = true,
+    denoiseRecommended = true,
+    warnings = { { code = "test" } },
+    model = "gpt_oss",
+    resolvedModel = "test-model",
+    learning = {
+        enabled = true,
+        personalization_applied = true,
+        usable_sample_count = 5,
+        retrieved_sample_count = 5,
+        minimum_sample_count = 3,
+        average_similarity = 0.91,
+    },
+})
+BatchSummary.markAttempted(incrementalSummary)
+BatchSummary.recordPrepared(incrementalSummary, incrementalOperation)
+assertEqual(incrementalSummary.attempted, 1)
+assertEqual(incrementalSummary.prepared, 1)
+assertEqual(incrementalSummary.ready, 1)
+assertEqual(incrementalSummary.effectiveStyles.architecture, 1)
+assertEqual(incrementalSummary.editingIntensities.strong, 1)
+assertEqual(incrementalSummary.cropRecommendedCount, 1)
+assertEqual(incrementalSummary.levelingRecommendedCount, 1)
+assertEqual(incrementalSummary.hdrRecommendedCount, 1)
+assertEqual(incrementalSummary.denoiseRecommendedCount, 1)
+assertEqual(incrementalSummary.personalizationApplied, 1)
+assertEqual(incrementalSummary.warningCount, 1)
+assertEqual(incrementalSummary.models.gpt_oss, true)
+assertEqual(incrementalSummary.resolvedModels["test-model"], true)
+
+incrementalOperation.applicationStatus = "applied"
+BatchSummary.recordApplication(
+    incrementalSummary,
+    incrementalOperation,
+    {
+        applied = 1,
+        restoredAfterFailure = 0,
+        failedNotRestored = 0,
+        notApplied = 0,
+    }
+)
+assertEqual(incrementalSummary.processed, 1)
+assertEqual(incrementalSummary.applied, 1)
+assertEqual(incrementalSummary.cropAppliedCount, 1)
+assertEqual(incrementalSummary.levelingAppliedCount, 1)
+assertEqual(incrementalSummary.hdrAppliedCount, 1)
+assertEqual(incrementalSummary.denoiseAppliedCount, 0)
+
+BatchSummary.recordSkipped(incrementalSummary)
+assertEqual(incrementalSummary.processed, 2)
+assertEqual(incrementalSummary.skipped, 1)
+
+for index = 1, 8 do
+    BatchSummary.recordProcessedFailure(
+        incrementalSummary,
+        "Failure-" .. tostring(index) .. ".NEF",
+        {
+            category = "internal_error",
+            code = "bounded_failure",
+        }
+    )
+end
+assertEqual(incrementalSummary.failed, 8)
+assertEqual(#incrementalSummary.failures, 5)
+
+local photoDialogText = table.concat(
+    AutoDevelopConfirmationDialog.photoLines(
+        incrementalOperation,
+        12,
+        100
+    ),
+    "\n"
+)
+for _, expected in ipairs({
+    "Photo 12 of 100",
+    "Filename: Incremental.NEF",
+    "Selection: Auto",
+    "Applied style: Architecture",
+    "Editing intensity: Strong",
+    "Develop Settings",
+    "Composition crop: Recommended - prepared for application",
+    "Leveling: Recommended - prepared for application",
+    "Leveling mode: Rotation",
+    "Transform Upright",
+    "HDR",
+    "Recommended: Yes",
+    "Enabled: Unchanged",
+    "Denoise: Recommended",
+    "Denoise will be applied: No",
+    "Warnings: 1",
+    "Similar samples found: 5",
+    "Average similarity: 0.91",
+    "Personalization: Applied",
+}) do
+    assertTrue(photoDialogText:find(expected, 1, true) ~= nil)
+end
+
+modalDialogResult = "ok"
+assertEqual(
+    AutoDevelopConfirmationDialog.confirmPhoto(
+        incrementalOperation,
+        1,
+        4
+    ),
+    "apply"
+)
+assertEqual(lastModalDialogOptions.actionVerb, "Apply")
+assertEqual(lastModalDialogOptions.otherVerb, "Skip")
+local normalScrollView = lastModalDialogOptions.contents[1]
+local normalDetailsControl = normalScrollView[1]
+assertEqual(normalDetailsControl.height_in_lines, -1)
+assertEqual(normalDetailsControl.title, photoDialogText:gsub(
+    "Photo 12 of 100",
+    "Photo 1 of 4",
+    1
+))
+assertTrue(lastModalDialogOptions.contents[2] ~= nil)
+
+local invalidDisplayOperation = {
+    photo = {},
+    filename = "Invalid.NEF",
+    originalSettings = { Exposure2012 = 0 },
+    finalSettings = {},
+}
+modalDialogResult = "ok"
+assertEqual(
+    AutoDevelopConfirmationDialog.confirmPhoto(
+        invalidDisplayOperation,
+        1,
+        1
+    ),
+    "skip"
+)
+assertEqual(lastModalDialogOptions.actionVerb, "Skip")
+assertTrue(lastModalDialogOptions.otherVerb == nil)
+assertTrue(lastModalDialogOptions.contents[2] == nil)
+local invalidDetailsControl = lastModalDialogOptions.contents[1][1]
+assertEqual(invalidDetailsControl.height_in_lines, -1)
+assertTrue(
+    invalidDetailsControl.title:find(
+        "Pending operation contains no final develop settings.",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    invalidDetailsControl.title:find(
+        "Diagnostic code: missing_final_settings",
+        1,
+        true
+    ) ~= nil
+)
+
+local unrenderableOperation = {
+    photo = {},
+    filename = "Unrenderable.NEF",
+    originalSettings = { UnknownSetting = 0 },
+    finalSettings = { UnknownSetting = 1 },
+}
+modalDialogResult = "ok"
+assertEqual(
+    AutoDevelopConfirmationDialog.confirmPhoto(
+        unrenderableOperation,
+        1,
+        1
+    ),
+    "skip"
+)
+assertEqual(lastModalDialogOptions.actionVerb, "Skip")
+assertTrue(
+    lastModalDialogOptions.contents[1][1].title:find(
+        "Diagnostic code: unrenderable_final_settings",
+        1,
+        true
+    ) ~= nil
+)
+
+local originalReviewBuild = PendingOperationReview.build
+PendingOperationReview.build = function()
+    error("forced formatter failure")
+end
+modalDialogResult = "ok"
+assertEqual(
+    AutoDevelopConfirmationDialog.confirmPhoto(
+        incrementalOperation,
+        1,
+        1
+    ),
+    "skip"
+)
+PendingOperationReview.build = originalReviewBuild
+assertEqual(lastModalDialogOptions.actionVerb, "Skip")
+assertTrue(lastModalDialogOptions.otherVerb == nil)
+assertTrue(
+    lastModalDialogOptions.contents[1][1].title:find(
+        "Diagnostic code: confirmation_render_failed",
+        1,
+        true
+    ) ~= nil
+)
+modalDialogResult = "other"
+assertEqual(
+    AutoDevelopConfirmationDialog.confirmPhoto(
+        incrementalOperation,
+        2,
+        4
+    ),
+    "skip"
+)
+modalDialogResult = "cancel"
+assertEqual(
+    AutoDevelopConfirmationDialog.confirmPhoto(
+        incrementalOperation,
+        3,
+        4
+    ),
+    "cancel_batch"
+)
+modalDialogResult = "apply_remaining"
+assertEqual(
+    AutoDevelopConfirmationDialog.confirmPhoto(
+        incrementalOperation,
+        4,
+        4
+    ),
+    "apply_remaining"
+)
+modalDialogResult = "ok"
+end
+
+do
+local function flowProgress()
+    return {
+        cancelled = false,
+        captions = {},
+        portions = {},
+        isCanceled = function(self)
+            return self.cancelled
+        end,
+        setCaption = function(self, caption)
+            self.captions[#self.captions + 1] = caption
+        end,
+        setPortionComplete = function(self, complete, total)
+            self.portions[#self.portions + 1] = {
+                complete = complete,
+                total = total,
+            }
+        end,
+    }
+end
+
+local function flowPhotos(count)
+    local photos = {}
+    for index = 1, count do
+        photos[index] = photo({
+            localIdentifier = 1000 + index,
+            fileName = "Flow-" .. tostring(index) .. ".NEF",
+            fileFormat = "RAW",
+        }, nil, {
+            Exposure2012 = 0,
+        })
+    end
+    return photos
+end
+
+local function flowOperation(currentPhoto, index)
+    return PendingOperation.new({
+        photo = currentPhoto,
+        filename = "Flow-" .. tostring(index) .. ".NEF",
+        requestId = "request-" .. tostring(index),
+        requestedStyleId = "auto",
+        effectiveStyleId = "architecture",
+        editingIntensity = "strong",
+        originalSettings = { Exposure2012 = 0 },
+        mappedSettings = { Exposure2012 = 0.5 },
+        model = "gpt_oss",
+        resolvedModel = "test-model",
+    })
+end
+
+local function flowOptions(count, confirmationMode)
+    local flow = {
+        events = {},
+        decisions = {},
+        confirmedOperations = {},
+        appliedOperations = {},
+        photos = flowPhotos(count),
+        progress = flowProgress(),
+    }
+    local clock = 100
+    flow.summary = BatchSummary.new(count, "develop")
+    flow.preferences = {
+        confirmationMode = confirmationMode,
+        learningEnabled = true,
+        learningCaptureBaseline = true,
+        backendBaseUrl = "http://127.0.0.1:8005",
+        requestTimeoutSeconds = 120,
+    }
+    flow.tracker = ProgressTracker.new(
+        count,
+        "Preparing recommendation",
+        function()
+            return clock
+        end
+    )
+    flow.options = {
+        photos = flow.photos,
+        catalog = {},
+        batchDirectory = "temporary-batch",
+        progressScope = flow.progress,
+        tracker = flow.tracker,
+        summary = flow.summary,
+        preferences = flow.preferences,
+        preparePhoto = function(currentPhoto)
+            local index = tonumber(
+                Utils.photoFilename(currentPhoto):match("(%d+)")
+            )
+            flow.events[#flow.events + 1] =
+                "prepare" .. tostring(index)
+            return "ready", flowOperation(currentPhoto, index)
+        end,
+        confirmPhoto = function(operation, index)
+            flow.events[#flow.events + 1] =
+                "confirm" .. tostring(index)
+            flow.confirmedOperations[index] = operation
+            return flow.decisions[index] or "apply"
+        end,
+        applyOne = function(_, operation)
+            local index = tonumber(operation.filename:match("(%d+)"))
+            flow.events[#flow.events + 1] =
+                "apply" .. tostring(index)
+            flow.appliedOperations[index] = operation
+            operation.applicationStatus = "applied"
+            return {
+                applied = 1,
+                restoredAfterFailure = 0,
+                failedNotRestored = 0,
+                notApplied = 0,
+                cancelled = false,
+            }
+        end,
+        recordBaseline = function(operation)
+            local index = tonumber(operation.filename:match("(%d+)"))
+            flow.events[#flow.events + 1] =
+                "baseline" .. tostring(index)
+            return { saved = 1, failed = 0 }
+        end,
+        onRelease = function(operation)
+            local index = tonumber(operation.filename:match("(%d+)"))
+            flow.events[#flow.events + 1] =
+                "release" .. tostring(index)
+        end,
+    }
+    return flow
+end
+
+local confirmedFlow = flowOptions(3, "always")
+confirmedFlow.decisions[2] = "skip"
+AutoDevelopCommand.processSequential(confirmedFlow.options)
+assertEqual(
+    table.concat(confirmedFlow.events, ","),
+    table.concat({
+        "prepare1",
+        "confirm1",
+        "apply1",
+        "baseline1",
+        "release1",
+        "prepare2",
+        "confirm2",
+        "release2",
+        "prepare3",
+        "confirm3",
+        "apply3",
+        "baseline3",
+        "release3",
+    }, ",")
+)
+assertEqual(confirmedFlow.summary.processed, 3)
+assertEqual(confirmedFlow.summary.applied, 2)
+assertEqual(confirmedFlow.summary.skipped, 1)
+assertEqual(confirmedFlow.summary.learningBaselineSaved, 2)
+assertTrue(
+    confirmedFlow.confirmedOperations[1]
+        == confirmedFlow.appliedOperations[1]
+)
+assertTrue(
+    confirmedFlow.confirmedOperations[3]
+        == confirmedFlow.appliedOperations[3]
+)
+
+local cancelledFlow = flowOptions(3, "always")
+cancelledFlow.decisions[2] = "cancel_batch"
+AutoDevelopCommand.processSequential(cancelledFlow.options)
+assertEqual(cancelledFlow.summary.applied, 1)
+assertEqual(cancelledFlow.summary.processed, 1)
+assertEqual(cancelledFlow.summary.notProcessed, 2)
+assertEqual(cancelledFlow.summary.cancelled, true)
+assertTrue(
+    table.concat(cancelledFlow.events, ","):find(
+        "prepare3",
+        1,
+        true
+    ) == nil
+)
+
+local remainingFlow = flowOptions(3, "always")
+remainingFlow.decisions[1] = "apply_remaining"
+AutoDevelopCommand.processSequential(remainingFlow.options)
+assertEqual(remainingFlow.summary.applied, 3)
+assertEqual(remainingFlow.preferences.confirmationMode, "always")
+local remainingEvents = table.concat(remainingFlow.events, ",")
+assertTrue(remainingEvents:find("confirm1", 1, true) ~= nil)
+assertTrue(remainingEvents:find("confirm2", 1, true) == nil)
+assertTrue(remainingEvents:find("confirm3", 1, true) == nil)
+assertTrue(
+    remainingFlow.confirmedOperations[1]
+        == remainingFlow.appliedOperations[1]
+)
+
+local automaticFlow = flowOptions(3, "never")
+automaticFlow.options.confirmPhoto = function()
+    error("automatic mode must not display a confirmation")
+end
+AutoDevelopCommand.processSequential(automaticFlow.options)
+assertEqual(automaticFlow.summary.applied, 3)
+local automaticEvents = table.concat(automaticFlow.events, ",")
+assertTrue(
+    automaticEvents:find("apply1,baseline1,release1,prepare2", 1, true)
+        ~= nil
+)
+
+local failureFlow = flowOptions(3, "never")
+local defaultPrepare = failureFlow.options.preparePhoto
+failureFlow.options.preparePhoto = function(currentPhoto)
+    local filename = Utils.photoFilename(currentPhoto)
+    if filename == "Flow-1.NEF" then
+        failureFlow.events[#failureFlow.events + 1] = "prepare1"
+        return "failed", {
+            category = "invalid_response",
+            code = "photo_failure",
+        }
+    end
+    return defaultPrepare(currentPhoto)
+end
+AutoDevelopCommand.processSequential(failureFlow.options)
+assertEqual(failureFlow.summary.failed, 1)
+assertEqual(failureFlow.summary.applied, 2)
+assertEqual(failureFlow.summary.processed, 3)
+
+local terminalFlow = flowOptions(3, "never")
+terminalFlow.options.preparePhoto = function()
+    terminalFlow.events[#terminalFlow.events + 1] = "prepare1"
+    return "failed", {
+        category = "backend_not_running",
+        code = "cannot_connect",
+    }
+end
+AutoDevelopCommand.processSequential(terminalFlow.options)
+assertEqual(terminalFlow.summary.failed, 1)
+assertEqual(terminalFlow.summary.processed, 1)
+assertEqual(terminalFlow.summary.notProcessed, 2)
+assertEqual(terminalFlow.summary.terminalCategory, "backend_not_running")
+
+local applyFailureFlow = flowOptions(2, "never")
+applyFailureFlow.options.applyOne = function(_, operation)
+    local index = tonumber(operation.filename:match("(%d+)"))
+    applyFailureFlow.events[#applyFailureFlow.events + 1] =
+        "apply" .. tostring(index)
+    operation.applicationStatus = "restored"
+    operation.applyErrorCategory = "apply_failed"
+    operation.applyErrorCode = "lightroom_apply_failed"
+    return {
+        applied = 0,
+        restoredAfterFailure = 1,
+        failedNotRestored = 0,
+        notApplied = 0,
+        cancelled = false,
+    }
+end
+AutoDevelopCommand.processSequential(applyFailureFlow.options)
+assertEqual(applyFailureFlow.summary.failed, 2)
+assertEqual(applyFailureFlow.summary.restoredAfterFailure, 2)
+assertEqual(applyFailureFlow.summary.learningBaselineSaved, 0)
+assertTrue(
+    table.concat(applyFailureFlow.events, ","):find(
+        "baseline",
+        1,
+        true
+    ) == nil
+)
+
+local safePointFlow = flowOptions(2, "always")
+safePointFlow.options.preparePhoto = function(currentPhoto)
+    safePointFlow.events[#safePointFlow.events + 1] = "prepare1"
+    safePointFlow.progress.cancelled = true
+    return "ready", flowOperation(currentPhoto, 1)
+end
+AutoDevelopCommand.processSequential(safePointFlow.options)
+assertEqual(safePointFlow.summary.applied, 0)
+assertEqual(safePointFlow.summary.notProcessed, 2)
+assertEqual(safePointFlow.summary.cancelled, true)
+assertEqual(
+    table.concat(safePointFlow.events, ","),
+    "prepare1,release1"
+)
+end
 
 assertEqual(
     ErrorClassifier.fromNetworkInfo({
@@ -2232,6 +3729,20 @@ assertEqual(ProgressTracker.formatDuration(3661), "1:01:01")
 assertEqual(ProgressTracker.formatDuration(-10), "00:00")
 assertTrue(tracker:caption():find("photo.nef", 1, true) ~= nil)
 assertTrue(tracker:caption():find("1 / 4", 1, true) ~= nil)
+tracker:setCurrent("current.nef", 2)
+tracker:setBatchCounts({
+    applied = 1,
+    skipped = 0,
+    failed = 1,
+    processed = 2,
+})
+local batchCaption = tracker:caption()
+assertTrue(batchCaption:find("Processing photo 2 of 4", 1, true) ~= nil)
+assertTrue(batchCaption:find("Current: current.nef", 1, true) ~= nil)
+assertTrue(batchCaption:find("Applied: 1", 1, true) ~= nil)
+assertTrue(batchCaption:find("Skipped: 0", 1, true) ~= nil)
+assertTrue(batchCaption:find("Failed: 1", 1, true) ~= nil)
+assertTrue(batchCaption:find("Remaining: 2", 1, true) ~= nil)
 now = 130
 tracker:markCompleted(2)
 assertEqual(tracker:estimatedRemainingSeconds(), 30)
@@ -2616,7 +4127,20 @@ assertEqual(styleSummary.editingIntensities.strong, 1)
 lastDialog = nil
 AutoDevelopConfirmationDialog.showFinal(styleSummary, {})
 assertTrue(lastDialog.message:find("Selection: Auto", 1, true) ~= nil)
-assertTrue(lastDialog.message:find("Applied style: Multiple", 1, true) ~= nil)
+assertTrue(
+    lastDialog.message:find(
+        "Style distribution: Architecture (1), Natural Travel (1)",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    lastDialog.message:find(
+        "Editing intensity distribution: Moderate (1), Strong (1)",
+        1,
+        true
+    ) ~= nil
+)
 
 local analysisSummary = BatchSummary.new(1, "analyze")
 analysisSummary.analyzed = 1
@@ -2627,7 +4151,9 @@ analysisSummary.modelId = "gemma"
 analysisSummary.resolvedModels = { ["gemma-4-31b"] = true }
 analysisSummary.analysisExamples = {
     {
-        filename = "Scenic.NEF",
+        filename = "photo_98765",
+        photoId = "photo_98765",
+        displayFilename = "Scenic.NEF",
         primarySubject = "Mountain landscape",
         lighting = "daylight",
         sceneCategory = "scenic_travel",
@@ -2639,7 +4165,36 @@ analysisSummary.analysisExamples = {
 lastDialog = nil
 AnalysisSummaryDialog.show(analysisSummary)
 assertTrue(lastDialog.message:find("Photo Analysis", 1, true) ~= nil)
+assertTrue(lastDialog.message:find("Photo: Scenic.NEF", 1, true) ~= nil)
+assertTrue(lastDialog.message:find("Photo: photo_98765", 1, true) == nil)
 assertTrue(lastDialog.message:find("Mountain landscape", 1, true) ~= nil)
 assertTrue(lastDialog.message:find("Natural Travel", 1, true) ~= nil)
+
+modalDialogResult = "cancel"
+LearningFeedbackDialog.confirm({
+    selected = 1,
+    pending = 1,
+    changed = 0,
+    unchanged = 1,
+    missing = 0,
+    previewFailed = 0,
+    photoId = "photo_283285",
+    displayFilename = "Feedback.JPG",
+})
+assertTrue(
+    lastModalDialogOptions.contents[1].title:find(
+        "Photo: Feedback.JPG",
+        1,
+        true
+    ) ~= nil
+)
+assertTrue(
+    lastModalDialogOptions.contents[1].title:find(
+        "Photo: photo_283285",
+        1,
+        true
+    ) == nil
+)
+modalDialogResult = "ok"
 
 print("Lua assertions passed: " .. tostring(assertions))

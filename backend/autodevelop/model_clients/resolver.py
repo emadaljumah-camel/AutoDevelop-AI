@@ -72,5 +72,6 @@ class ModelResolver:
                     api_key=self._settings.local_api_key.get_secret_value().strip(),
                     model=raw_model,
                     timeout_seconds=self._settings.local_timeout_seconds,
+                    response_format_mode=self._settings.local_response_format,
                 )
         return ResolvedModel(definition, raw_model, client)

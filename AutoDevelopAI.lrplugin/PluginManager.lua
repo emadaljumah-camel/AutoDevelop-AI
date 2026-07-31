@@ -21,6 +21,7 @@ local observedKeys = {
     "requestTimeoutText",
     "applyCompositionCrop",
     "applyLeveling",
+    "hdrPreference",
     "confirmationMode",
     "loggingLevel",
     "learningEnabled",
@@ -155,6 +156,28 @@ local function checkLearningStatus(properties)
                 text = tostring(result.usable_samples)
                     .. " usable sample(s); minimum "
                     .. tostring(result.minimum_samples)
+                    .. "\nUpright: "
+                    .. tostring(
+                        result.upright_learning.usable_sample_count
+                    )
+                    .. " usable, "
+                    .. tostring(result.upright_learning.change_count)
+                    .. " changed, "
+                    .. tostring(
+                        result.upright_learning.acceptance_count
+                    )
+                    .. " accepted"
+                    .. "\nHDR: "
+                    .. tostring(
+                        result.hdr_learning.usable_sample_count
+                    )
+                    .. " usable, "
+                    .. tostring(result.hdr_learning.change_count)
+                    .. " changed, "
+                    .. tostring(
+                        result.hdr_learning.acceptance_count
+                    )
+                    .. " accepted"
             end
         end
         setPropertySafely(properties, "learningStatusRunning", false)
@@ -254,6 +277,8 @@ return {
                         }),
                         factory:static_text({
                             title = bind("learningStatusText"),
+                            width_in_chars = 54,
+                            height_in_lines = 3,
                             fill_horizontal = 1,
                         }),
                     }),
@@ -308,6 +333,20 @@ return {
                             value = bind("applyLeveling"),
                         })
                     ),
+                    preferenceRow(
+                        factory,
+                        "HDR preference",
+                        factory:popup_menu({
+                            value = bind("hdrPreference"),
+                            items =
+                                Preferences.getHdrPreferenceChoices(),
+                        })
+                    ),
+                    factory:static_text({
+                        title = "Prefer HDR still requires scene evidence "
+                            .. "and all profile and safety checks.",
+                        fill_horizontal = 1,
+                    }),
 
                     preferenceRow(
                         factory,

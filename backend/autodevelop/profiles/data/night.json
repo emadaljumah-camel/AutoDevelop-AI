@@ -1,57 +1,139 @@
 {
   "id": "night",
   "display_name": "Night",
-  "description": "Strong night rendering with luminous controlled highlights, defined blacks, useful shadow detail, and rich realistic color.",
-  "version": "1.0",
+  "description": "Premium night rendering with luminous highlights, deep cinematic blacks, controlled shadow recovery, rich realistic color, and excellent high-ISO detail suitable for commercial stock photography.",
+  "version": "1.1",
+
   "editing_goals": [
-    "Build a strong nighttime atmosphere with luminous but controlled lights and protected bright detail",
-    "Create defined blacks and recover useful shadow detail without making night look like day",
-    "Produce rich realistic color and clear subject separation while managing casts and high-ISO noise"
+    "Create a dramatic but believable nighttime photograph with immediate visual impact.",
+    "Preserve the natural darkness of the scene while making important illuminated subjects stand out.",
+    "Protect bright light sources, illuminated signs, city lights, reflections, and windows from clipping.",
+    "Maintain rich shadow depth while recovering only useful detail.",
+    "Render artificial lighting with attractive but realistic color.",
+    "Control high-ISO noise without sacrificing fine architectural, landscape, or street detail.",
+    "Produce a premium travel and commercial stock appearance rather than a technically neutral correction."
   ],
+
   "cautions": [
-    "Avoid excessive shadow lifting",
-    "Avoid washed-out or flattened blacks",
-    "Avoid smearing fine detail",
-    "Avoid a weak rendering that loses the scene's luminous impact"
+    "Never make night scenes appear like daylight.",
+    "Avoid excessive shadow lifting that removes atmosphere.",
+    "Avoid washed-out blacks or flat low-contrast rendering.",
+    "Avoid halos around lights, illuminated buildings, street lamps, or signs.",
+    "Avoid strong color contamination between different light sources.",
+    "Avoid aggressive noise reduction that destroys texture.",
+    "Preserve realistic glow around lights without blooming or clipping."
   ],
+
   "slider_ranges": {
-    "Exposure2012": {"min": -1.0, "max": 1.0, "preferred": 0.0},
-    "Contrast2012": {"min": -10.0, "max": 30.0, "preferred": 10.0},
-    "Highlights2012": {"min": -80.0, "max": 0.0, "preferred": -45.0},
-    "Shadows2012": {"min": -15.0, "max": 40.0, "preferred": 12.0},
-    "Whites2012": {"min": -25.0, "max": 15.0, "preferred": -3.0},
-    "Blacks2012": {"min": -30.0, "max": 10.0, "preferred": -10.0},
-    "Texture": {"min": -10.0, "max": 18.0, "preferred": 3.0},
-    "Clarity2012": {"min": -8.0, "max": 18.0, "preferred": 4.0},
-    "Dehaze": {"min": -3.0, "max": 18.0, "preferred": 5.0},
-    "Vibrance": {"min": -12.0, "max": 25.0, "preferred": 5.0},
-    "Saturation": {"min": -15.0, "max": 10.0, "preferred": -2.0},
-    "Temperature": {"min": 2500.0, "max": 6500.0, "preferred": 4000.0},
-    "Tint": {"min": -25.0, "max": 25.0, "preferred": 0.0}
+    "Exposure2012": {
+      "min": -1.0,
+      "max": 1.0,
+      "preferred": 0.05
+    },
+
+    "Contrast2012": {
+      "min": -10.0,
+      "max": 36.0,
+      "preferred": 16.0
+    },
+
+    "Highlights2012": {
+      "min": -90.0,
+      "max": 0.0,
+      "preferred": -55.0
+    },
+
+    "Shadows2012": {
+      "min": -15.0,
+      "max": 45.0,
+      "preferred": 16.0
+    },
+
+    "Whites2012": {
+      "min": -30.0,
+      "max": 18.0,
+      "preferred": 2.0
+    },
+
+    "Blacks2012": {
+      "min": -35.0,
+      "max": 8.0,
+      "preferred": -16.0
+    },
+
+    "Texture": {
+      "min": -10.0,
+      "max": 22.0,
+      "preferred": 6.0
+    },
+
+    "Clarity2012": {
+      "min": -8.0,
+      "max": 20.0,
+      "preferred": 7.0
+    },
+
+    "Dehaze": {
+      "min": -3.0,
+      "max": 22.0,
+      "preferred": 8.0
+    },
+
+    "Vibrance": {
+      "min": -12.0,
+      "max": 32.0,
+      "preferred": 10.0
+    },
+
+    "Saturation": {
+      "min": -15.0,
+      "max": 12.0,
+      "preferred": -1.0
+    },
+
+    "Temperature": {
+      "min": 2200.0,
+      "max": 7000.0,
+      "preferred": 4000.0
+    },
+
+    "Tint": {
+      "min": -25.0,
+      "max": 25.0,
+      "preferred": 0.0
+    }
   },
+
   "crop_policy": {
     "allow_crop": true,
-    "max_edge_crop": 0.1,
-    "minimum_retained_area": 0.8,
-    "minimum_confidence": 0.65,
+    "max_edge_crop": 0.10,
+    "minimum_retained_area": 0.80,
+    "minimum_confidence": 0.70,
     "require_confidence": false,
     "preserve_aspect_ratio": true
   },
+
   "leveling_policy": {
     "allow_leveling": true,
-    "maximum_absolute_angle": 4.0,
+    "maximum_absolute_angle": 4.5,
     "guidance": [
-      "Use skylines, buildings, reflections, and reliable light lines carefully",
-      "Do not treat perspective convergence as rotational tilt",
-      "Retain deliberate dynamic night framing"
+      "Use skylines, water reflections, building edges, bridges, and reliable architectural references.",
+      "Do not confuse perspective convergence with camera roll.",
+      "Avoid using irregular light trails as leveling references.",
+      "Preserve intentionally dynamic nighttime compositions."
     ]
+  },
+  "upright_policy": {
+    "allow_upright": true,
+    "allowed_modes": ["off", "auto", "level", "vertical"],
+    "minimum_confidence": 0.75
   },
   "denoise_policy": {
     "allow_denoise": true,
-    "minimum_iso": 400,
+    "minimum_iso": 320,
     "minimum_amount": 0.0,
-    "maximum_amount": 70.0,
-    "minimum_confidence": 0.5,
+    "maximum_amount": 75.0,
+    "minimum_confidence": 0.50,
     "preserve_detail": true
   }
 }

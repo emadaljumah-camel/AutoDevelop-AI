@@ -90,9 +90,11 @@ def test_learning_feedback_menu_and_read_only_workflow_are_registered() -> None:
 def test_learning_baseline_occurs_after_apply_and_outside_apply_service() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
     apply_service = _read("lib/ApplyService.lua")
-    assert command.index("ApplyService.applyBatch") < command.index(
-        "LearningBaselineService.recordApplied"
-    )
+    applied = command.index("local application = applyOne(")
+    baseline = command.index("recordBaseline(operation, preferences)")
+    assert applied < baseline
+    assert "applyOne = ApplyService.applyOne" in command
+    assert "recordBaseline = LearningBaselineService.recordOne" in command
     assert "LearningBaselineService" not in apply_service
     assert "LearningClient" not in apply_service
 
@@ -327,9 +329,18 @@ def test_documented_filename_and_photo_identity_access() -> None:
 
     assert 'safeFormattedMetadata(photo, "fileName")' in utils
     assert 'safePhotoProperty(photo, "localIdentifier")' in utils
-    assert 'safeRawMetadata(photo, "fileName")' not in utils
+    assert 'safeRawMetadata(photo, "fileName")' in utils
+    assert 'safeRawMetadata(photo, "path")' in utils
     assert 'safeRawMetadata(photo, "localIdentifier")' not in utils
     assert '"photo_unidentified"' not in utils
+    assert 'local LrTasks = import("LrTasks")' in utils
+    assert "local ok, value = LrTasks.pcall(function()" in utils
+    formatted = utils.index('safeFormattedMetadata(photo, "fileName")')
+    raw = utils.index('safeRawMetadata(photo, "fileName")')
+    path = utils.index('safeRawMetadata(photo, "path")', raw)
+    internal = utils.index("displayFilename or internalId", path)
+    assert formatted < raw < path < internal
+    assert "function Utils.capturePhotoIdentity(photo)" in utils
 
 
 def test_capture_time_and_gps_mapping_are_defensive() -> None:
@@ -394,7 +405,11 @@ def test_commands_use_pure_style_run_coordinator() -> None:
         command = _read(f"lib/{command_name}")
         assert 'ModuleLoader.load("lib/RunSettingsCoordinator.lua")' in command
         assert "RunSettingsCoordinator.begin({" in command
-        assert "RunSettingsCoordinator.prepare(" in command
+    assert "RunSettingsCoordinator.prepare(" in _read("lib/AnalyzeCommand.lua")
+    assert "RunSettingsCoordinator.prepare(" not in _read(
+        "lib/AutoDevelopCommand.lua"
+    )
+    assert "function RunSettingsCoordinator.getSnapshot" in coordinator
 
 
 def test_phase3_model_selection_is_explicit_and_side_effect_free() -> None:
@@ -468,6 +483,8 @@ def test_only_apply_service_uses_catalog_develop_writes() -> None:
 
     assert "catalog:withWriteAccessDo(" in apply_service
     assert "operation.photo:applyDevelopSettings(" in apply_service
+    assert "local finalSettings = operation.finalSettings" in apply_service
+    assert "sanitize(operation.mappedSettings)" not in apply_service
     assert "withWriteAccessDo" not in other_source
     assert "applyDevelopSettings" not in other_source
     assert "ApiClient" not in apply_service
@@ -488,96 +505,268 @@ def test_hdr_mode_is_categorical_capability_gated_and_apply_service_owned() -> N
     assert "hdr_edit_supported" in builder
     assert 'hdr_workflow = "unknown"' in builder
     assert "validateHdr(response.enable_hdr)" in validation
+    assert "validateUpright(response.upright)" in validation
     assert "decoded.enable_hdr.recommended == true" in preparation
-    assert "safeSettings.HDREditMode = 1" in apply_service
+    assert "decoded.upright.recommended == true" in preparation
+    assert "DevelopModeMapper.encodeUpright" in apply_service
+    assert "PerspectiveUpright" in apply_service
+    assert "finalSettings.HDREditMode = 1" in apply_service
+    assert "finalSettings = finalSettings" in preparation
+    apply_path = apply_service[apply_service.index("function ApplyService.applyBatch") :]
+    assert "HDREditMode = 1" not in apply_path
     assert "sanitizeRestore(operation.originalSettings)" in apply_service
     assert "applyDevelopSettings" not in preparation
+
+
+def test_hdr_preference_and_decision_diagnostics_are_carried_to_ui_and_learning() -> None:
+    config = _read("lib/Config.lua")
+    preferences = _read("lib/Preferences.lua")
+    manager = _read("PluginManager.lua")
+    builder = _read("lib/RequestBuilder.lua")
+    validation = _read("lib/Validation.lua")
+    preparation = _read("lib/PreparationService.lua")
+    pending = _read("lib/PendingOperation.lua")
+    review = _read("lib/PendingOperationReview.lua")
+    baseline = _read("lib/LearningBaselineService.lua")
+
+    assert 'hdrPreference = "prefer_hdr"' in config
+    assert '{ title = "Conservative", value = "conservative" }' in preferences
+    assert '{ title = "Balanced", value = "balanced" }' in preferences
+    assert '{ title = "Prefer HDR", value = "prefer_hdr" }' in preferences
+    assert '"HDR preference"' in manager
+    assert "request.options.hdr_preference" in builder
+    assert "hdrPreference = preferences.hdrPreference" in preparation
+    assert "validateHdrDecision(response.hdr_decision)" in validation
+    assert "hdrDecision = decoded.hdr_decision" in preparation
+    assert "hdrDecision = Utils.deepCopy(values.hdrDecision)" in pending
+    assert '"Scene candidate: "' in review
+    assert '"Base scene evidence: "' in review
+    assert '"Learning bonus: "' in review
+    assert '"Preference bonus: "' in review
+    assert '"Combined evidence: "' in review
+    assert '"Model confidence: "' in review
+    assert '"Learned preference: "' in review
+    assert '"Decision basis: "' in review
+    assert '"Decision confidence: "' in review
+    assert '"Final decision: "' in review
+    assert "originalRaw = modeDiagnostics.hdrEditMode" in review
+    assert '"Enabled" or "Disabled"' in review
+    for field in (
+        "base_scene_evidence_score",
+        "learning_bonus",
+        "user_preference_bonus",
+        "combined_evidence_score",
+        "decision_basis",
+        "decision_confidence",
+        "scene_hdr_inconsistent",
+        "contraindications",
+    ):
+        assert f"{field} = true" in validation
+    assert "hdr_decision = baselineHdrDecision(operation.hdrDecision)" in baseline
 
 
 def test_auto_develop_confirmation_precedes_catalog_application() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
 
-    backend = command.index("PreparationService.prepareDevelopPhoto(")
-    confirmed = command.index(
-        "AutoDevelopConfirmationDialog.confirm(summary)"
-    )
-    applied = command.index("ApplyService.applyBatch(catalog, operations")
+    identity = command.index("local photoIdentity = Utils.capturePhotoIdentity(photo)")
+    backend = command.index("local outcome, value = preparePhoto(")
+    confirmed = command.index("decision = confirmPhoto(")
+    applied = command.index("local application = applyOne(")
 
-    assert backend < confirmed < applied
+    assert identity < backend < confirmed < applied
     assert "withWriteAccessDo" not in command
 
 
-def test_auto_develop_uses_ordered_cancellation_application_gates() -> None:
+def test_per_photo_dialog_exposes_all_four_actions() -> None:
+    dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
+
+    assert 'actionVerb = "Apply"' in dialog
+    assert 'otherVerb = "Skip"' in dialog
+    assert 'cancelVerb = "Cancel Batch"' in dialog
+    assert 'title = "Apply Remaining Without Confirmation"' in dialog
+    assert '"apply_remaining"' in dialog
+    assert "LrDialogs.stopModalWithResult(" in dialog
+    assert "Preferences" not in dialog
+    assert "factory:scrolled_view({" in dialog
+    assert "vertical_scroller = true" in dialog
+    assert "horizontal_scroller = false" in dialog
+    assert 'actionVerb = "Apply"' in dialog
+    assert 'ModuleLoader.load("lib/PendingOperationReview.lua")' in dialog
+    assert 'ModuleLoader.load("lib/PendingOperation.lua")' in dialog
+    assert "height_in_lines = -1" in dialog
+    assert "title = detailsText" in dialog
+    assert "local renderOk, lines, review = LrTasks.pcall(function()" in dialog
+    assert 'display.diagnosticCode = "confirmation_render_failed"' in dialog
+    assert 'display.diagnosticCode = "unrenderable_final_settings"' in dialog
+    assert "review.settingCount ~= display.finalCount" in dialog
+    assert 'dialogOptions.actionVerb = "Skip"' in dialog
+    assert "if display.canApply then" in dialog
+    assert 'Logger.debug(' in dialog
+    assert '" rendered_characters="' in dialog
+
+
+def test_pending_operation_review_uses_only_prepared_snapshots() -> None:
+    review = _read("lib/PendingOperationReview.lua")
+
+    assert "operation.originalSettings" in review
+    assert "operation.finalSettings" in review
+    assert "operation.mappedSettings" not in review
+    for forbidden in (
+        "ApiClient",
+        "BackendClient",
+        "Preferences",
+        "LrHttp",
+        "PreviewExporter",
+        "withWriteAccessDo",
+        "applyDevelopSettings",
+    ):
+        assert forbidden not in review
+    assert "math.min(#items, 5)" in review
+    assert "DevelopSettingsMapper.keys()" in review
+    assert "CropMapper.keys()" in review
+    assert "Utils.isFiniteNumber(finalSettings[key])" in review
+    assert "Current-value comparison is unavailable" in review
+    for label in (
+        "Exposure",
+        "Contrast",
+        "Highlights",
+        "Shadows",
+        "Whites",
+        "Blacks",
+        "Texture",
+        "Clarity",
+        "Dehaze",
+        "Vibrance",
+        "Saturation",
+        "Temperature",
+        "Tint",
+    ):
+        assert f'= "{label}"' in review
+
+
+def test_confirmation_rendering_has_no_backend_or_write_side_effects() -> None:
+    dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
+    review = _read("lib/PendingOperationReview.lua")
+
+    for forbidden in (
+        "ApiClient",
+        "BackendClient",
+        "Preferences",
+        "LrHttp",
+        "PreviewExporter",
+        "getDevelopSettings",
+        "getRawMetadata",
+        "getFormattedMetadata",
+        "withWriteAccessDo",
+        "applyDevelopSettings",
+    ):
+        assert forbidden not in dialog + review
+    assert "operation.displayFilename" in dialog
+
+
+def test_display_filename_is_captured_and_propagated_without_write_time_reads() -> None:
+    preparation = _read("lib/PreparationService.lua")
+    request_builder = _read("lib/RequestBuilder.lua")
+    pending = _read("lib/PendingOperation.lua")
+    summary = _read("lib/BatchSummary.lua")
+    analyze = _read("lib/AnalyzeCommand.lua")
+    analysis_dialog = _read("dialogs/AnalysisSummaryDialog.lua")
+    learning_command = _read("lib/LearningFeedbackCommand.lua")
+    learning_dialog = _read("dialogs/LearningFeedbackDialog.lua")
+    apply_service = _read("lib/ApplyService.lua")
+
+    assert "photoIdentity = photoIdentity" in preparation
+    assert "photoId = photoIdentity.photoId" in preparation
+    assert "displayFilename = photoIdentity.displayFilename" in preparation
+    assert "options.photoIdentity" in request_builder
+    assert "photoId = values.photoId" in pending
+    assert "values.displayFilename" in pending
+    assert "operation.displayFilename or operation.filename" in summary
+    assert "displayFilename = photoIdentity.displayFilename" in analyze
+    assert "example.displayFilename" in analysis_dialog
+    assert "summary.displayFilename = photoIdentity.displayFilename" in learning_command
+    assert "summary.displayFilename" in learning_dialog
+
+    write_path = apply_service[apply_service.index("function ApplyService.applyBatch") :]
+    assert "getFormattedMetadata" not in write_path
+    assert "getRawMetadata" not in write_path
+
+
+def test_sequential_flow_passes_same_operation_after_confirmation() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
 
-    preparation_call = command.index(
-        "prepareBatch(",
-        command.index("local function runCommand("),
-    )
-    preparation_gate = command.index(
-        "local preparationDecision = ApplicationGate.evaluate({",
-        preparation_call,
-    )
+    operation = command.index("local operation = value")
     confirmation = command.index(
-        "AutoDevelopConfirmationDialog.confirm(summary)",
-        preparation_gate,
-    )
-    confirmed_gate = command.index(
-        "local confirmedDecision = ApplicationGate.evaluate({",
-        confirmation,
-    )
-    final_gate = command.index(
-        "local finalDecision = ApplicationGate.evaluate({",
-        confirmed_gate,
+        "decision = confirmPhoto(operation, index, #photos)",
+        operation,
     )
     application = command.index(
-        "ApplyService.applyBatch(catalog, operations",
-        final_gate,
+        "local application = applyOne(",
+        confirmation,
     )
+    release = command.index("onRelease(operation)", application)
+    assert operation < confirmation < application < release
+    between = command[confirmation:application]
+    assert "PendingOperation.new" not in between
+    assert "mappedSettings" not in between
+    assert "finalSettings" not in between
 
-    assert preparation_call < preparation_gate < confirmation
-    assert confirmation < confirmed_gate < final_gate < application
-    assert "progressCancelled = preparationProgress:isCanceled()" in command
-    assert "progressCancelled = applyProgress:isCanceled()" in command
-    assert "if not finalDecision.shouldApply then" in command
+
+def test_catalog_write_block_contains_only_apply_and_restore() -> None:
+    apply_service = _read("lib/ApplyService.lua")
+
+    assert "catalog:withWriteAccessDo(" in apply_service
+    assert "operation.photo:applyDevelopSettings(" in apply_service
+    for forbidden in (
+        "LrDialogs",
+        "LrHttp",
+        "ApiClient",
+        "PreviewExporter",
+        "LearningClient",
+        "LearningBaselineService",
+        "LrExportSession",
+        "LrTasks.sleep",
+        "infer(",
+    ):
+        assert forbidden not in apply_service
 
 
-def test_auto_develop_uses_pure_operation_recorder() -> None:
+def test_auto_develop_uses_sequential_cancellation_safe_points() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
-    recorder = _read("lib/BatchOperationRecorder.lua")
 
-    prepared = command.index("PreparationService.prepareDevelopPhoto(")
-    recording = command.index(
-        "BatchOperationRecorder.tryRecord({",
-        prepared,
+    loop = command.index("for index, photo in ipairs(photos) do")
+    first_cancel = command.index("if progressScope:isCanceled() then", loop)
+    preparation = command.index("local outcome, value = preparePhoto(", first_cancel)
+    response_cancel = command.index(
+        'if outcome == "cancelled" or progressScope:isCanceled() then',
+        preparation,
     )
+    decision = command.index("decision = confirmPhoto(", response_cancel)
+    apply_call = command.index("local application = applyOne(", decision)
 
-    assert prepared < recording
-    assert "operations[#operations + 1] = value" not in command
-    assert "state.operations[#state.operations + 1] = state.operation" in recorder
-    assert 'return "cancelled"' in recorder
-    assert 'return "terminal_failure"' in recorder
-    assert 'return "invalid_operation"' in recorder
+    assert loop < first_cancel < preparation < response_cancel
+    assert response_cancel < decision < apply_call
+    assert "ApplicationGate" not in command
+    assert "ErrorClassifier.isTerminalForBatch(value.category)" in command
 
 
-def test_cancelled_outcome_precedes_terminal_dialog() -> None:
+def test_auto_develop_holds_only_the_current_operation() -> None:
+    command = _read("lib/AutoDevelopCommand.lua")
+    assert "local operation = value" in command
+    assert "onRelease(operation)" in command
+    assert "operation = nil" in command
+    assert "local operations = {}" not in command
+    assert "BatchOperationRecorder" not in command
+    assert "PendingOperation.clear" not in command
+
+
+def test_cancel_and_terminal_failures_count_unprocessed_photos() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
 
-    cancelled = command.index("if preparationDecision.cancelled then")
-    terminal = command.index(
-        "elseif preparationDecision.terminalFailure then",
-        cancelled,
-    )
-    terminal_dialog = command.index(
-        "ErrorDialog.show(summary.terminalCategory, summary)",
-        terminal,
-    )
-
-    assert cancelled < terminal < terminal_dialog
-    assert "AutoDevelopConfirmationDialog.showFinal(summary, application)" in (
-        command[cancelled:terminal]
-    )
-    assert "ErrorDialog.show(" not in command[cancelled:terminal]
+    assert "BatchSummary.markNotProcessed(summary, #photos - index + 1)" in command
+    assert "summary.terminalCategory = value.category" in command
+    assert "#photos - index" in command
+    assert command.count("AutoDevelopConfirmationDialog.showFinal(") == 1
 
 
 def test_plugin_manager_provider_and_preferences_are_registered() -> None:
@@ -649,7 +838,9 @@ def test_phase_one_error_categories_are_centralized() -> None:
     assert "headers.error.errorCode" in client
     assert "Validation.parseErrorResponse" in client
     assert "retriesUsed < 1" in _read("lib/BatchPolicy.lua")
-    assert "requestFunction(request, connectionOptions)" in service
+    assert "requestFunction(request, requestOptions)" in service
+    assert "requestOptions.endpointAttempt = retriesUsed + 1" in service
+    assert "return result.retryable == true" in classifier
     assert "result.requestId = request.request_id" in service
     assert "result.filename = request.filename" in service
 
@@ -709,20 +900,17 @@ def test_final_dialog_displays_only_a_sanitized_failure_code() -> None:
     assert "Utils.safeErrorCode(stage, " in summary
 
 
-def test_operation_record_lifecycle_uses_actual_batch_recorder() -> None:
+def test_sequential_operation_lifecycle_is_incremental() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
-    started = command.index('Logger.info("operation_record_started")')
-    recorded = command.index(
-        "BatchOperationRecorder.tryRecord(",
-        started,
-    )
-    completed = command.index(
-        'Logger.info("operation_record_completed")',
-        recorded,
-    )
+    summary = _read("lib/BatchSummary.lua")
 
-    assert started < recorded < completed
-    assert '"stage=operation_record category="' in command
+    prepared = command.index("BatchSummary.recordPrepared(summary, operation)")
+    applied = command.index("BatchSummary.recordApplication(")
+    released = command.index("onRelease(operation)", applied)
+    assert prepared < applied < released
+    assert "function BatchSummary.recordPrepared" in summary
+    assert "function BatchSummary.recordApplication" in summary
+    assert "#(operation.warnings or {})" in summary
 
 
 def test_progress_and_confirmation_preferences_are_integrated() -> None:
@@ -738,13 +926,14 @@ def test_progress_and_confirmation_preferences_are_integrated() -> None:
     assert "ProgressTracker.new(#photos" in analyze
     assert "ProgressTracker.new(#photos" in develop
     assert 'confirmationMode = preferences.confirmationMode' in develop
-    assert "if preparationDecision.cancelled then" in develop
-    assert "elseif preparationDecision.terminalFailure then" in develop
+    assert 'preferences.confirmationMode == "never"' in develop
+    assert "confirmPhoto(operation, index, #photos)" in develop
+    assert 'decision == "apply_remaining"' in develop
     assert "operation.cropDisabled" in preparation
     assert "operation.levelingDisabled" in preparation
-    assert "application.cropApplied" in develop
-    assert "application.levelingApplied" in develop
-    assert "confirmation_mode=" in develop
+    assert "summary.cropAppliedCount" in develop
+    assert "summary.levelingAppliedCount" in develop
+    assert "setBatchCounts" in progress
 
 
 def test_model_identifier_is_validated_before_logs_and_summaries() -> None:
@@ -824,43 +1013,21 @@ def test_ordinary_logging_does_not_emit_payloads_or_preview_paths() -> None:
 def test_auto_develop_progress_cleanup_precedes_scope_methods() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
 
-    preparation_constructed = command.index(
-        "local preparationProgress = LrProgressScope"
+    constructed = command.index("local progressScope = LrProgressScope")
+    registered = command.index(
+        "context:addCleanupHandler(releaseProgress)",
+        constructed,
     )
-    preparation_registered = command.index(
-        "context:addCleanupHandler(releasePreparationProgress)",
-        preparation_constructed,
+    configured = command.index(
+        "progressScope:setCancelable(true)",
+        registered,
     )
-    preparation_configured = command.index(
-        "preparationProgress:setCancelable(true)",
-        preparation_constructed,
-    )
-    assert (
-        preparation_constructed
-        < preparation_registered
-        < preparation_configured
-    )
-    assert (
-        "preparationProgress:"
-        not in command[preparation_constructed:preparation_registered]
-    )
-
-    apply_constructed = command.index(
-        "local applyProgress = LrProgressScope"
-    )
-    apply_registered = command.index(
-        "context:addCleanupHandler(releaseApplyProgress)",
-        apply_constructed,
-    )
-    apply_configured = command.index(
-        "applyProgress:setCancelable(true)",
-        apply_constructed,
-    )
-    assert apply_constructed < apply_registered < apply_configured
-    assert "applyProgress:" not in command[apply_constructed:apply_registered]
+    assert constructed < registered < configured
+    assert "progressScope:" not in command[constructed:registered]
+    assert command.count("LrProgressScope({") == 1
 
 
-def test_auto_develop_uses_two_phase_cleanup_and_no_standard_xpcall() -> None:
+def test_auto_develop_uses_per_photo_cleanup_and_no_standard_xpcall() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
     apply_service = _read("lib/ApplyService.lua")
     preparation = _read("lib/PreparationService.lua")
@@ -869,7 +1036,8 @@ def test_auto_develop_uses_two_phase_cleanup_and_no_standard_xpcall() -> None:
     assert "context:addCleanupHandler" in preparation
     assert "cleanupPreview(preview)" in preparation
     assert "cleanupBatch(batchDirectory)" in command
-    assert "PendingOperation.clear(operations)" in command
+    assert "local operation = value" in command
+    assert "operation = nil" in command
     assert "LrTasks.startAsyncTask(function()" in command
     assert "LrTasks.pcall" in command
     assert "xpcall" not in command
@@ -954,6 +1122,63 @@ def test_feedback_preview_is_backend_authoritative_and_precedes_save() -> None:
     assert "/learning/feedback/preview" in config
 
 
+def test_learning_modes_are_captured_once_and_kept_categorical() -> None:
+    exif = _read("lib/ExifMapper.lua")
+    baseline = _read("lib/LearningBaselineService.lua")
+    feedback = _read("lib/LearningFeedbackCommand.lua")
+    client = _read("lib/LearningClient.lua")
+
+    assert "function ExifMapper.mapLearningDevelopState" in exif
+    assert "DevelopModeMapper.decodeUpright" in exif
+    assert "DevelopModeMapper.decodeHdr" in exif
+    assert "HDRMaxValue = source.HDRMaxValue" in exif
+    assert "function ExifMapper.filterLearningSettings" in exif
+    assert "original_settings = ExifMapper.filterLearningSettings(" in baseline
+    assert "recommendation = ExifMapper.filterLearningSettings(" in baseline
+    assert "applied_modes = captured.modes" in baseline
+    assert "hdr_decision = baselineHdrDecision(operation.hdrDecision)" in baseline
+    assert "next(normalized.contraindications) == nil" in baseline
+    assert "learning_baseline_save_failed filename=" in baseline
+    assert "final_modes = captured.modes" in feedback
+    assert "modeChanges(decoded.mode_changes)" in client
+    assert "withWriteAccessDo" not in baseline
+    assert "withWriteAccessDo" not in feedback
+
+
+def test_learning_status_uses_unclipped_multiline_mode_counts() -> None:
+    manager = _read("PluginManager.lua")
+
+    assert '"\\nUpright: "' in manager
+    assert '"\\nHDR: "' in manager
+    assert "result.upright_learning.change_count" in manager
+    assert "result.upright_learning.acceptance_count" in manager
+    assert "result.hdr_learning.change_count" in manager
+    assert "result.hdr_learning.acceptance_count" in manager
+    assert "width_in_chars = 54" in manager
+    assert "height_in_lines = 3" in manager
+
+
+def test_upright_application_and_confirmation_use_exact_structured_decision() -> None:
+    apply_service = _read("lib/ApplyService.lua")
+    preparation = _read("lib/PreparationService.lua")
+    pending = _read("lib/PendingOperation.lua")
+    review = _read("lib/PendingOperationReview.lua")
+    dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
+
+    assert "finalSettings.EnableTransform = true" in apply_service
+    assert "finalSettings.PerspectiveUpright = mappedUpright" in apply_service
+    assert "upright = {" in preparation
+    assert "hdr = {" in preparation
+    assert "local upright = Utils.deepCopy(values.upright" in pending
+    assert '"Confidence: " .. confidenceText(decision.confidence)' in review
+    assert "originalRaw = diagnostics.perspectiveUpright" in review
+    assert '"Unavailable (no change proposed)"' in review
+    assert '"No Upright correction recommended"' in review
+    assert "Utils.safeMessage(decision.reason, fallbackReason)" in review
+    assert 'appendSection(lines, "Transform Upright"' in dialog
+    assert 'appendSection(lines, "HDR"' in dialog
+
+
 def test_auto_develop_completion_exposes_learning_diagnostics() -> None:
     command = _read("lib/AutoDevelopCommand.lua")
     summary = _read("lib/BatchSummary.lua")
@@ -961,7 +1186,8 @@ def test_auto_develop_completion_exposes_learning_diagnostics() -> None:
     validation = _read("lib/Validation.lua")
     config = _read("lib/Config.lua")
 
-    assert "BatchSummary.recordLearning(summary, value.learning)" in command
+    assert "BatchSummary.recordPrepared(summary, operation)" in command
+    assert "BatchSummary.recordLearning(summary, operation.learning)" in summary
     assert "function BatchSummary.recordLearning" in summary
     for field in (
         "minimum_sample_count",
@@ -978,6 +1204,38 @@ def test_auto_develop_completion_exposes_learning_diagnostics() -> None:
     ):
         assert label in dialog
     assert "learningShowSummary = true" in config
+
+
+def test_final_develop_dialog_is_incremental_and_informational() -> None:
+    dialog = _read("dialogs/AutoDevelopConfirmationDialog.lua")
+
+    for label in (
+        "Selected:",
+        "Processed:",
+        "Applied:",
+        "Skipped:",
+        "Failed:",
+        "Restored after apply failure:",
+        "Restore failed:",
+        "Not processed:",
+        "Cancelled:",
+        "Elapsed:",
+        "Composition crops applied:",
+        "Level corrections applied:",
+        "HDR recommended:",
+        "HDR applied:",
+        "Denoise recommended:",
+        "Denoise applied:",
+        "Personalization applied:",
+        "Style distribution:",
+        "Editing intensity distribution:",
+    ):
+        assert label in dialog
+    assert "AutoDevelop AI - Batch Complete" in dialog
+    assert "No photo has been modified yet" not in dialog
+    assert "Ready to apply:" not in dialog
+    assert "Examples:" not in dialog
+    assert "function AutoDevelopConfirmationDialog.confirm(" not in dialog
 
 
 def test_plugin_does_not_depend_on_reference_directory() -> None:

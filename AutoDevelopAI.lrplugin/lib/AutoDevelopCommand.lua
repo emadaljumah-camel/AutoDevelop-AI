@@ -4,17 +4,14 @@ local LrFunctionContext = import("LrFunctionContext")
 local LrProgressScope = import("LrProgressScope")
 local LrTasks = import("LrTasks")
 
-local ApplicationGate = ModuleLoader.load("lib/ApplicationGate.lua")
 local ApplyService = ModuleLoader.load("lib/ApplyService.lua")
-local BatchOperationRecorder =
-    ModuleLoader.load("lib/BatchOperationRecorder.lua")
 local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
 local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
 local Logger = ModuleLoader.load("lib/Logger.lua")
 local LearningBaselineService =
     ModuleLoader.load("lib/LearningBaselineService.lua")
-local PendingOperation = ModuleLoader.load("lib/PendingOperation.lua")
 local Preferences = ModuleLoader.load("lib/Preferences.lua")
+local PendingOperation = ModuleLoader.load("lib/PendingOperation.lua")
 local PreparationService = ModuleLoader.load("lib/PreparationService.lua")
 local PreviewExporter = ModuleLoader.load("lib/PreviewExporter.lua")
 local ProgressTracker = ModuleLoader.load("lib/ProgressTracker.lua")
@@ -62,33 +59,66 @@ local function newSummary(selected, profileId, modelId)
     summary.styleDisplayName = StyleProfiles.getDisplayName(profileId)
     summary.modelId = modelId
     summary.modelDisplayName = ModelProfiles.getDisplayName(modelId)
-    summary.models = {}
-    summary.resolvedModels = {}
-    summary.examples = {}
     return summary
 end
 
-local function addFailure(summary, filename, failure)
-    BatchSummary.addFailure(summary, filename, failure)
+local function validPreparedOperation(operation)
+    local display = PendingOperation.inspectDisplayContract(operation)
+    return type(operation) == "table"
+        and operation.photo ~= nil
+        and type(operation.filename) == "string"
+        and operation.filename ~= ""
+        and Utils.trim(operation.filename) == operation.filename
+        and type(operation.requestId) == "string"
+        and operation.requestId ~= ""
+        and Utils.trim(operation.requestId) == operation.requestId
+        and type(operation.originalSettings) == "table"
+        and type(operation.mappedSettings) == "table"
+        and display.canApply
+        and ApplyService.validateFinalSettings(operation.finalSettings)
+        and operation.applicationStatus == "pending"
 end
 
-local function countSettings(settings)
-    local count = 0
-    for _ in pairs(settings or {}) do
-        count = count + 1
+local function updateProgress(progressScope, tracker, summary, index)
+    tracker:setCurrent(tracker.filename, index)
+    tracker:markCompleted(summary.processed)
+    tracker:setBatchCounts(summary)
+    progressScope:setCaption(tracker:caption())
+    progressScope:setPortionComplete(summary.processed, summary.selected)
+end
+
+local function recordPreparationSkip(summary, value)
+    BatchSummary.recordSkipped(summary)
+    if type(value) ~= "table" then
+        return
     end
-    return count
+    BatchSummary.recordGeometry(summary, value)
+    if value.hdrRecommended then
+        summary.hdrRecommendedCount =
+            (summary.hdrRecommendedCount or 0) + 1
+    end
+    if value.denoiseRecommended then
+        summary.denoiseRecommendedCount =
+            (summary.denoiseRecommendedCount or 0) + 1
+        summary.denoiseIgnored = (summary.denoiseIgnored or 0) + 1
+    end
 end
 
-local function prepareBatch(
-    photos,
-    progressScope,
-    batchDirectory,
-    summary,
-    operations,
-    preferences,
-    tracker
-)
+local function processSequential(options)
+    options = options or {}
+    local photos = options.photos or {}
+    local summary = options.summary
+    local preferences = options.preferences
+    local progressScope = options.progressScope
+    local tracker = options.tracker
+    local preparePhoto = options.preparePhoto
+    local confirmPhoto = options.confirmPhoto
+    local applyOne = options.applyOne
+    local recordBaseline = options.recordBaseline
+    local onRelease = options.onRelease or function()
+    end
+    local automatic = preferences.confirmationMode == "never"
+
     for index, photo in ipairs(photos) do
         if progressScope:isCanceled() then
             summary.cancelled = true
@@ -96,92 +126,48 @@ local function prepareBatch(
             break
         end
 
-        local filename = Utils.photoFilename(photo)
-        tracker:setPhase("Preparing recommendations")
+        local photoIdentity = Utils.capturePhotoIdentity(photo)
+        local filename = photoIdentity.displayFilename
+        tracker:setPhase("Preparing recommendation")
         tracker:setCurrent(filename, index)
+        tracker:setBatchCounts(summary)
         progressScope:setCaption(tracker:caption())
-        local outcome, value = PreparationService.prepareDevelopPhoto(
+        progressScope:setPortionComplete(summary.processed, #photos)
+        BatchSummary.markAttempted(summary)
+
+        local outcome, value = preparePhoto(
             photo,
-            batchDirectory,
+            options.batchDirectory,
             progressScope,
             preferences,
-            tracker
+            tracker,
+            photoIdentity
         )
-        local terminalFailure = outcome == "failed"
-            and type(value) == "table"
-            and ErrorClassifier.isTerminalForBatch(value.category)
-        Logger.info("operation_record_started")
-        local recordingStatus = BatchOperationRecorder.tryRecord({
-            cancelled = progressScope:isCanceled(),
-            terminalFailure = terminalFailure,
-            preparationResult = outcome,
-            operation = value,
-            operations = operations,
-        })
-        if recordingStatus == "recorded" then
-            Logger.info("operation_record_completed")
-        else
-            local recordingCategory = type(value) == "table"
-                and value.category or ErrorClassifier.codes.internalError
-            Logger.warn(
-                "stage=operation_record category="
-                    .. Utils.safeErrorCode(
-                        recordingCategory,
-                        ErrorClassifier.codes.internalError
-                    )
-            )
-        end
-        if recordingStatus == "recorded" then
-            summary.ready = summary.ready + 1
-            BatchSummary.recordStyle(summary, value)
-            BatchSummary.recordGeometry(summary, value)
-            if value.denoiseRecommended then
-                summary.denoiseIgnored = summary.denoiseIgnored + 1
-            end
-            summary.warningCount =
-                summary.warningCount + #(value.warnings or {})
-            summary.models[value.model] = true
-            if value.resolvedModel then
-                summary.resolvedModels[value.resolvedModel] = true
-            end
-            if type(value.learning) == "table" then
-                BatchSummary.recordLearning(summary, value.learning)
-            end
-            if #summary.examples < 5 then
-                summary.examples[#summary.examples + 1] = {
-                    filename = value.filename,
-                    settingCount = countSettings(value.mappedSettings),
-                    cropRecommended = value.cropRecommended,
-                    cropIncluded = value.compositionCropIncluded,
-                    levelingRecommended = value.levelingRecommended,
-                    levelingIncluded = value.levelingIncluded,
-                    levelingMode = value.levelingMode,
-                    levelingAngle = value.levelingAngle,
-                    warningCount = #(value.warnings or {}),
-                }
-            end
-        elseif recordingStatus == "cancelled" then
+
+        if outcome == "cancelled" or progressScope:isCanceled() then
             summary.cancelled = true
             BatchSummary.markNotProcessed(summary, #photos - index + 1)
+            if outcome == "ready" and type(value) == "table" then
+                onRelease(value)
+            end
             break
-        elseif recordingStatus == "terminal_failure" then
-            addFailure(summary, filename, value)
-            summary.terminalCategory = value.category
-            BatchSummary.markNotProcessed(summary, #photos - index)
-            tracker:markCompleted(index)
-            progressScope:setPortionComplete(index, #photos)
-            progressScope:setCaption(tracker:caption())
-            break
+        elseif outcome == "failed" then
+            BatchSummary.recordProcessedFailure(summary, filename, value)
+            if type(value) == "table"
+                and ErrorClassifier.isTerminalForBatch(value.category) then
+                summary.terminalCategory = value.category
+                BatchSummary.markNotProcessed(
+                    summary,
+                    #photos - index
+                )
+                updateProgress(progressScope, tracker, summary, index)
+                break
+            end
         elseif outcome == "skipped" then
-            summary.skipped = summary.skipped + 1
-            if type(value) == "table" then
-                BatchSummary.recordGeometry(summary, value)
-            end
-            if type(value) == "table" and value.denoiseRecommended then
-                summary.denoiseIgnored = summary.denoiseIgnored + 1
-            end
-        elseif outcome == "ready" then
-            addFailure(
+            recordPreparationSkip(summary, value)
+        elseif outcome ~= "ready"
+            or not validPreparedOperation(value) then
+            BatchSummary.recordProcessedFailure(
                 summary,
                 filename,
                 PreparationService.failure(
@@ -190,27 +176,83 @@ local function prepareBatch(
                 )
             )
         else
-            addFailure(summary, filename, value)
+            local operation = value
+            BatchSummary.recordPrepared(summary, operation)
+            tracker:setPhase("Reviewing recommendation")
+            tracker:setBatchCounts(summary)
+            progressScope:setCaption(tracker:caption())
+
+            local decision = "apply"
+            if not automatic then
+                decision = confirmPhoto(operation, index, #photos)
+            end
+
+            if decision == "cancel_batch"
+                or progressScope:isCanceled() then
+                summary.cancelled = true
+                BatchSummary.markNotProcessed(
+                    summary,
+                    #photos - index + 1
+                )
+                onRelease(operation)
+                operation = nil
+                break
+            elseif decision == "skip" then
+                BatchSummary.recordSkipped(summary)
+            elseif decision == "apply"
+                or decision == "apply_remaining" then
+                if decision == "apply_remaining" then
+                    automatic = true
+                end
+                tracker:setPhase("Applying recommendation")
+                progressScope:setCaption(tracker:caption())
+                local application = applyOne(
+                    options.catalog,
+                    operation
+                )
+                BatchSummary.recordApplication(
+                    summary,
+                    operation,
+                    application
+                )
+                if operation.applicationStatus == "applied"
+                    and preferences.learningEnabled
+                    and preferences.learningCaptureBaseline then
+                    local learningResult =
+                        recordBaseline(operation, preferences)
+                    summary.learningBaselineSaved =
+                        (summary.learningBaselineSaved or 0)
+                        + learningResult.saved
+                    summary.learningBaselineFailed =
+                        (summary.learningBaselineFailed or 0)
+                        + learningResult.failed
+                    summary.warningCount =
+                        (summary.warningCount or 0)
+                        + learningResult.failed
+                end
+            else
+                BatchSummary.recordProcessedFailure(
+                    summary,
+                    filename,
+                    PreparationService.failure(
+                        ErrorClassifier.codes.internalError,
+                        "invalid_confirmation_result"
+                    )
+                )
+            end
+            onRelease(operation)
+            operation = nil
         end
-        tracker:markCompleted(index)
-        progressScope:setPortionComplete(index, #photos)
-        progressScope:setCaption(tracker:caption())
-    end
-    if progressScope:isCanceled() then
-        summary.cancelled = true
+
+        updateProgress(progressScope, tracker, summary, index)
+        if progressScope:isCanceled() then
+            summary.cancelled = true
+            BatchSummary.markNotProcessed(summary, #photos - index)
+            break
+        end
     end
     summary.elapsedSeconds = tracker:elapsedSeconds()
-end
-
-local function defaultApplication(notApplied)
-    return {
-        applied = 0,
-        restoredAfterFailure = 0,
-        failedNotRestored = 0,
-        notApplied = notApplied or 0,
-        cancelled = false,
-        userCancelled = false,
-    }
+    return summary
 end
 
 local function runCommand(context)
@@ -274,17 +316,6 @@ local function runCommand(context)
     summary.requestTimeoutSeconds = preferences.requestTimeoutSeconds
     summary.confirmationMode = preferences.confirmationMode
     summary.showLearningSummary = preferences.learningShowSummary
-    local operations = {}
-    local operationsCleared = false
-    local function releaseOperations()
-        if operationsCleared then
-            return
-        end
-        operationsCleared = true
-        PendingOperation.clear(operations)
-    end
-    context:addCleanupHandler(releaseOperations)
-
     Logger.info(
         "Auto Develop Selected Photos start selected="
             .. tostring(#photos)
@@ -315,230 +346,57 @@ local function runCommand(context)
     end
     context:addCleanupHandler(releaseBatch)
 
-    local preparationProgress = LrProgressScope({
-        title = "Preparing AutoDevelop recommendations",
+    local progressScope = LrProgressScope({
+        title = "AutoDevelop AI",
         caption = "Preparing selected photos",
     })
-    local preparationFinished = false
-    local function releasePreparationProgress()
-        if preparationFinished then
+    local progressFinished = false
+    local function releaseProgress()
+        if progressFinished then
             return
         end
-        preparationFinished = true
-        finishProgress(preparationProgress)
+        progressFinished = true
+        finishProgress(progressScope)
     end
-    context:addCleanupHandler(releasePreparationProgress)
-    preparationProgress:setCancelable(true)
-    local preparationTracker =
-        ProgressTracker.new(#photos, "Preparing recommendations")
+    context:addCleanupHandler(releaseProgress)
+    progressScope:setCancelable(true)
+    local tracker =
+        ProgressTracker.new(#photos, "Preparing recommendation")
+    tracker:setBatchCounts(summary)
 
-    local preparation = RunSettingsCoordinator.prepare(
-        styleRun,
-        photos,
-        function(runPhotos, runPreferences)
-            prepareBatch(
-                runPhotos,
-                preparationProgress,
-                batchDirectory,
-                summary,
-                operations,
-                runPreferences,
-                preparationTracker
-            )
-            return summary
-        end
-    )
-    if preparation.status ~= "completed" then
-        releaseBatch()
-        releasePreparationProgress()
-        ErrorDialog.show(ErrorClassifier.codes.internalError)
-        releaseOperations()
-        return
-    end
-    summary = preparation.prepared
-    local preparationDecision = ApplicationGate.evaluate({
-        confirmationMode = preferences.confirmationMode,
-        preparationCancelled = summary.cancelled,
-        progressCancelled = preparationProgress:isCanceled(),
-        terminalFailure = summary.terminalCategory ~= nil,
-        readyCount = #operations,
+    summary = processSequential({
+        photos = photos,
+        catalog = catalog,
+        batchDirectory = batchDirectory,
+        progressScope = progressScope,
+        tracker = tracker,
+        summary = summary,
+        preferences = preferences,
+        preparePhoto = PreparationService.prepareDevelopPhoto,
+        confirmPhoto = AutoDevelopConfirmationDialog.confirmPhoto,
+        applyOne = ApplyService.applyOne,
+        recordBaseline = LearningBaselineService.recordOne,
     })
-    if preparationDecision.cancelled then
-        summary.cancelled = true
-    end
     releaseBatch()
-    releasePreparationProgress()
-
-    if preparationDecision.cancelled then
-        if summary.terminalCategory then
-            Logger.info(
-                "operation=prepare_batch category=cancelled "
-                    .. "code=cancelled_precedes_terminal "
-                    .. "terminal_category="
-                    .. Utils.safeErrorCode(
-                        summary.terminalCategory,
-                        "internal_error"
-                    )
-            )
-        end
-        local application = defaultApplication(#operations)
-        application.userCancelled = true
-        AutoDevelopConfirmationDialog.showFinal(summary, application)
-        releaseOperations()
-        return
-    elseif preparationDecision.terminalFailure then
-        local application = defaultApplication(#operations)
-        ErrorDialog.show(summary.terminalCategory, summary)
-        releaseOperations()
-        return
-    end
-    if preparationDecision.reason == "no_operations" then
-        AutoDevelopConfirmationDialog.showFinal(
-            summary,
-            defaultApplication(0)
-        )
-        releaseOperations()
-        return
-    end
-
-    local confirmed = true
-    if preparationDecision.reason == "confirmation_required" then
-        confirmed = AutoDevelopConfirmationDialog.confirm(summary)
-    end
-    Logger.info(
-        "Auto Develop confirmation_mode="
-            .. preferences.confirmationMode
-            .. " apply="
-            .. tostring(confirmed)
-    )
-    local confirmedDecision = ApplicationGate.evaluate({
-        confirmationMode = preferences.confirmationMode,
-        preparationCancelled = summary.cancelled,
-        progressCancelled = false,
-        terminalFailure = summary.terminalCategory ~= nil,
-        readyCount = #operations,
-        confirmationAccepted = confirmed,
+    releaseProgress()
+    AutoDevelopConfirmationDialog.showFinal(summary, {
+        applied = summary.applied,
+        cropApplied = summary.cropAppliedCount,
+        levelingApplied = summary.levelingAppliedCount,
+        restoredAfterFailure = summary.restoredAfterFailure,
+        failedNotRestored = summary.failedNotRestored,
+        notApplied = summary.notProcessed,
     })
-    if not confirmedDecision.shouldApply then
-        if confirmedDecision.cancelled then
-            summary.cancelled = true
-        end
-        local application = defaultApplication(#operations)
-        application.userCancelled =
-            confirmedDecision.reason == "confirmation_declined"
-                or confirmedDecision.cancelled
-        AutoDevelopConfirmationDialog.showFinal(summary, application)
-        releaseOperations()
-        return
-    end
-
-    local applyProgress = LrProgressScope({
-        title = "Applying AutoDevelop recommendations",
-        caption = "Preparing to apply settings",
-    })
-    local applyFinished = false
-    local function releaseApplyProgress()
-        if applyFinished then
-            return
-        end
-        applyFinished = true
-        finishProgress(applyProgress)
-    end
-    context:addCleanupHandler(releaseApplyProgress)
-    applyProgress:setCancelable(true)
-    local applyTracker =
-        ProgressTracker.new(#operations, "Applying recommendations")
-
-    local application
-    local finalDecision = ApplicationGate.evaluate({
-        confirmationMode = preferences.confirmationMode,
-        preparationCancelled = summary.cancelled,
-        progressCancelled = applyProgress:isCanceled(),
-        terminalFailure = summary.terminalCategory ~= nil,
-        readyCount = #operations,
-        confirmationAccepted = confirmed,
-    })
-    if not finalDecision.shouldApply then
-        if finalDecision.cancelled then
-            summary.cancelled = true
-        end
-        application = defaultApplication(#operations)
-        application.cancelled = finalDecision.cancelled
-        application.userCancelled = finalDecision.cancelled
-    else
-        application = ApplyService.applyBatch(catalog, operations, {
-            isCancelled = function()
-                return applyProgress:isCanceled()
-            end,
-            onProgress = function(index, total, operation)
-                applyTracker:setCurrent(operation.filename, index)
-                applyTracker:markCompleted(index - 1)
-                applyProgress:setCaption(applyTracker:caption())
-                applyProgress:setPortionComplete(index - 1, total)
-            end,
-        })
-    end
-    if application.cancelled then
-        summary.cancelled = true
-    end
-    summary.elapsedSeconds = preparationTracker:elapsedSeconds()
-    releaseApplyProgress()
-    application.cropApplied = 0
-    application.levelingApplied = 0
-    for _, operation in ipairs(operations) do
-        local message = "Auto Develop application filename="
-            .. operation.filename
-            .. " status="
-            .. tostring(operation.applicationStatus)
-        if operation.applicationStatus == "applied" then
-            if operation.compositionCropIncluded then
-                application.cropApplied = application.cropApplied + 1
-            end
-            if operation.levelingIncluded then
-                application.levelingApplied =
-                    application.levelingApplied + 1
-            end
-            Logger.info(message)
-        else
-            Logger.warn(
-                message
-                    .. " category="
-                    .. Utils.safeErrorCode(
-                        operation.applyErrorCategory,
-                        "apply_failed"
-                    )
-                    .. " code="
-                    .. Utils.safeErrorCode(
-                        operation.applyErrorCode,
-                        "operation_not_applied"
-                    )
-            )
-        end
-    end
-    if preferences.learningEnabled
-        and preferences.learningCaptureBaseline
-        and not application.cancelled then
-        local learningResult =
-            LearningBaselineService.recordApplied(operations, preferences)
-        summary.learningBaselineSaved = learningResult.saved
-        summary.learningBaselineFailed = learningResult.failed
-        if learningResult.failed > 0 then
-            summary.warningCount =
-                summary.warningCount + learningResult.failed
-        end
-    end
-    AutoDevelopConfirmationDialog.showFinal(summary, application)
     Logger.info(
         "Auto Develop complete applied="
-            .. tostring(application.applied)
+            .. tostring(summary.applied)
             .. " restored="
-            .. tostring(application.restoredAfterFailure)
+            .. tostring(summary.restoredAfterFailure)
             .. " failed_not_restored="
-            .. tostring(application.failedNotRestored)
-            .. " not_applied="
-            .. tostring(application.notApplied)
+            .. tostring(summary.failedNotRestored)
+            .. " not_processed="
+            .. tostring(summary.notProcessed)
     )
-    releaseOperations()
 end
 
 function AutoDevelopCommand.start()
@@ -559,7 +417,7 @@ function AutoDevelopCommand.start()
     end)
 end
 
-AutoDevelopCommand.prepareBatch = prepareBatch
+AutoDevelopCommand.processSequential = processSequential
 AutoDevelopCommand.newSummary = newSummary
 
 return AutoDevelopCommand

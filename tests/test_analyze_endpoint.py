@@ -454,7 +454,7 @@ def test_analyze_rejects_mismatched_response_identity(
             json=_request_body(),
         )
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "invalid_model_response"
+    assert response.json()["error"]["code"] == "provider_schema_mismatch"
 
 
 def test_analyze_identity_failure_does_not_expose_or_log_bad_value(

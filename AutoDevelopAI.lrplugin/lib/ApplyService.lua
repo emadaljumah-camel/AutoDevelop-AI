@@ -1,6 +1,8 @@
 local LrTasks = import("LrTasks")
 
 local CropMapper = ModuleLoader.load("lib/CropMapper.lua")
+local DevelopModeMapper =
+    ModuleLoader.load("lib/DevelopModeMapper.lua")
 local DevelopSettingsMapper =
     ModuleLoader.load("lib/DevelopSettingsMapper.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
@@ -10,6 +12,9 @@ local ApplyService = {}
 local function isAllowedKey(key)
     return DevelopSettingsMapper.isSupportedKey(key)
         or CropMapper.isSupportedKey(key)
+        or key == "EnableTransform"
+        or key == "PerspectiveUpright"
+        or key == "HDREditMode"
 end
 
 local function sanitize(settings)
@@ -32,6 +37,17 @@ end
 
 local function sanitizeRestore(settings)
     local safe = sanitize(settings)
+    if type(settings) == "table" then
+        if type(settings.EnableTransform) == "boolean" then
+            safe.EnableTransform = settings.EnableTransform
+        end
+        local upright = DevelopModeMapper.decodeUpright(
+            settings.PerspectiveUpright
+        )
+        if upright.supported then
+            safe.PerspectiveUpright = upright.rawValue
+        end
+    end
     if type(settings) == "table"
         and Utils.isFiniteNumber(settings.HDREditMode)
         and (
@@ -59,7 +75,11 @@ function ApplyService.captureOriginal(currentSettings, mappedSettings)
     end
     for key in pairs(mappedSettings) do
         local value = currentSettings[key]
-        if isAllowedKey(key) and Utils.isFiniteNumber(value) then
+        if isAllowedKey(key)
+            and (
+                Utils.isFiniteNumber(value)
+                or type(value) == "boolean"
+            ) then
             original[key] = value
         end
     end
@@ -68,6 +88,73 @@ end
 
 function ApplyService.sanitize(settings)
     return sanitize(settings)
+end
+
+function ApplyService.prepareFinalSettings(
+    mappedSettings,
+    currentSettings,
+    uprightMode,
+    enableHdr
+)
+    local finalSettings = sanitize(mappedSettings)
+    local currentUpright = type(currentSettings) == "table"
+        and DevelopModeMapper.decodeUpright(
+            currentSettings.PerspectiveUpright
+        ) or { supported = false }
+    local mappedUpright = DevelopModeMapper.encodeUpright(uprightMode)
+    if currentUpright.supported and mappedUpright ~= nil then
+        finalSettings.EnableTransform = true
+        finalSettings.PerspectiveUpright = mappedUpright
+    end
+    if enableHdr == true
+        and type(currentSettings) == "table"
+        and (
+            currentSettings.HDREditMode == 0
+            or currentSettings.HDREditMode == 1
+        ) then
+        finalSettings.HDREditMode = 1
+    end
+    return finalSettings
+end
+
+function ApplyService.validateFinalSettings(settings)
+    if type(settings) ~= "table" then
+        return false
+    end
+    local validated = sanitize(settings)
+    if settings.EnableTransform ~= nil then
+        if type(settings.EnableTransform) ~= "boolean" then
+            return false
+        end
+        validated.EnableTransform = settings.EnableTransform
+    end
+    if settings.PerspectiveUpright ~= nil then
+        local upright = DevelopModeMapper.decodeUpright(
+            settings.PerspectiveUpright
+        )
+        if not upright.supported then
+            return false
+        end
+        validated.PerspectiveUpright = upright.rawValue
+    end
+    if settings.HDREditMode ~= nil then
+        local hdr = DevelopModeMapper.decodeHdr(settings.HDREditMode)
+        if not hdr.supported then
+            return false
+        end
+        validated.HDREditMode = hdr.rawValue
+    end
+    local suppliedCount = countSettings(settings)
+    if suppliedCount == 0
+        or countSettings(validated) ~= suppliedCount then
+        return false
+    end
+    for key, value in pairs(settings) do
+        if validated[key] ~= value then
+            return false
+        end
+    end
+    return true
 end
 
 function ApplyService.applyBatch(catalog, operations, options)
@@ -110,22 +197,19 @@ function ApplyService.applyBatch(catalog, operations, options)
                     end
                     onProgress(index, #operations, operation)
 
-                    local safeSettings = sanitize(operation.mappedSettings)
-                    if operation.enableHdr == true
-                        and type(operation.originalSettings) == "table"
-                        and (
-                            operation.originalSettings.HDREditMode == 0
-                            or operation.originalSettings.HDREditMode == 1
-                        ) then
-                        safeSettings.HDREditMode = 1
-                    end
-                    if countSettings(safeSettings) == 0 then
+                    local finalSettings = operation.finalSettings
+                    if not ApplyService.validateFinalSettings(
+                        finalSettings
+                    ) then
                         operation.applicationStatus = "not_applied"
+                        operation.applyErrorCategory = "apply_failed"
+                        operation.applyErrorCode =
+                            "invalid_final_settings"
                         result.notApplied = result.notApplied + 1
                     else
                         local applyOk = LrTasks.pcall(function()
                             operation.photo:applyDevelopSettings(
-                                safeSettings,
+                                finalSettings,
                                 "AutoDevelop AI"
                             )
                         end)
@@ -184,6 +268,23 @@ function ApplyService.applyBatch(catalog, operations, options)
         end
     end
     return result
+end
+
+function ApplyService.applyOne(catalog, operation, options)
+    if type(operation) ~= "table" then
+        return {
+            applied = 0,
+            restoredAfterFailure = 0,
+            failedNotRestored = 0,
+            notApplied = 1,
+            cancelled = false,
+            writeError =
+                "No prepared photo operation was supplied.",
+            writeErrorCategory = "apply_failed",
+            writeErrorCode = "invalid_operation",
+        }
+    end
+    return ApplyService.applyBatch(catalog, { operation }, options)
 end
 
 return ApplyService

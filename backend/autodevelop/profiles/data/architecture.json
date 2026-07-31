@@ -1,57 +1,123 @@
 {
   "id": "architecture",
   "display_name": "Architecture",
-  "description": "Strong architectural rendering with structural definition, clean contrast, rich controlled color, and crisp material detail.",
-  "version": "1.0",
+  "description": "Premium architectural rendering with strong structural definition, bold but controlled tonal depth, rich accurate color, crisp material detail, and clear commercial thumbnail impact.",
+  "version": "1.1",
   "editing_goals": [
-    "Present clean geometry with strong structural definition and deliberate tonal separation",
-    "Create bright clean highlights, defined shadows, and accurate but rich material color",
-    "Render structural and surface texture crisply with clear commercial thumbnail impact"
+    "Create a professionally finished architectural image with strong geometry, clear visual hierarchy, and immediate commercial impact",
+    "Build deliberate tonal separation with clean highlights, defined shadows, confident white points, and substantial but controlled black depth",
+    "Render stone, concrete, glass, metal, wood, brick, and painted surfaces with crisp but realistic texture",
+    "Enhance dimensional depth between foreground, structure, sky, and surrounding environment",
+    "Maintain accurate material color while allowing richer, more polished color than a neutral technical correction",
+    "Produce a result that is visibly stronger than the unedited RAW preview without creating an artificial HDR appearance"
   ],
   "cautions": [
-    "Avoid exaggerated color",
-    "Avoid harsh local contrast",
-    "Keep composition cropping conservative",
+    "Avoid exaggerated or neon color",
+    "Avoid harsh local contrast, halos, edge glow, and crunchy texture",
+    "Do not use excessive Clarity or Dehaze on smooth walls, glass, reflective surfaces, or atmospheric backgrounds",
+    "Keep composition cropping conservative unless it clearly improves geometry, symmetry, balance, or edge cleanliness",
     "Apply rotational leveling only when supported by reliable structural references",
-    "Avoid lifeless neutral rendering or weak material definition"
+    "Distinguish camera roll from perspective convergence; CropAngle cannot correct converging verticals",
+    "Preserve highlight detail in windows, reflective metal, white facades, and bright skies",
+    "Avoid blocked shadows that hide structural detail",
+    "Avoid lifeless neutral rendering, weak material definition, or timid tonal separation"
   ],
   "slider_ranges": {
-    "Exposure2012": {"min": -0.8, "max": 0.8, "preferred": 0.0},
-    "Contrast2012": {"min": -5.0, "max": 28.0, "preferred": 12.0},
-    "Highlights2012": {"min": -65.0, "max": 5.0, "preferred": -30.0},
-    "Shadows2012": {"min": -10.0, "max": 40.0, "preferred": 15.0},
-    "Whites2012": {"min": -15.0, "max": 22.0, "preferred": 7.0},
-    "Blacks2012": {"min": -25.0, "max": 10.0, "preferred": -9.0},
-    "Texture": {"min": 0.0, "max": 25.0, "preferred": 12.0},
-    "Clarity2012": {"min": 0.0, "max": 20.0, "preferred": 9.0},
-    "Dehaze": {"min": -3.0, "max": 14.0, "preferred": 4.0},
-    "Vibrance": {"min": -8.0, "max": 20.0, "preferred": 5.0},
-    "Saturation": {"min": -12.0, "max": 8.0, "preferred": -1.0},
-    "Temperature": {"min": 3800.0, "max": 7000.0, "preferred": 5200.0},
-    "Tint": {"min": -15.0, "max": 15.0, "preferred": 0.0}
+    "Exposure2012": {
+      "min": -1.0,
+      "max": 1.0,
+      "preferred": 0.1
+    },
+    "Contrast2012": {
+      "min": -5.0,
+      "max": 38.0,
+      "preferred": 18.0
+    },
+    "Highlights2012": {
+      "min": -75.0,
+      "max": 8.0,
+      "preferred": -38.0
+    },
+    "Shadows2012": {
+      "min": -15.0,
+      "max": 48.0,
+      "preferred": 20.0
+    },
+    "Whites2012": {
+      "min": -18.0,
+      "max": 32.0,
+      "preferred": 13.0
+    },
+    "Blacks2012": {
+      "min": -35.0,
+      "max": 10.0,
+      "preferred": -15.0
+    },
+    "Texture": {
+      "min": 0.0,
+      "max": 32.0,
+      "preferred": 17.0
+    },
+    "Clarity2012": {
+      "min": 0.0,
+      "max": 26.0,
+      "preferred": 13.0
+    },
+    "Dehaze": {
+      "min": -3.0,
+      "max": 18.0,
+      "preferred": 7.0
+    },
+    "Vibrance": {
+      "min": -8.0,
+      "max": 28.0,
+      "preferred": 10.0
+    },
+    "Saturation": {
+      "min": -12.0,
+      "max": 10.0,
+      "preferred": 0.0
+    },
+    "Temperature": {
+      "min": 3600.0,
+      "max": 7600.0,
+      "preferred": 5300.0
+    },
+    "Tint": {
+      "min": -18.0,
+      "max": 18.0,
+      "preferred": 0.0
+    }
   },
   "crop_policy": {
     "allow_crop": true,
-    "max_edge_crop": 0.08,
-    "minimum_retained_area": 0.85,
-    "minimum_confidence": 0.7,
+    "max_edge_crop": 0.1,
+    "minimum_retained_area": 0.8,
+    "minimum_confidence": 0.72,
     "require_confidence": false,
     "preserve_aspect_ratio": true
   },
   "leveling_policy": {
     "allow_leveling": true,
-    "maximum_absolute_angle": 4.0,
+    "maximum_absolute_angle": 5.0,
     "guidance": [
-      "Use reliable structural horizontal and vertical lines with high sensitivity to accidental camera roll",
-      "Distinguish rotational tilt from perspective convergence",
-      "Do not over-correct an intentional architectural viewpoint"
+      "Use reliable structural horizontal and vertical references with high sensitivity to accidental camera roll",
+      "Prioritize rooflines, floor lines, window rows, facade edges, and clearly horizontal architectural elements",
+      "Distinguish rotational tilt from perspective convergence caused by camera position or wide-angle lenses",
+      "Do not use leaning trees, irregular masonry, decorative diagonals, or converging verticals as leveling references",
+      "Do not over-correct an intentional architectural viewpoint or deliberate dynamic composition"
     ]
+  },
+  "upright_policy": {
+    "allow_upright": true,
+    "allowed_modes": ["off", "auto", "level", "vertical", "full"],
+    "minimum_confidence": 0.7
   },
   "denoise_policy": {
     "allow_denoise": true,
-    "minimum_iso": 800,
+    "minimum_iso": 640,
     "minimum_amount": 0.0,
-    "maximum_amount": 30.0,
+    "maximum_amount": 36.0,
     "minimum_confidence": 0.6,
     "preserve_detail": true
   }

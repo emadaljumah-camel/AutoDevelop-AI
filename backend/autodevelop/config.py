@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     local_base_url: str = "http://127.0.0.1:1234/v1"
     local_api_key: SecretStr = SecretStr("")
     local_timeout_seconds: float = Field(default=120.0, ge=10, le=600)
+    local_response_format: Literal["json_schema", "json_object", "none"] = (
+        "json_schema"
+    )
     gemma_model: str = "gemma-4-31b"
     qwen_model: str = "qwen_qwen3-vl-32b-instruct"
     gpt_oss_model: str = "gpt-oss"
@@ -70,6 +73,8 @@ class Settings(BaseSettings):
     learning_max_results: int = Field(default=5, ge=1, le=20)
     learning_min_similarity: float = Field(default=0.70, ge=0, le=1)
     learning_max_candidate_pool: int = Field(default=100, ge=1)
+    log_invalid_model_response: bool = False
+    invalid_response_max_chars: int = Field(default=4000, ge=256, le=20_000)
 
     _yaml_loaded: bool = PrivateAttr(default=False)
     _configuration_sources: dict[str, ConfigurationSource] = PrivateAttr(

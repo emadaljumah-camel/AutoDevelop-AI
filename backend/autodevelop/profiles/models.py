@@ -10,6 +10,7 @@ from autodevelop.models.common import (
     NonBlankString,
     NonNegativeInteger,
     UnitFloat,
+    UprightMode,
 )
 
 PROFILE_SLIDER_NAMES = frozenset(DevelopSettings.model_fields) - {
@@ -94,6 +95,26 @@ class LevelingPolicy(_ProfileModel):
     )
 
 
+class UprightPolicy(_ProfileModel):
+    """Style intent governing Lightroom Transform Upright."""
+
+    allow_upright: bool = False
+    allowed_modes: list[UprightMode] = Field(
+        default_factory=lambda: [UprightMode.OFF],
+    )
+    minimum_confidence: UnitFloat = 1.0
+
+    @model_validator(mode="after")
+    def validate_modes(self) -> "UprightPolicy":
+        if not self.allowed_modes:
+            raise ValueError("allowed_modes must not be empty")
+        if len(set(self.allowed_modes)) != len(self.allowed_modes):
+            raise ValueError("allowed_modes must not contain duplicates")
+        if UprightMode.OFF not in self.allowed_modes:
+            raise ValueError("allowed_modes must include off")
+        return self
+
+
 class DenoisePolicy(_ProfileModel):
     """Style intent governing future denoise recommendations."""
 
@@ -159,6 +180,10 @@ class StyleProfile(_ProfileModel):
     )
     leveling_policy: LevelingPolicy = Field(
         description="Rotational-leveling intent for this style.",
+    )
+    upright_policy: UprightPolicy = Field(
+        default_factory=UprightPolicy,
+        description="Perspective Upright intent for this style.",
     )
     denoise_policy: DenoisePolicy = Field(
         description="Denoise intent for this style.",

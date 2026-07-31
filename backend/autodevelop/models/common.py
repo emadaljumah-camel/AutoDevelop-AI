@@ -1,6 +1,7 @@
 """Reusable Version 1 API transport models."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -33,6 +34,36 @@ EditingIntensity = Literal["conservative", "moderate", "strong", "very_strong"]
 StyleSelectionMode = Literal["auto", "manual"]
 LevelingMode = Literal["none", "horizon", "vertical", "both"]
 Recoverability = Literal["poor", "limited", "moderate", "high", "unknown"]
+EvidenceStrength = Literal["none", "low", "moderate", "high", "unknown"]
+DynamicRangeStrength = Literal[
+    "none",
+    "low",
+    "moderate",
+    "high",
+    "very_high",
+    "unknown",
+]
+HdrPreference = Literal["conservative", "balanced", "prefer_hdr"]
+HdrDecisionBasis = Literal[
+    "disabled",
+    "model",
+    "objective_evidence",
+    "learned_preference",
+]
+HdrOffReason = Literal[
+    "profile_disallowed",
+    "insufficient_dynamic_range",
+    "insufficient_evidence",
+    "confidence_below_threshold",
+    "high_noise_risk",
+    "severe_underexposure",
+    "portrait_without_hdr_need",
+    "documentary_authenticity",
+    "model_not_recommended",
+    "caller_unsupported",
+    "sdr_only_workflow",
+    "unsupported_source_format",
+]
 Latitude = Annotated[FiniteFloat, Field(ge=-90, le=90)]
 Longitude = Annotated[FiniteFloat, Field(ge=-180, le=180)]
 PositiveInteger = Annotated[StrictInt, Field(gt=0)]
@@ -225,6 +256,10 @@ class ProcessingOptions(TransportModel):
         default="unknown",
         description="Caller-declared output workflow used for HDR safety gating.",
     )
+    hdr_preference: HdrPreference = Field(
+        default="balanced",
+        description="User preference strength for eligible HDR recommendations.",
+    )
 
 
 class LearningRequestOptions(TransportModel):
@@ -261,6 +296,9 @@ class LearningDiagnostics(TransportModel):
         max_length=100,
         description="Safe local feature-provider identifier.",
     )
+    hdr_personalization_applied: bool = False
+    hdr_learning_enable_rate: UnitFloat | None = None
+    hdr_learning_sample_count: NonNegativeInteger = 0
     reason: Literal[
         "disabled",
         "database_unavailable",
@@ -272,6 +310,41 @@ class LearningDiagnostics(TransportModel):
         default=None,
         description="Stable reason personalization was not used.",
     )
+
+
+class UprightMode(StrEnum):
+    """Verified Lightroom Transform > Upright modes."""
+
+    OFF = "off"
+    AUTO = "auto"
+    FULL = "full"
+    LEVEL = "level"
+    VERTICAL = "vertical"
+
+
+class GeometryAnalysis(TransportModel):
+    """Semantic geometry evidence without Lightroom implementation values."""
+
+    reliable_horizontal_lines: bool = False
+    reliable_vertical_lines: bool = False
+    camera_roll_detected: bool = False
+    perspective_convergence: EvidenceStrength = "unknown"
+    upright_candidate_mode: UprightMode = UprightMode.OFF
+    upright_confidence: UnitFloat = 0.0
+
+
+class DynamicRangeAnalysis(TransportModel):
+    """Semantic evidence used to assess Lightroom HDR edit mode."""
+
+    dynamic_range: DynamicRangeStrength = "unknown"
+    highlight_pressure: EvidenceStrength = "unknown"
+    shadow_pressure: EvidenceStrength = "unknown"
+    backlit: bool = False
+    bright_sky_dark_foreground: bool = False
+    bright_windows_dark_interior: bool = False
+    sunrise_or_sunset: bool = False
+    hdr_candidate: bool = False
+    hdr_confidence: UnitFloat = 0.0
 
 
 class TechnicalAnalysis(TransportModel):
@@ -336,6 +409,14 @@ class TechnicalAnalysis(TransportModel):
     confidence: UnitFloat | None = Field(
         default=None,
         description="Optional analysis confidence from 0.0 through 1.0.",
+    )
+    geometry_analysis: GeometryAnalysis = Field(
+        default_factory=GeometryAnalysis,
+        description="Semantic evidence for rotation and perspective correction.",
+    )
+    dynamic_range_analysis: DynamicRangeAnalysis = Field(
+        default_factory=DynamicRangeAnalysis,
+        description="Semantic evidence for Lightroom HDR edit mode.",
     )
 
 
@@ -459,16 +540,73 @@ class DenoiseRecommendation(TransportModel):
     )
 
 
+class UprightRecommendation(TransportModel):
+    """Perspective Upright recommendation independent of crop and rotation."""
+
+    recommended: bool = Field(
+        description="Whether Lightroom Upright correction is recommended.",
+    )
+    mode: UprightMode = Field(
+        default=UprightMode.OFF,
+        description="Verified Lightroom Upright mode.",
+    )
+    confidence: UnitFloat = Field(
+        default=0.0,
+        description="Confidence in the Upright recommendation.",
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Optional concise visual justification.",
+    )
+
+
 class HdrRecommendation(TransportModel):
     """Backend-validated Lightroom HDR edit-mode recommendation."""
 
     recommended: bool = Field(
         description="Whether Lightroom HDR edit mode is recommended.",
     )
-    reason: Literal[None] = Field(
-        default=None,
-        description="Reserved field; provider reasoning is never exposed.",
+    enabled: bool = Field(
+        default=False,
+        description="Whether Lightroom HDR edit mode should be enabled.",
     )
+    confidence: UnitFloat = Field(
+        default=0.0,
+        description="Confidence in the HDR edit-mode recommendation.",
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Optional concise dynamic-range justification.",
+    )
+
+
+class HdrDecisionDiagnostics(TransportModel):
+    """Backend-owned HDR evidence, personalization, and validation audit."""
+
+    scene_hdr_candidate: bool = False
+    scene_hdr_confidence: UnitFloat = 0.0
+    base_scene_evidence_score: UnitFloat = 0.0
+    learning_bonus: UnitFloat = 0.0
+    user_preference_bonus: UnitFloat = 0.0
+    combined_evidence_score: UnitFloat = 0.0
+    decision_basis: HdrDecisionBasis = "disabled"
+    decision_confidence: UnitFloat | None = None
+    scene_hdr_inconsistent: bool = False
+    contraindications: list[HdrOffReason] = Field(default_factory=list)
+    # Version 1 compatibility aliases retained for stored records and clients.
+    visual_evidence_score: UnitFloat = 0.0
+    hdr_evidence_score: UnitFloat = 0.0
+    hdr_learning_applied: bool = False
+    hdr_learning_enable_rate: UnitFloat | None = None
+    hdr_learning_sample_count: NonNegativeInteger = 0
+    raw_hdr_recommended: bool | None = None
+    raw_hdr_confidence: UnitFloat | None = None
+    validated_hdr_enabled: bool = False
+    validated_hdr_confidence: UnitFloat | None = None
+    hdr_rejected: bool = False
+    hdr_rejection_reason: HdrOffReason | None = None
 
 
 class ProcessingWarning(TransportModel):

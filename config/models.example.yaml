@@ -8,6 +8,8 @@ providers:
     # OpenAI-compatible endpoint, such as LM Studio.
     base_url: http://127.0.0.1:1234/v1
     timeout_seconds: 120
+    # Supported values: json_schema, json_object, none.
+    response_format: json_schema
 
   gemini:
     timeout_seconds: 120
@@ -37,3 +39,7 @@ learning:
   maximum_results: 5
   minimum_similarity: 0.70
   maximum_candidate_pool: 100
+
+diagnostics:
+  log_invalid_model_response: false
+  invalid_response_max_chars: 4000

@@ -26,7 +26,9 @@ local developResponseFields = {
     style_selection_reason = true,
     editing_intensity = true,
     scene_confidence = true,
+    upright = true,
     enable_hdr = true,
+    hdr_decision = true,
 }
 
 local function hasOnlyFields(value, allowed)
@@ -162,10 +164,51 @@ local function validateHdr(enableHdr)
     end
     return hasOnlyFields(enableHdr, {
         recommended = true,
+        enabled = true,
+        confidence = true,
         reason = true,
     })
         and type(enableHdr.recommended) == "boolean"
-        and isAbsent(enableHdr.reason)
+        and type(enableHdr.enabled) == "boolean"
+        and validUnitNumber(enableHdr.confidence)
+        and (
+            isAbsent(enableHdr.reason)
+            or type(enableHdr.reason) == "string"
+        )
+        and (
+            enableHdr.recommended
+            or enableHdr.enabled == false
+        )
+end
+
+local function validateUpright(upright)
+    if type(upright) ~= "table" then
+        return false
+    end
+    local modes = {
+        off = true,
+        auto = true,
+        full = true,
+        level = true,
+        vertical = true,
+    }
+    return hasOnlyFields(upright, {
+        recommended = true,
+        mode = true,
+        confidence = true,
+        reason = true,
+    })
+        and type(upright.recommended) == "boolean"
+        and modes[upright.mode] == true
+        and validUnitNumber(upright.confidence)
+        and (
+            isAbsent(upright.reason)
+            or type(upright.reason) == "string"
+        )
+        and (
+            upright.recommended
+            or upright.mode == "off"
+        )
 end
 
 local function validateWarnings(warnings)
@@ -214,6 +257,9 @@ local function validateLearning(learning)
         minimum_sample_count = true,
         average_similarity = true,
         feature_type = true,
+        hdr_personalization_applied = true,
+        hdr_learning_enable_rate = true,
+        hdr_learning_sample_count = true,
         reason = true,
     }
     local reasons = {
@@ -230,6 +276,16 @@ local function validateLearning(learning)
         or not validNonNegativeInteger(learning.usable_sample_count)
         or not validNonNegativeInteger(learning.retrieved_sample_count)
         or not validPositiveInteger(learning.minimum_sample_count)
+        or type(learning.hdr_personalization_applied) ~= "boolean"
+        or not validNonNegativeInteger(
+            learning.hdr_learning_sample_count
+        )
+        or (
+            not isAbsent(learning.hdr_learning_enable_rate)
+            and not validUnitNumber(
+                learning.hdr_learning_enable_rate
+            )
+        )
         or (
             not isAbsent(learning.average_similarity)
             and not validUnitNumber(learning.average_similarity)
@@ -249,6 +305,104 @@ local function validateLearning(learning)
             type(learning.reason) == "string"
             and reasons[learning.reason] == true
         )
+end
+
+local function validateHdrDecision(value)
+    if isAbsent(value) then
+        return true
+    end
+    if type(value) ~= "table" then
+        return false
+    end
+    local allowed = {
+        scene_hdr_candidate = true,
+        scene_hdr_confidence = true,
+        base_scene_evidence_score = true,
+        learning_bonus = true,
+        user_preference_bonus = true,
+        combined_evidence_score = true,
+        decision_basis = true,
+        decision_confidence = true,
+        scene_hdr_inconsistent = true,
+        contraindications = true,
+        visual_evidence_score = true,
+        hdr_evidence_score = true,
+        hdr_learning_applied = true,
+        hdr_learning_enable_rate = true,
+        hdr_learning_sample_count = true,
+        raw_hdr_recommended = true,
+        raw_hdr_confidence = true,
+        validated_hdr_enabled = true,
+        validated_hdr_confidence = true,
+        hdr_rejected = true,
+        hdr_rejection_reason = true,
+    }
+    local reasons = {
+        profile_disallowed = true,
+        insufficient_dynamic_range = true,
+        insufficient_evidence = true,
+        confidence_below_threshold = true,
+        high_noise_risk = true,
+        severe_underexposure = true,
+        portrait_without_hdr_need = true,
+        documentary_authenticity = true,
+        model_not_recommended = true,
+        caller_unsupported = true,
+        sdr_only_workflow = true,
+        unsupported_source_format = true,
+    }
+    local decisionBases = {
+        disabled = true,
+        model = true,
+        objective_evidence = true,
+        learned_preference = true,
+    }
+    if not hasOnlyFields(value, allowed)
+        or type(value.scene_hdr_candidate) ~= "boolean"
+        or not validUnitNumber(value.scene_hdr_confidence)
+        or not validUnitNumber(value.base_scene_evidence_score)
+        or not validUnitNumber(value.learning_bonus)
+        or not validUnitNumber(value.user_preference_bonus)
+        or not validUnitNumber(value.combined_evidence_score)
+        or type(value.decision_basis) ~= "string"
+        or decisionBases[value.decision_basis] ~= true
+        or (
+            not isAbsent(value.decision_confidence)
+            and not validUnitNumber(value.decision_confidence)
+        )
+        or type(value.scene_hdr_inconsistent) ~= "boolean"
+        or type(value.contraindications) ~= "table"
+        or not validUnitNumber(value.visual_evidence_score)
+        or not validUnitNumber(value.hdr_evidence_score)
+        or type(value.hdr_learning_applied) ~= "boolean"
+        or not validNonNegativeInteger(value.hdr_learning_sample_count)
+        or (
+            not isAbsent(value.hdr_learning_enable_rate)
+            and not validUnitNumber(value.hdr_learning_enable_rate)
+        )
+        or (
+            not isAbsent(value.raw_hdr_recommended)
+            and type(value.raw_hdr_recommended) ~= "boolean"
+        )
+        or (
+            not isAbsent(value.raw_hdr_confidence)
+            and not validUnitNumber(value.raw_hdr_confidence)
+        )
+        or type(value.validated_hdr_enabled) ~= "boolean"
+        or (
+            not isAbsent(value.validated_hdr_confidence)
+            and not validUnitNumber(value.validated_hdr_confidence)
+        )
+        or type(value.hdr_rejected) ~= "boolean" then
+        return false
+    end
+    for _, reason in ipairs(value.contraindications) do
+        if type(reason) ~= "string" or reasons[reason] ~= true then
+            return false
+        end
+    end
+    return isAbsent(value.hdr_rejection_reason)
+        or reasons[value.hdr_rejection_reason] == true
 end
 
 local function validateStyleDiagnostics(response, request)
@@ -388,8 +542,14 @@ function Validation.validateDevelopResponse(response, request)
     if not validateDenoise(response.denoise) then
         return false, "Response denoise recommendation was invalid."
     end
+    if not validateUpright(response.upright) then
+        return false, "Response Upright recommendation was invalid."
+    end
     if not validateHdr(response.enable_hdr) then
         return false, "Response HDR recommendation was invalid."
+    end
+    if not validateHdrDecision(response.hdr_decision) then
+        return false, "Response HDR decision diagnostics were invalid."
     end
     if not validateWarnings(response.warnings) then
         return false, "Response warnings were invalid."

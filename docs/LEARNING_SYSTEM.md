@@ -35,6 +35,12 @@ preferences. Both can be significant in the same feedback event. Signed deltas
 use the dedicated learning schema rather than absolute DevelopSettings
 validation. AI Denoise is not applied or learned as a develop slider.
 
+Transform Upright and HDR Edit Mode are categorical signals rather than numeric
+sliders. Baselines carry original, recommended, and applied mode state in
+dedicated mode objects; final feedback carries the current modes. A change to
+only Upright or only HDR is significant even when every numeric setting is
+unchanged. Stable internal photo keys remain separate from display filenames.
+
 ## Typical workflow
 
 1. Run **Auto Develop Selected Photos**.
@@ -46,7 +52,11 @@ validation. AI Denoise is not applied or learned as a develop slider.
 7. After enough similar examples exist, future Develop requests may include
    aggregate personalized context.
 
-The feedback command reads develop settings but never changes them.
+The feedback command reads develop settings but never changes them. It first
+asks the backend for a read-only comparison preview and shows that result before
+saving. A preview or save failure leaves the local pending session intact so it
+can be retried. Successful feedback removes only the corresponding local pending
+entry.
 
 ## Storage and migrations
 
@@ -74,6 +84,12 @@ Schema version 2 moves any historical `CropAngle` value out of stored crop
 delta JSON and into a dedicated leveling-delta field. Existing sessions and
 feedback rows are retained.
 
+Schema versions 3 and 4 add nullable Upright/HDR baseline, recommendation,
+final, changed, and accepted fields. Schema version 5 adds nullable HDR
+calibration diagnostics, including scene evidence, model confidence, final
+decision, contraindications, and learning support. Missing historical values
+remain null; migrations never invent mode decisions for old sessions.
+
 For a consistent backup, stop the backend and copy the database together with
 any `-wal` and `-shm` files, or use SQLite's backup tooling.
 
@@ -87,6 +103,8 @@ The database stores:
 - style and model identifiers;
 - original changed settings, recommendation, applied baseline, final settings,
   and computed deltas;
+- original, recommended, applied, and final Upright/HDR mode state;
+- HDR evidence, confidence, decision-basis, and contraindication diagnostics;
 - bounded camera, lens, exposure, dimension, and scene context;
 - validation counts and states;
 - normalized local visual feature vectors;
@@ -111,9 +129,12 @@ It is finite, bounded to 64 dimensions, and L2-normalized. The preview is not
 stored. If the local image feature provider is unavailable, baseline and
 feedback storage continue and retrieval can use bounded photographic metadata.
 
-Retrieval considers only usable feedback from the same style profile. It ranks
-compatible visual features by cosine similarity, uses metadata as a secondary
-signal, and uses recency only to break ties. The default limits are:
+Slider, composition-crop, rotational-leveling, and Upright retrieval considers
+only usable feedback from the same effective style profile. HDR retrieval uses
+usable HDR feedback globally because HDR is determined by current scene need,
+not by style. Both paths rank compatible visual features by cosine similarity,
+use metadata as a secondary signal, and use recency only to break ties. The
+default limits are:
 
 - minimum samples: `3`;
 - maximum returned examples: `5`;
@@ -126,9 +147,11 @@ contribute zero corrections. Raw historical records, filenames, paths, session
 IDs, embeddings, and individual similarity scores never enter the prompt.
 
 The aggregate prompt block is soft context only. Tonal/color, composition-crop,
-and rotational-leveling observations remain separate. The current style
-profile, provider response validation, independent crop and leveling policies,
-application preferences, and SafetyValidator remain authoritative.
+rotational-leveling, Upright, and HDR observations remain separate. Current
+scene evidence, the effective style, provider response validation, application
+preferences, and SafetyValidator remain authoritative. HDR learning supplies a
+bounded enable-rate signal; it cannot bypass RAW, capability, workflow,
+dynamic-range, noise, or exposure safeguards.
 
 ## Configuration
 
@@ -162,6 +185,12 @@ Safe aggregate status:
 ```text
 GET /autodevelop/v1/learning/status
 ```
+
+Status distinguishes total feedback from usable feedback and reports Upright
+and HDR usable, changed, and accepted counts independently. A usable sample has
+a complete trusted baseline and successfully captured feedback. A changed mode
+means the final mode differs from the applied AI mode; an accepted mode means it
+was left unchanged.
 
 Exclude one session:
 

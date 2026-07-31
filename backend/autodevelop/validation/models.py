@@ -11,6 +11,7 @@ from autodevelop.models import (
     DevelopSettings,
     HdrRecommendation,
     LevelingRecommendation,
+    UprightRecommendation,
 )
 
 
@@ -83,6 +84,10 @@ class ValidationResult(_ValidationModel):
             mode="none",
         ),
         description="Safe rotational-leveling recommendation.",
+    )
+    upright: UprightRecommendation = Field(
+        default_factory=lambda: UprightRecommendation(recommended=False),
+        description="Safe Transform Upright recommendation.",
     )
     denoise: DenoiseRecommendation | None = Field(
         default=None,

@@ -6,7 +6,9 @@ from typing import Literal
 from pydantic import Field
 
 from autodevelop.models.common import (
+    DynamicRangeAnalysis,
     EditingIntensity,
+    GeometryAnalysis,
     NonBlankString,
     TransportModel,
     UnitFloat,
@@ -41,12 +43,13 @@ LightingType = Literal[
     "sunset_sunrise",
     "blue_hour",
     "overcast",
+    "dramatic_overcast",
     "artificial",
     "low_light",
     "mixed",
     "unknown",
 ]
-DynamicRange = Literal["low", "moderate", "high", "unknown"]
+DynamicRange = Literal["low", "moderate", "high", "very_high", "unknown"]
 ColorCharacter = Literal["muted", "balanced", "vivid", "mixed", "unknown"]
 class SceneSignals(TransportModel):
     """Strict semantic signals returned by the scene-analysis provider pass."""
@@ -76,6 +79,12 @@ class SceneSignals(TransportModel):
         "poor", "limited", "moderate", "high", "unknown"
     ] = "unknown"
     severe_underexposure: bool = False
+    geometry_analysis: GeometryAnalysis = Field(
+        default_factory=GeometryAnalysis,
+    )
+    dynamic_range_analysis: DynamicRangeAnalysis = Field(
+        default_factory=DynamicRangeAnalysis,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,22 +148,35 @@ def select_style(requested_style_id: str, scene: SceneSignals) -> StyleSelection
         "landscape",
         "nature",
     }:
-        dramatic = (
-            scene.dynamic_range == "high"
-            and scene.lighting_type in {"golden_hour", "sunset_sunrise"}
+        landscape_dominant = (
+            scene.primary_subject_type == "landscape"
+            and scene.confidence >= 0.65
         ) or (
-            scene.dynamic_range == "high"
+            scene.primary_subject_type == "nature"
+            and scene.scene_category == "scenic_travel"
+            and scene.confidence >= 0.75
+        )
+        dramatic = (
+            scene.dynamic_range in {"high", "very_high"}
+            and scene.lighting_type
+            in {"golden_hour", "sunset_sunrise", "dramatic_overcast"}
+        ) or (
+            scene.dynamic_range in {"high", "very_high"}
             and scene.color_character == "vivid"
             and scene.confidence >= 0.8
         )
-        if dramatic:
+        if landscape_dominant:
             effective = "landscape_impact"
-            reason = "Dramatic scenic landscape"
-            intensity = "strong"
+            if dramatic:
+                reason = "Dramatic scenic landscape"
+                intensity = "strong"
+            else:
+                reason = "Landscape-dominant scene"
+                intensity = "moderate"
         else:
             effective = "natural_travel"
-            reason = "Scenic travel subject"
-            intensity = "strong"
+            reason = "Mixed scenic travel scene"
+            intensity = "moderate"
 
     return StyleSelection(
         requested_style_id=requested_style_id,

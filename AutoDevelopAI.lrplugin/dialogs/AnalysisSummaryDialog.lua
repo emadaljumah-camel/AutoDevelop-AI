@@ -50,7 +50,10 @@ local function summaryText(summary)
         lines[#lines + 1] = "Photo Analysis"
         lines[#lines + 1] = "--------------"
         lines[#lines + 1] = "Photo: "
-            .. Utils.safeMessage(example.filename, "Photo")
+            .. Utils.safeMessage(
+                example.displayFilename,
+                example.filename or example.photoId or "Photo"
+            )
         lines[#lines + 1] = "Primary subject: "
             .. Utils.safeMessage(example.primarySubject, "unavailable")
         lines[#lines + 1] = "Lighting: "

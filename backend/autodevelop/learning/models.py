@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from autodevelop.models import UprightMode
+
 
 @dataclass(frozen=True)
 class StoredSession:
@@ -16,8 +18,11 @@ class StoredSession:
     resolved_model_id: str
     created_at_utc: datetime
     applied_baseline: dict[str, float]
+    applied_upright_mode: UprightMode | None
+    applied_hdr_enabled: bool | None
     exif_context: dict[str, Any]
     state: str
+    hdr_decision: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -33,4 +38,6 @@ class RetrievalSample:
     feature_version: int | None
     vector: tuple[float, ...] | None
     exif_context: dict[str, Any]
+    upright_mode: UprightMode | None = None
+    hdr_enabled: bool | None = None
     similarity: float = 0.0

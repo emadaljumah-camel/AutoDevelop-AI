@@ -11,6 +11,7 @@ from autodevelop.profiles.models import (
     LevelingPolicy,
     SliderRange,
     StyleProfile,
+    UprightPolicy,
 )
 from autodevelop.profiles.registry import (
     AUTO_STYLE_ID,
@@ -43,6 +44,7 @@ __all__ = [
     "StyleProfile",
     "StyleProfileLoader",
     "StyleSelection",
+    "UprightPolicy",
     "get_style",
     "is_valid_style_id",
     "is_valid_style_request_id",

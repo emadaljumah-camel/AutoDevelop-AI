@@ -3,7 +3,11 @@ import json
 import pytest
 
 from autodevelop.model_clients.prompt import build_prompt, build_scene_analysis_prompt
-from autodevelop.models import AnalyzeRequest, DevelopRequest
+from autodevelop.models import (
+    AnalyzeRequest,
+    DevelopRequest,
+    HdrDecisionDiagnostics,
+)
 from autodevelop.learning.schemas import PersonalizationContext
 from autodevelop.profiles import SceneSignals, StyleProfileLoader, select_style
 
@@ -44,6 +48,7 @@ def _selection():
 def _prompt_sections(prompt: str) -> tuple[dict, dict]:
     context_text, schema_text = prompt.split("\n\nJSON SCHEMA\n", maxsplit=1)
     context = json.loads(context_text.split("\n\nCONTEXT JSON\n", maxsplit=1)[1])
+    schema_text = schema_text.split("\n\nOUTPUT REQUIREMENTS\n", maxsplit=1)[0]
     return context, json.loads(schema_text)
 
 
@@ -118,6 +123,8 @@ def test_prompt_states_safety_and_null_rules_without_sensitive_image(profile) ->
     assert "When denoise is not recommended, amount must be null" in prompt
     assert "secret-image-content" not in prompt
     assert "Authorization" not in prompt
+    assert prompt.index("JSON SCHEMA") < prompt.index("OUTPUT REQUIREMENTS")
+    assert "crop contains composition bounds only" in prompt
 
 
 def test_prompt_layers_are_ordered_and_master_philosophy_appears_once(profile) -> None:
@@ -175,19 +182,25 @@ def test_learning_layer_follows_style_and_precedes_lightroom_rules(profile) -> N
     assert prompt.index(
         "PERSONAL EDITING PREFERENCES FROM SIMILAR PHOTOS"
     ) < prompt.index("LIGHTROOM HDR EDIT MODE")
-    assert "must never force Lightroom HDR edit mode on or off" in prompt
+    assert "never override confidence thresholds" in prompt
 
 
 @pytest.mark.parametrize(
     ("profile_id", "required_phrases"),
     [
-        ("stock_neutral", ("rather than a flat", "meaningful whites and blacks")),
-        ("portrait", ("clearly finished portrait", "conservative skin-local")),
+        (
+            "stock_neutral",
+            ("professionally finished commercial image", "confident white points"),
+        ),
+        ("portrait", ("premium portrait", "believable skin tones")),
         ("documentary", ("professionally finished", "authenticity")),
-        ("architecture", ("strong structural definition", "defined shadows")),
-        ("night", ("luminous but controlled", "defined blacks")),
-        ("natural_travel", ("strong premium", "atmospheric separation")),
-        ("landscape_impact", ("strongest believable", "foreground, midground")),
+        ("architecture", ("strong geometry", "defined shadows")),
+        ("night", ("dramatic but believable", "natural darkness")),
+        ("natural_travel", ("polished premium travel", "rich shadows")),
+        (
+            "landscape_impact",
+            ("immediately striking landscape", "bold tonal separation"),
+        ),
     ],
 )
 def test_every_profile_prompt_has_stronger_subject_aware_impact(
@@ -226,11 +239,43 @@ def test_hdr_prompt_is_scene_driven_and_never_promotes_artificial_hdr(profile) -
         selection=_selection(),
     ).split())
 
-    assert "likely RAW highlight and shadow recoverability" in prompt
+    assert "Actively evaluate HDR for every eligible RAW image" in prompt
+    assert "quality-enhancement option" in prompt
     assert "Style selection and HDR selection are independent" in prompt
     assert "not an artificial HDR look" in prompt
     assert "create HDR halos" not in prompt
     assert "add an artificial HDR look" not in prompt
+
+
+def test_final_develop_prompt_receives_backend_hdr_evidence(profile) -> None:
+    prompt = build_prompt(
+        _request(DevelopRequest),
+        profile,
+        operation="develop",
+        hdr_evidence=HdrDecisionDiagnostics(
+            scene_hdr_candidate=True,
+            scene_hdr_confidence=0.78,
+            base_scene_evidence_score=0.56,
+            learning_bonus=0.04,
+            user_preference_bonus=0.06,
+            combined_evidence_score=0.66,
+            visual_evidence_score=0.56,
+            hdr_evidence_score=0.66,
+        ),
+        selection=_selection(),
+    )
+
+    assert '"base_scene_evidence_score":0.56' in prompt
+    assert '"learning_bonus":0.04' in prompt
+    assert '"user_preference_bonus":0.06' in prompt
+    assert '"combined_evidence_score":0.66' in prompt
+    assert '"scene_hdr_candidate":true' in prompt
+    evidence_json = prompt.split('"hdr_evidence":', 1)[1].split(
+        ',"denoise_policy"',
+        1,
+    )[0]
+    assert "validated_hdr_enabled" not in evidence_json
+    assert "hdr_rejection_reason" not in evidence_json
 
 
 def test_scene_analysis_estimates_raw_recoverability_beyond_jpeg_preview() -> None:
@@ -240,6 +285,13 @@ def test_scene_analysis_estimates_raw_recoverability_beyond_jpeg_preview() -> No
 
     assert "RAW highlight and shadow recoverability" in prompt
     assert "JPEG preview alone" in prompt
+    assert "highlight pressure" in prompt
+    assert "shadow pressure" in prompt
+    assert "hdr_candidate=true only" in prompt
+    assert "do not reuse generic defaults across images" in prompt
+    assert "lighting_type=dramatic_overcast" in prompt
+    assert "visibly stormy, high-impact cloud light" in prompt
+    assert "soft, muted, or delicate cloudy light" in prompt
 
 
 @pytest.mark.parametrize(
@@ -251,7 +303,7 @@ def test_scene_analysis_estimates_raw_recoverability_beyond_jpeg_preview() -> No
         ),
         (
             "documentary",
-            ("authentic dynamic framing", "documentary context"),
+            ("intentional dynamic framing", "documentary character"),
         ),
         (
             "portrait",

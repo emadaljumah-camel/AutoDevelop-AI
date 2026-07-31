@@ -11,8 +11,8 @@ from autodevelop.learning.constants import (
     SIGNIFICANCE_THRESHOLDS,
     SUPPORTED_SETTINGS,
 )
-from autodevelop.learning.schemas import DevelopSettingDeltas
-from autodevelop.models import DevelopSettings
+from autodevelop.learning.schemas import DevelopModeState, DevelopSettingDeltas
+from autodevelop.models import DevelopSettings, UprightMode
 
 
 @dataclass(frozen=True)
@@ -37,12 +37,20 @@ class FeedbackComparison:
     ignored_delta: DevelopSettingDeltas
     crop_delta: DevelopSettingDeltas
     leveling_delta: DevelopSettingDeltas
+    final_modes: DevelopModeState
+    ai_upright_mode: UprightMode | None
+    ai_hdr_enabled: bool | None
+    upright_changed: bool
+    hdr_changed: bool
     accepted_without_change: bool
 
 
 def compare_feedback_settings(
     applied_baseline: Mapping[str, float],
     final_settings: Mapping[str, float],
+    *,
+    applied_modes: DevelopModeState | None = None,
+    final_modes: DevelopModeState | None = None,
 ) -> FeedbackComparison:
     """Compare canonical current values with the trusted applied baseline."""
 
@@ -85,6 +93,19 @@ def compare_feedback_settings(
         else:
             ignored[key] = change
 
+    applied_modes = applied_modes or DevelopModeState()
+    final_modes = final_modes or DevelopModeState()
+    upright_changed = (
+        applied_modes.upright is not None
+        and final_modes.upright is not None
+        and applied_modes.upright != final_modes.upright
+    )
+    hdr_changed = (
+        applied_modes.hdr_enabled is not None
+        and final_modes.hdr_enabled is not None
+        and applied_modes.hdr_enabled != final_modes.hdr_enabled
+    )
+
     return FeedbackComparison(
         final_settings=DevelopSettings(**canonical_final),
         comparisons=MappingProxyType(comparisons),
@@ -93,5 +114,16 @@ def compare_feedback_settings(
         ignored_delta=DevelopSettingDeltas(**ignored),
         crop_delta=DevelopSettingDeltas(**crop),
         leveling_delta=DevelopSettingDeltas(**leveling),
-        accepted_without_change=not significant and not crop and not leveling,
+        final_modes=final_modes.model_copy(deep=True),
+        ai_upright_mode=applied_modes.upright,
+        ai_hdr_enabled=applied_modes.hdr_enabled,
+        upright_changed=upright_changed,
+        hdr_changed=hdr_changed,
+        accepted_without_change=(
+            not significant
+            and not crop
+            and not leveling
+            and not upright_changed
+            and not hdr_changed
+        ),
     )

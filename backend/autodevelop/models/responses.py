@@ -13,6 +13,7 @@ from autodevelop.models.common import (
     EditingIntensity,
     EditPlan,
     HdrRecommendation,
+    HdrDecisionDiagnostics,
     LearningDiagnostics,
     LevelingRecommendation,
     NonBlankString,
@@ -22,6 +23,7 @@ from autodevelop.models.common import (
     TransportModel,
     StyleSelectionMode,
     UnitFloat,
+    UprightRecommendation,
 )
 
 ResponseStatus = Literal["success", "partial", "error"]
@@ -287,9 +289,19 @@ class DevelopResponse(_ProcessingResponseBase):
         default=None,
         description="Optional Lightroom develop recommendations.",
     )
+    upright: UprightRecommendation = Field(
+        default_factory=lambda: UprightRecommendation(
+            recommended=False,
+        ),
+        description="Independent Lightroom Transform Upright recommendation.",
+    )
     enable_hdr: HdrRecommendation = Field(
         default_factory=lambda: HdrRecommendation(recommended=False),
         description="Backend-validated Lightroom HDR edit-mode recommendation.",
+    )
+    hdr_decision: HdrDecisionDiagnostics | None = Field(
+        default=None,
+        description="Backend-owned HDR decision and validation diagnostics.",
     )
     learning: LearningDiagnostics | None = Field(
         default=None,

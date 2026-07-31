@@ -33,21 +33,25 @@ class GeminiClient:
         self,
         *,
         prompt: str,
-        image_base64: str,
+        image_base64: str | None,
         request_id: str,
+        response_schema: dict[str, Any] | None = None,
+        schema_name: str | None = None,
     ) -> dict[str, Any]:
+        parts: list[dict[str, Any]] = [{"text": prompt}]
+        if image_base64 is not None:
+            parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": image_base64,
+                    }
+                }
+            )
         payload = {
             "contents": [
                 {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": image_base64,
-                            }
-                        },
-                    ]
+                    "parts": parts,
                 }
             ],
             "generationConfig": {"responseMimeType": "application/json"},

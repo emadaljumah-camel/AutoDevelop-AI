@@ -30,6 +30,7 @@ BACKEND_DIAGNOSTIC_FIELDS = (
     "style_selection_reason",
     "editing_intensity",
     "scene_confidence",
+    "hdr_decision",
 )
 
 
@@ -111,7 +112,7 @@ def _invoke_route(
         assert request.url.host == "provider.test"
         assert request.headers["authorization"] == f"Bearer {provider_secret}"
         rendered_content = content
-        if endpoint == "analyze" and provider_calls == 1:
+        if provider_calls == 1:
             rendered_content = json.dumps(
                 {
                     "primary_subject_type": "landscape",
@@ -197,7 +198,7 @@ def test_real_model_service_accepts_valid_provider_content(
     assert response.json()["filename"] == "Integration.NEF"
     assert response.json()["model"] == "gemma"
     assert response.json()["resolved_model"] == "gemma-4-31b"
-    assert calls == (2 if endpoint == "analyze" else 1)
+    assert calls == 2
     assert "provider-secret-must-not-leak" not in response.text
     assert "provider-secret-must-not-leak" not in log_text
     assert validator.called is True
@@ -215,7 +216,7 @@ def test_matching_optional_provider_identity_echoes_are_accepted(
     )
 
     assert response.status_code == 200
-    assert calls == (2 if endpoint == "analyze" else 1)
+    assert calls == 2
 
 
 @pytest.mark.parametrize("endpoint", ["analyze", "develop"])
@@ -253,7 +254,11 @@ def test_real_model_service_rejects_provider_identity_mismatch(
     )
 
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "invalid_model_response"
+    assert response.json()["error"]["code"] == (
+        "provider_schema_mismatch"
+        if endpoint == "analyze"
+        else "invalid_model_response_repeated"
+    )
     assert marker not in response.text
     assert marker not in log_text
     assert value not in response.text
@@ -261,7 +266,7 @@ def test_real_model_service_rejects_provider_identity_mismatch(
         assert f"model={value}" not in log_text
     else:
         assert value not in log_text
-    assert calls == (2 if endpoint == "analyze" else 1)
+    assert calls == (2 if endpoint == "analyze" else 3)
 
 
 @pytest.mark.parametrize("endpoint", ["analyze", "develop"])
@@ -283,9 +288,20 @@ def test_real_model_service_maps_malformed_output_safely(
     response, log_text, calls = _invoke_route(tmp_path, endpoint, content)
 
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "invalid_model_response"
+    if content.startswith("["):
+        expected_code = "provider_schema_mismatch"
+    elif content == "{}" and endpoint == "develop":
+        expected_code = "invalid_model_response_repeated"
+    elif content == "{}":
+        expected_code = "provider_schema_mismatch"
+    else:
+        expected_code = "provider_json_parse_failed"
+    assert response.json()["error"]["code"] == expected_code
     assert content not in response.text
     assert content not in log_text
     assert "provider-secret-must-not-leak" not in response.text
     assert "provider-secret-must-not-leak" not in log_text
-    assert calls == (2 if endpoint == "analyze" else 1)
+    expected_calls = 2
+    if content == "{}" and endpoint == "develop":
+        expected_calls = 3
+    assert calls == expected_calls

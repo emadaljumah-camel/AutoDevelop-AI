@@ -19,12 +19,16 @@ from autodevelop.learning.comparison import (
 )
 from autodevelop.learning.embedding import ImageEmbeddingProvider
 from autodevelop.learning.feature_cache import FeatureHandoffCache
-from autodevelop.learning.personalization import aggregate_preferences
+from autodevelop.learning.personalization import (
+    aggregate_hdr_preference,
+    aggregate_preferences,
+)
 from autodevelop.learning.models import RetrievalSample
 from autodevelop.learning.repository import LearningRepository, PhotoKeyMismatchError
 from autodevelop.learning.schemas import (
     BaselineRequest,
     BaselineResponse,
+    DevelopModeState,
     FeedbackRequest,
     FeedbackPreviewResponse,
     FeedbackSettingComparison,
@@ -32,6 +36,7 @@ from autodevelop.learning.schemas import (
     FeatureVector,
     LearningDiagnostics,
     LearningExifContext,
+    LearningModeChanges,
     LearningStatusResponse,
     PersonalizationContext,
     safe_model_dump,
@@ -127,48 +132,84 @@ class LearningService:
             return self._result(None, feature, reason, 0, 0)
         exif_context = learning_exif_context(request)
         try:
-            candidates = await asyncio.to_thread(
-                self._repository.retrieval_candidates,
-                effective_profile_id,
+            candidates, hdr_candidates = await asyncio.gather(
+                asyncio.to_thread(
+                    self._repository.retrieval_candidates,
+                    effective_profile_id,
+                ),
+                asyncio.to_thread(
+                    self._repository.hdr_retrieval_candidates,
+                ),
             )
             usable_count = len(candidates)
-            if usable_count < self.settings.learning_min_samples:
-                return self._result(
-                    None, feature, "insufficient_samples", usable_count, 0
+            retrieved = (
+                self._retriever.retrieve(
+                    candidates,
+                    feature=feature,
+                    exif_context=exif_context,
+                    minimum_similarity=self.settings.learning_min_similarity,
+                    maximum_results=self.settings.learning_max_results,
                 )
-            retrieved = self._retriever.retrieve(
-                candidates,
+                if usable_count >= self.settings.learning_min_samples
+                else []
+            )
+            hdr_retrieved = self._retriever.retrieve(
+                hdr_candidates,
                 feature=feature,
                 exif_context=exif_context,
                 minimum_similarity=self.settings.learning_min_similarity,
                 maximum_results=self.settings.learning_max_results,
             )
-            if len(retrieved) < self.settings.learning_min_samples:
-                return self._result(
-                    None,
-                    feature,
-                    "no_similar_samples",
-                    usable_count,
-                    len(retrieved),
-                    self._average_similarity(retrieved),
+            context = (
+                aggregate_preferences(
+                    retrieved,
+                    profile_id=effective_profile_id,
+                    usable_sample_count=usable_count,
+                    feature_type=feature.feature_type if feature else None,
                 )
-            context = aggregate_preferences(
-                retrieved,
-                profile_id=effective_profile_id,
-                usable_sample_count=usable_count,
-                feature_type=feature.feature_type if feature else None,
+                if len(retrieved) >= self.settings.learning_min_samples
+                else None
             )
+            hdr_preferred, hdr_support, hdr_enable_rate = (
+                aggregate_hdr_preference(hdr_retrieved)
+                if len(hdr_retrieved) >= self.settings.learning_min_samples
+                else (None, len(hdr_retrieved), None)
+            )
+            hdr_applied = hdr_preferred is not None
+            if context is not None:
+                context = context.model_copy(
+                    update={
+                        "preferred_hdr_enabled": hdr_preferred,
+                        "hdr_support_count": hdr_support,
+                        "hdr_enable_rate": hdr_enable_rate,
+                    },
+                    deep=True,
+                )
+            reason = None
+            if context is None and not hdr_applied:
+                reason = (
+                    "insufficient_samples"
+                    if usable_count < self.settings.learning_min_samples
+                    else "no_similar_samples"
+                )
             return PersonalizationResult(
                 context=context,
                 diagnostics=LearningDiagnostics(
                     enabled=True,
-                    personalization_applied=context is not None,
+                    personalization_applied=context is not None or hdr_applied,
                     usable_sample_count=usable_count,
                     retrieved_sample_count=len(retrieved),
                     minimum_sample_count=self.settings.learning_min_samples,
-                    average_similarity=context.average_similarity,
+                    average_similarity=(
+                        context.average_similarity
+                        if context is not None
+                        else self._average_similarity(retrieved)
+                    ),
                     feature_type=feature.feature_type if feature else None,
-                    reason=None,
+                    hdr_personalization_applied=hdr_applied,
+                    hdr_learning_enable_rate=hdr_enable_rate,
+                    hdr_learning_sample_count=hdr_support,
+                    reason=reason,
                 ),
                 feature=feature,
             )
@@ -219,6 +260,9 @@ class LearningService:
             significant_delta=comparison.significant_delta,
             crop_delta=comparison.crop_delta,
             leveling_delta=comparison.leveling_delta,
+            final_modes=comparison.final_modes,
+            upright_changed=comparison.upright_changed,
+            hdr_changed=comparison.hdr_changed,
             accepted_without_change=comparison.accepted_without_change,
             usable=True,
             exclusion_reason=None,
@@ -233,8 +277,25 @@ class LearningService:
                 comparison.significant_delta.model_dump(exclude_none=True)
             )
             + len(comparison.crop_delta.model_dump(exclude_none=True))
-            + len(comparison.leveling_delta.model_dump(exclude_none=True)),
+            + len(comparison.leveling_delta.model_dump(exclude_none=True))
+            + int(comparison.upright_changed)
+            + int(comparison.hdr_changed),
             comparison.accepted_without_change,
+        )
+        logger.info(
+            (
+                "learning_mode_feedback session_id=%s "
+                "upright_changed=%s upright_ai_mode=%s "
+                "upright_final_mode=%s hdr_changed=%s "
+                "hdr_ai_enabled=%s hdr_final_enabled=%s"
+            ),
+            request.session_id,
+            str(comparison.upright_changed).lower(),
+            comparison.ai_upright_mode,
+            comparison.final_modes.upright,
+            str(comparison.hdr_changed).lower(),
+            comparison.ai_hdr_enabled,
+            comparison.final_modes.hdr_enabled,
         )
         return FeedbackResponse(
             feedback_id=feedback_id,
@@ -245,6 +306,18 @@ class LearningService:
             ignored_changes=comparison.ignored_delta,
             crop_changes=comparison.crop_delta,
             leveling_changes=comparison.leveling_delta,
+            mode_changes=LearningModeChanges(
+                upright=(
+                    comparison.final_modes.upright
+                    if comparison.upright_changed
+                    else None
+                ),
+                hdr_enabled=(
+                    comparison.final_modes.hdr_enabled
+                    if comparison.hdr_changed
+                    else None
+                ),
+            ),
         )
 
     async def preview_feedback(
@@ -279,6 +352,18 @@ class LearningService:
             leveling_changes=details(
                 comparison.leveling_delta.model_dump(exclude_none=True)
             ),
+            mode_changes=LearningModeChanges(
+                upright=(
+                    comparison.final_modes.upright
+                    if comparison.upright_changed
+                    else None
+                ),
+                hdr_enabled=(
+                    comparison.final_modes.hdr_enabled
+                    if comparison.hdr_changed
+                    else None
+                ),
+            ),
         )
 
     async def _compare_feedback(
@@ -304,8 +389,17 @@ class LearningService:
         comparison = compare_feedback_settings(
             session.applied_baseline,
             final,
+            applied_modes=DevelopModeState(
+                upright=session.applied_upright_mode,
+                hdr_enabled=session.applied_hdr_enabled,
+            ),
+            final_modes=request.final_modes,
         )
-        if not comparison.comparisons:
+        if (
+            not comparison.comparisons
+            and session.applied_upright_mode is None
+            and session.applied_hdr_enabled is None
+        ):
             raise LearningBaselineUnavailableError(
                 "The stored applied baseline is unavailable."
             )
@@ -340,6 +434,12 @@ class LearningService:
                 "feedback_samples": 0,
                 "usable_samples": 0,
                 "accepted_without_change": 0,
+                "upright_usable_sample_count": 0,
+                "upright_change_count": 0,
+                "upright_acceptance_count": 0,
+                "hdr_usable_sample_count": 0,
+                "hdr_change_count": 0,
+                "hdr_acceptance_count": 0,
             }
         else:
             counts = await asyncio.to_thread(self._repository.status_counts)
@@ -349,7 +449,22 @@ class LearningService:
             embedding_available=self._embedding.available,
             feature_type=self._embedding.feature_type,
             minimum_samples=self.settings.learning_min_samples,
-            **counts,
+            pending_sessions=counts["pending_sessions"],
+            feedback_samples=counts["feedback_samples"],
+            usable_samples=counts["usable_samples"],
+            accepted_without_change=counts["accepted_without_change"],
+            upright_learning={
+                "usable_sample_count": counts[
+                    "upright_usable_sample_count"
+                ],
+                "change_count": counts["upright_change_count"],
+                "acceptance_count": counts["upright_acceptance_count"],
+            },
+            hdr_learning={
+                "usable_sample_count": counts["hdr_usable_sample_count"],
+                "change_count": counts["hdr_change_count"],
+                "acceptance_count": counts["hdr_acceptance_count"],
+            },
         )
 
     async def dismiss(self, session_id: UUID) -> bool:

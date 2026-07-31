@@ -107,7 +107,10 @@ def _service(provider: SequenceProvider, learning=None) -> ModelService:
 
 
 def test_auto_develop_uses_scene_then_effective_style_for_learning() -> None:
-    provider = SequenceProvider([_scene_payload(), _develop_payload("natural_travel")])
+    provider = SequenceProvider([
+        _scene_payload(),
+        _develop_payload("landscape_impact"),
+    ])
     learning = RecordingLearning()
 
     response = asyncio.run(
@@ -118,19 +121,26 @@ def test_auto_develop_uses_scene_then_effective_style_for_learning() -> None:
     assert "SCENE ANALYSIS" in provider.prompts[0]
     assert "SELECTED STYLE" in provider.prompts[1]
     assert response.requested_style_id == "auto"
-    assert response.effective_style_id == "natural_travel"
+    assert response.effective_style_id == "landscape_impact"
     assert response.style_selection_mode == "auto"
-    assert learning.profile_ids == ["natural_travel"]
+    assert response.style_selection_reason == "Landscape-dominant scene"
+    assert response.editing_intensity == "moderate"
+    assert learning.profile_ids == ["landscape_impact"]
 
 
-def test_manual_develop_uses_one_call_and_honors_style() -> None:
-    provider = SequenceProvider([_develop_payload("architecture")])
+def test_manual_develop_uses_scene_evidence_then_honors_style() -> None:
+    provider = SequenceProvider([
+        _scene_payload(),
+        _develop_payload("architecture"),
+    ])
 
     response = asyncio.run(
         _service(provider).develop(_request("architecture"))
     )
 
-    assert len(provider.prompts) == 1
+    assert len(provider.prompts) == 2
+    assert "SCENE ANALYSIS" in provider.prompts[0]
+    assert "hdr_evidence" in provider.prompts[1]
     assert response.effective_style_id == "architecture"
     assert response.style_selection_mode == "manual"
 
@@ -138,7 +148,7 @@ def test_manual_develop_uses_one_call_and_honors_style() -> None:
 def test_provider_cannot_supply_style_diagnostics() -> None:
     payload = _develop_payload("architecture")
     payload["effective_style_id"] = "night"
-    provider = SequenceProvider([payload])
+    provider = SequenceProvider([_scene_payload(), payload])
 
     with pytest.raises(InvalidModelResponseError):
         asyncio.run(_service(provider).develop(_request("architecture")))

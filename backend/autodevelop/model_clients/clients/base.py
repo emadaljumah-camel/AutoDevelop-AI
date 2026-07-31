@@ -10,7 +10,9 @@ class ProviderClient(Protocol):
         self,
         *,
         prompt: str,
-        image_base64: str,
+        image_base64: str | None,
         request_id: str,
+        response_schema: dict[str, Any] | None = None,
+        schema_name: str | None = None,
     ) -> dict[str, Any]:
         """Perform one inference call."""

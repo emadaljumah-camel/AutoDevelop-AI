@@ -1,56 +1,137 @@
 {
   "id": "stock_neutral",
   "display_name": "Stock Neutral",
-  "description": "Neutral, broadly commercial stock rendering that is visibly polished, tonally defined, and never flat or unfinished.",
-  "version": "1.0",
+  "description": "Premium commercial stock rendering with balanced tonal depth, accurate color, natural detail, and broad licensing suitability without appearing flat or unfinished.",
+
+  "version": "1.1",
+
   "editing_goals": [
-    "Create clean contrast with meaningful whites and blacks rather than a flat neutral rendering",
-    "Produce accurate but rich color, clear subject separation, and professionally finished balanced tones",
-    "Deliver immediate stock-thumbnail impact while preserving broad commercial suitability and minimal stylization"
+    "Produce a professionally finished commercial image suitable for a wide variety of stock-photo subjects.",
+    "Create balanced tonal separation with clean highlights, controlled shadows, confident white points, and natural black depth.",
+    "Enhance overall clarity, color, and detail while remaining visually neutral.",
+    "Deliver immediate thumbnail impact without obvious stylistic processing.",
+    "Preserve maximum commercial flexibility across editorial, travel, business, lifestyle, architecture, food, objects, and nature."
   ],
+
   "cautions": [
-    "Avoid weak, gray, timid, or merely corrected results",
-    "Avoid dramatic or implausible contrast",
-    "Avoid strong saturation",
-    "Avoid obvious processing artifacts"
+    "Avoid weak, gray, flat, or unfinished rendering.",
+    "Avoid dramatic HDR appearance.",
+    "Avoid oversaturated colors or excessive local contrast.",
+    "Avoid halos, clipping, or artificial sharpening.",
+    "Maintain believable skin, foliage, skies, and neutral materials.",
+    "Prioritize broad commercial usability over artistic interpretation."
   ],
+
   "slider_ranges": {
-    "Exposure2012": {"min": -0.75, "max": 0.75, "preferred": 0.0},
-    "Contrast2012": {"min": -12.0, "max": 18.0, "preferred": 5.0},
-    "Highlights2012": {"min": -50.0, "max": 8.0, "preferred": -20.0},
-    "Shadows2012": {"min": -15.0, "max": 35.0, "preferred": 12.0},
-    "Whites2012": {"min": -15.0, "max": 18.0, "preferred": 5.0},
-    "Blacks2012": {"min": -18.0, "max": 12.0, "preferred": -5.0},
-    "Texture": {"min": -8.0, "max": 15.0, "preferred": 3.0},
-    "Clarity2012": {"min": -8.0, "max": 12.0, "preferred": 2.0},
-    "Dehaze": {"min": -5.0, "max": 10.0, "preferred": 2.0},
-    "Vibrance": {"min": -8.0, "max": 20.0, "preferred": 7.0},
-    "Saturation": {"min": -10.0, "max": 8.0, "preferred": 0.0},
-    "Temperature": {"min": 3800.0, "max": 7200.0, "preferred": 5500.0},
-    "Tint": {"min": -15.0, "max": 15.0, "preferred": 0.0}
+
+    "Exposure2012": {
+      "min": -0.75,
+      "max": 0.75,
+      "preferred": 0.05
+    },
+
+    "Contrast2012": {
+      "min": -12.0,
+      "max": 22.0,
+      "preferred": 8.0
+    },
+
+    "Highlights2012": {
+      "min": -55.0,
+      "max": 8.0,
+      "preferred": -24.0
+    },
+
+    "Shadows2012": {
+      "min": -15.0,
+      "max": 40.0,
+      "preferred": 16.0
+    },
+
+    "Whites2012": {
+      "min": -15.0,
+      "max": 22.0,
+      "preferred": 8.0
+    },
+
+    "Blacks2012": {
+      "min": -20.0,
+      "max": 12.0,
+      "preferred": -8.0
+    },
+
+    "Texture": {
+      "min": -8.0,
+      "max": 18.0,
+      "preferred": 5.0
+    },
+
+    "Clarity2012": {
+      "min": -8.0,
+      "max": 14.0,
+      "preferred": 4.0
+    },
+
+    "Dehaze": {
+      "min": -5.0,
+      "max": 12.0,
+      "preferred": 3.0
+    },
+
+    "Vibrance": {
+      "min": -8.0,
+      "max": 24.0,
+      "preferred": 10.0
+    },
+
+    "Saturation": {
+      "min": -10.0,
+      "max": 8.0,
+      "preferred": 0.0
+    },
+
+    "Temperature": {
+      "min": 3600.0,
+      "max": 7400.0,
+      "preferred": 5500.0
+    },
+
+    "Tint": {
+      "min": -15.0,
+      "max": 15.0,
+      "preferred": 0.0
+    }
   },
+
   "crop_policy": {
     "allow_crop": true,
     "max_edge_crop": 0.08,
-    "minimum_retained_area": 0.9,
+    "minimum_retained_area": 0.90,
     "minimum_confidence": 0.75,
     "require_confidence": false,
     "preserve_aspect_ratio": true
   },
+
   "leveling_policy": {
     "allow_leveling": true,
-    "maximum_absolute_angle": 3.0,
+    "maximum_absolute_angle": 3.5,
     "guidance": [
-      "Correct visible accidental rotational tilt for commercial usability",
-      "Use reliable scene geometry rather than stylized or irregular references",
-      "Keep a clearly intentional angle unchanged"
+      "Correct visible accidental rotational tilt.",
+      "Use reliable architectural or natural horizontal references.",
+      "Do not alter intentionally dynamic compositions.",
+      "Prioritize commercial usability over mathematical perfection."
     ]
+  },
+  "upright_policy": {
+    "allow_upright": true,
+    "allowed_modes": ["off", "auto", "level", "vertical"],
+    "minimum_confidence": 0.8
   },
   "denoise_policy": {
     "allow_denoise": true,
-    "minimum_iso": 800,
+    "minimum_iso": 640,
     "minimum_amount": 0.0,
-    "maximum_amount": 30.0,
+    "maximum_amount": 35.0,
     "minimum_confidence": 0.65,
     "preserve_detail": true
   }

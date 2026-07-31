@@ -1,4 +1,5 @@
 local ApiClient = ModuleLoader.load("lib/ApiClient.lua")
+local Json = ModuleLoader.load("lib/Json.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
 
 local LearningClient = {}
@@ -28,6 +29,12 @@ local function uuid(value)
     return Utils.isUuid(value)
 end
 
+local function validNonNegativeInteger(value)
+    return Utils.isFiniteNumber(value)
+        and value >= 0
+        and value == math.floor(value)
+end
+
 local function comparisonMap(value, expectedSignificant)
     if type(value) ~= "table" then
         return false
@@ -54,6 +61,40 @@ local function comparisonMap(value, expectedSignificant)
         end
     end
     return true
+end
+
+local function modeChanges(value)
+    if type(value) ~= "table" then
+        return false
+    end
+    local modes = {
+        off = true,
+        auto = true,
+        full = true,
+        level = true,
+        vertical = true,
+    }
+    for key in pairs(value) do
+        if key ~= "upright" and key ~= "hdr_enabled" then
+            return false
+        end
+    end
+    return (
+        value.upright == nil
+        or value.upright == Json.null
+        or modes[value.upright] == true
+    ) and (
+        value.hdr_enabled == nil
+        or value.hdr_enabled == Json.null
+        or type(value.hdr_enabled) == "boolean"
+    )
+end
+
+local function modeLearningStatus(value)
+    return type(value) == "table"
+        and validNonNegativeInteger(value.usable_sample_count)
+        and validNonNegativeInteger(value.change_count)
+        and validNonNegativeInteger(value.acceptance_count)
 end
 
 function LearningClient.storeBaseline(request, options)
@@ -96,7 +137,8 @@ function LearningClient.captureFeedback(request, options)
         or type(decoded.significant_changes) ~= "table"
         or type(decoded.ignored_changes) ~= "table"
         or type(decoded.crop_changes) ~= "table"
-        or type(decoded.leveling_changes) ~= "table" then
+        or type(decoded.leveling_changes) ~= "table"
+        or not modeChanges(decoded.mode_changes) then
         return {
             ok = false,
             category = "invalid_response",
@@ -110,6 +152,7 @@ function LearningClient.captureFeedback(request, options)
         significantChanges = Utils.deepCopy(decoded.significant_changes),
         cropChanges = Utils.deepCopy(decoded.crop_changes),
         levelingChanges = Utils.deepCopy(decoded.leveling_changes),
+        modeChanges = Utils.deepCopy(decoded.mode_changes),
     }
 end
 
@@ -129,7 +172,8 @@ function LearningClient.previewFeedback(request, options)
         or not comparisonMap(decoded.significant_changes, true)
         or not comparisonMap(decoded.ignored_changes, false)
         or not comparisonMap(decoded.crop_changes, true)
-        or not comparisonMap(decoded.leveling_changes, true) then
+        or not comparisonMap(decoded.leveling_changes, true)
+        or not modeChanges(decoded.mode_changes) then
         return {
             ok = false,
             category = "invalid_response",
@@ -145,6 +189,7 @@ function LearningClient.previewFeedback(request, options)
         ignoredChanges = Utils.deepCopy(decoded.ignored_changes),
         cropChanges = Utils.deepCopy(decoded.crop_changes),
         levelingChanges = Utils.deepCopy(decoded.leveling_changes),
+        modeChanges = Utils.deepCopy(decoded.mode_changes),
     }
 end
 
@@ -162,7 +207,9 @@ function LearningClient.status(options)
         or type(decoded.pending_sessions) ~= "number"
         or type(decoded.feedback_samples) ~= "number"
         or type(decoded.usable_samples) ~= "number"
-        or type(decoded.minimum_samples) ~= "number" then
+        or type(decoded.minimum_samples) ~= "number"
+        or not modeLearningStatus(decoded.upright_learning)
+        or not modeLearningStatus(decoded.hdr_learning) then
         return {
             ok = false,
             category = "invalid_response",

@@ -55,7 +55,7 @@ def test_shared_validator_rejects_mismatched_analyze_identity(
             expected_type=AnalyzeResponse,
             expected_resolved_model="gemma-4-31b",
         )
-    assert raised.value.code == "invalid_model_response"
+    assert raised.value.code == "provider_schema_mismatch"
 
 
 def test_shared_validator_accepts_valid_analyze_response() -> None:
@@ -114,7 +114,7 @@ def test_mismatched_provider_identity_echo_is_rejected(
             expected_resolved_model="gemma-4-31b",
         )
 
-    assert raised.value.code == "invalid_model_response"
+    assert raised.value.code == "provider_schema_mismatch"
 
 
 def test_trusted_envelope_does_not_mutate_provider_payload() -> None:

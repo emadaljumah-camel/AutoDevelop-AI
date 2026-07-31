@@ -21,6 +21,7 @@ from autodevelop.models import (
     PhotoExif,
     ProcessingWarning,
     TechnicalAnalysis,
+    UprightRecommendation,
 )
 
 REQUEST_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -52,6 +53,25 @@ ANALYZE_RESPONSE_DATA = {
         "has_faces": False,
         "has_sky": True,
         "confidence": 0.93,
+        "geometry_analysis": {
+            "reliable_horizontal_lines": False,
+            "reliable_vertical_lines": False,
+            "camera_roll_detected": False,
+            "perspective_convergence": "unknown",
+            "upright_candidate_mode": "off",
+            "upright_confidence": 0.0,
+        },
+        "dynamic_range_analysis": {
+            "dynamic_range": "unknown",
+            "highlight_pressure": "unknown",
+            "shadow_pressure": "unknown",
+            "backlit": False,
+            "bright_sky_dark_foreground": False,
+            "bright_windows_dark_interior": False,
+            "sunrise_or_sunset": False,
+            "hdr_candidate": False,
+            "hdr_confidence": 0.0,
+        },
     },
     "edit_plan": {
         "style_profile": "natural_travel",
@@ -114,10 +134,19 @@ DEVELOP_RESPONSE_DATA = {
         "CropBottom": None,
         "CropAngle": None,
     },
-    "enable_hdr": {
+    "upright": {
         "recommended": False,
+        "mode": "off",
+        "confidence": 0.0,
         "reason": None,
     },
+    "enable_hdr": {
+        "recommended": False,
+        "enabled": False,
+        "confidence": 0.0,
+        "reason": None,
+    },
+    "hdr_decision": None,
 }
 
 ERROR_RESPONSE_DATA = {
@@ -135,10 +164,10 @@ ERROR_RESPONSE_DATA = {
 }
 
 PUBLIC_SCHEMA_HASHES = {
-    AnalyzeRequest: "66e732e2c0676358f648b0e68a5db9517c74a23a092f59e0c15a0874475550aa",
-    DevelopRequest: "fedcec26ef898208d0495dbaf88c38c72badbac1fa3305c1a28797623df8a40e",
-    AnalyzeResponse: "28351b84312968c92d7f72670505454229e8fdb0c8385fc20e9f69ecb72e7e13",
-    DevelopResponse: "17dbf2c0f41013fcb34c55b919fd72bd0b455d56c674260db1edbe54bb7f7098",
+    AnalyzeRequest: "4b20b401c2c03245cda87e9cd6989d2cded5387e148d71f898c7fb6e06fffb25",
+    DevelopRequest: "22711b5208dcb7f551ba0cbeefc4a272ca0d0829ab181ccaf15f7ffb977faba3",
+    AnalyzeResponse: "35129c750611b35c79e87ff53997d2818fc9784006a00b90895fa939073adc87",
+    DevelopResponse: "f65703721fed6a8e9b96f477980dbf803b9dff6801fa2dc569a7706abb7ff44d",
     ErrorResponse: "527d0bbd9b728522f146a539d44bc433c39e7988db3926cda467ce9cdec9994e",
 }
 
@@ -548,11 +577,26 @@ def test_processing_response_warning_lists_are_not_shared(
     assert second.warnings == []
 
 
-def test_hdr_reason_is_contractually_null() -> None:
-    with pytest.raises(ValidationError):
-        HdrRecommendation.model_validate(
-            {"recommended": True, "reason": "private provider reasoning"}
-        )
+def test_mode_recommendations_accept_bounded_explanations() -> None:
+    hdr = HdrRecommendation.model_validate(
+        {
+            "recommended": True,
+            "enabled": True,
+            "confidence": 0.91,
+            "reason": "Strong highlight and shadow pressure.",
+        }
+    )
+    upright = UprightRecommendation.model_validate(
+        {
+            "recommended": True,
+            "mode": "vertical",
+            "confidence": 0.88,
+            "reason": "Reliable vertical lines converge.",
+        }
+    )
+
+    assert hdr.reason == "Strong highlight and shadow pressure."
+    assert upright.reason == "Reliable vertical lines converge."
 
 
 @pytest.mark.parametrize("model_type", [AnalyzeResponse, DevelopResponse])

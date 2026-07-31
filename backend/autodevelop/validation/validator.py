@@ -13,6 +13,8 @@ from autodevelop.models import (
     LevelingRecommendation,
     ProcessingOptions,
     TechnicalAnalysis,
+    UprightMode,
+    UprightRecommendation,
 )
 from autodevelop.profiles import StyleProfile
 from autodevelop.validation import policies
@@ -97,6 +99,7 @@ class SafetyValidator:
         profile: StyleProfile,
         enable_hdr: HdrRecommendation | None = None,
         leveling: LevelingRecommendation | None = None,
+        upright: UprightRecommendation | None = None,
         analysis: TechnicalAnalysis | None = None,
         options: ProcessingOptions | None = None,
     ) -> ValidationResult:
@@ -106,14 +109,21 @@ class SafetyValidator:
         safe_settings = self._validate_settings(settings, profile, state)
         safe_crop = self._validate_crop(crop, profile, state)
         safe_leveling = self._validate_leveling(leveling, profile, state)
+        safe_upright = self._validate_upright(upright, profile, state)
         safe_denoise = self._validate_denoise(denoise, profile, state)
-        safe_hdr = self._validate_hdr(enable_hdr, analysis, options, state)
+        safe_hdr = self._validate_hdr(
+            enable_hdr,
+            analysis,
+            options,
+            state,
+        )
         is_safe = not any(issue.severity == "error" for issue in state.issues)
         return ValidationResult(
             is_safe=is_safe,
             settings=safe_settings,
             crop=safe_crop,
             leveling=safe_leveling,
+            upright=safe_upright,
             denoise=safe_denoise,
             enable_hdr=safe_hdr,
             issues=state.issues,
@@ -130,10 +140,26 @@ class SafetyValidator:
         state: _ValidationState,
     ) -> HdrRecommendation:
         safe_false = HdrRecommendation(recommended=False)
-        if recommendation is None or not recommendation.recommended:
+        if recommendation is None:
             return safe_false
+        if not recommendation.recommended:
+            if recommendation.enabled:
+                state.add_issue(
+                    code=policies.HDR_INACTIVE_NORMALIZED,
+                    message="Inactive HDR recommendation was normalized to Off.",
+                    field_name="enable_hdr.enabled",
+                    original_value=True,
+                    adjusted_value=False,
+                    action=ValidationAction.REJECTED,
+                    track_field="enable_hdr",
+                )
+            return recommendation.model_copy(
+                update={"recommended": False, "enabled": False},
+                deep=True,
+            )
 
         reasons: list[str] = []
+        rejection_code = policies.HDR_RECOMMENDATION_REJECTED
         if options is None or not options.hdr_edit_supported:
             reasons.append("Lightroom HDR edit mode is not supported by the caller.")
         if options is not None and options.hdr_workflow == "sdr_only":
@@ -141,9 +167,16 @@ class SafetyValidator:
         if analysis is None:
             reasons.append("Structured scene evidence is unavailable.")
         else:
-            dynamic_range = (analysis.dynamic_range or "").strip().lower()
-            if dynamic_range != "high":
-                reasons.append("The scene is not assessed as high dynamic range.")
+            semantic = analysis.dynamic_range_analysis
+            dynamic_range = (
+                semantic.dynamic_range
+                if semantic.dynamic_range != "unknown"
+                else (analysis.dynamic_range or "").strip().lower()
+            )
+            if dynamic_range not in {"moderate", "high", "very_high"}:
+                reasons.append(
+                    "The scene lacks moderate-or-higher dynamic-range evidence."
+                )
             recoverability = {
                 analysis.highlight_recoverability,
                 analysis.shadow_recoverability,
@@ -155,37 +188,9 @@ class SafetyValidator:
             noise = (analysis.noise_level or "").strip().lower()
             if noise in {"high", "severe", "extreme"}:
                 reasons.append("Noise is too high for a safe HDR recommendation.")
-
-            scene = " ".join(
-                value
-                for value in (
-                    analysis.scene_type,
-                    analysis.main_subject,
-                    analysis.lighting,
-                    analysis.exposure_assessment,
-                )
-                if value
-            ).lower()
-            ordinary_people_scene = (
-                any(word in scene for word in ("portrait", "headshot", "people"))
-                and not any(
-                    cue in scene
-                    for cue in (
-                        "sunset",
-                        "sunrise",
-                        "bright window",
-                        "backlit",
-                        "luminous",
-                        "bright lights",
-                    )
-                )
-            )
-            if ordinary_people_scene:
-                reasons.append("An ordinary people scene has no compelling HDR cue.")
-
         if reasons:
             state.add_issue(
-                code=policies.HDR_RECOMMENDATION_REJECTED,
+                code=rejection_code,
                 message=" ".join(reasons),
                 field_name="enable_hdr",
                 original_value=True,
@@ -193,8 +198,84 @@ class SafetyValidator:
                 action=ValidationAction.REJECTED,
                 track_field="enable_hdr",
             )
+            return recommendation.model_copy(
+                update={"recommended": False, "enabled": False},
+                deep=True,
+            )
+        return recommendation.model_copy(deep=True)
+
+    @staticmethod
+    def _validate_upright(
+        recommendation: UprightRecommendation | None,
+        profile: StyleProfile,
+        state: _ValidationState,
+    ) -> UprightRecommendation:
+        safe_false = UprightRecommendation(recommended=False)
+        if recommendation is None:
             return safe_false
-        return HdrRecommendation(recommended=True)
+        if not recommendation.recommended:
+            if recommendation.mode != UprightMode.OFF:
+                state.add_issue(
+                    code=policies.UPRIGHT_INVALID_STATE,
+                    message="Inactive Upright recommendation was normalized to Off.",
+                    field_name="upright.mode",
+                    original_value=recommendation.mode.value,
+                    adjusted_value=UprightMode.OFF.value,
+                    action=ValidationAction.REJECTED,
+                    track_field="upright",
+                )
+            return safe_false
+        if recommendation.mode == UprightMode.OFF:
+            state.add_issue(
+                code=policies.UPRIGHT_INVALID_STATE,
+                message="Recommended Upright mode cannot be Off.",
+                field_name="upright.mode",
+                original_value=recommendation.mode.value,
+                adjusted_value=UprightMode.OFF.value,
+                action=ValidationAction.REJECTED,
+                track_field="upright",
+            )
+            return safe_false
+        if not profile.upright_policy.allow_upright:
+            state.add_issue(
+                code=policies.UPRIGHT_NOT_ALLOWED,
+                message=f"Upright is not allowed by profile {profile.id}.",
+                field_name="upright",
+                original_value=recommendation.mode.value,
+                adjusted_value=UprightMode.OFF.value,
+                action=ValidationAction.REJECTED,
+                track_field="upright",
+            )
+            return safe_false
+        if recommendation.mode not in profile.upright_policy.allowed_modes:
+            state.add_issue(
+                code=policies.UPRIGHT_MODE_NOT_ALLOWED,
+                message=(
+                    f"Upright mode {recommendation.mode.value} is not allowed "
+                    f"by profile {profile.id}."
+                ),
+                field_name="upright.mode",
+                original_value=recommendation.mode.value,
+                adjusted_value=UprightMode.OFF.value,
+                action=ValidationAction.REJECTED,
+                track_field="upright",
+            )
+            return safe_false
+        if (
+            recommendation.confidence
+            < profile.upright_policy.minimum_confidence
+        ):
+            state.add_issue(
+                code=policies.UPRIGHT_CONFIDENCE_TOO_LOW,
+                message="Upright confidence is below the profile threshold.",
+                field_name="upright.confidence",
+                original_value=recommendation.confidence,
+                adjusted_value=UprightMode.OFF.value,
+                action=ValidationAction.REJECTED,
+                track_field="upright",
+            )
+            return safe_false
+        return recommendation.model_copy(deep=True)
 
     @staticmethod
     def _validate_settings(

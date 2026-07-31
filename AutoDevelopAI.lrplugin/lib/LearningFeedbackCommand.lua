@@ -30,6 +30,7 @@ local function collect(photos, preferences, progress)
         significantChanges = nil,
         cropChanges = nil,
         levelingChanges = nil,
+        modeChanges = nil,
     }
     for index, photo in ipairs(photos) do
         if progress and progress:isCanceled() then
@@ -41,19 +42,25 @@ local function collect(photos, preferences, progress)
             )
             progress:setPortionComplete(index - 1, #photos)
         end
+        local photoIdentity = Utils.capturePhotoIdentity(photo)
+        if #photos == 1 then
+            summary.displayFilename = photoIdentity.displayFilename
+            summary.photoId = photoIdentity.photoId
+        end
         local photoKey = LearningPhotoIdentity.forPhoto(photo)
         local pending = LearningSessionStore.get(photoKey)
         if pending then
             summary.pending = summary.pending + 1
-            local finalSettings = ExifMapper.mapDevelopSettings(photo)
-            if not finalSettings then
+            local captured = ExifMapper.mapLearningDevelopState(photo)
+            if not captured then
                 summary.previewFailed = summary.previewFailed + 1
             else
                 local request = {
                     schema_version = 1,
                     session_id = pending.sessionId,
                     photo_key = photoKey,
-                    final_settings = finalSettings,
+                    final_settings = captured.settings,
+                    final_modes = captured.modes,
                 }
                 local preview = LearningClient.previewFeedback(request, {
                     baseUrl = preferences.backendBaseUrl,
@@ -62,8 +69,11 @@ local function collect(photos, preferences, progress)
                 if preview.ok then
                     candidates[#candidates + 1] = {
                         photoKey = photoKey,
+                        photoId = photoIdentity.photoId,
+                        displayFilename = photoIdentity.displayFilename,
                         pending = pending,
-                        finalSettings = finalSettings,
+                        finalSettings = captured.settings,
+                        finalModes = captured.modes,
                         preview = preview,
                     }
                     if preview.hasSignificantChanges then
@@ -78,6 +88,8 @@ local function collect(photos, preferences, progress)
                             Utils.deepCopy(preview.cropChanges)
                         summary.levelingChanges =
                             Utils.deepCopy(preview.levelingChanges)
+                        summary.modeChanges =
+                            Utils.deepCopy(preview.modeChanges)
                     end
                 else
                     summary.previewFailed = summary.previewFailed + 1
@@ -184,6 +196,7 @@ local function run(context)
                 session_id = candidate.pending.sessionId,
                 photo_key = candidate.photoKey,
                 final_settings = candidate.finalSettings,
+                final_modes = candidate.finalModes,
             }, {
                 baseUrl = preferences.backendBaseUrl,
                 timeoutSeconds = preferences.requestTimeoutSeconds,

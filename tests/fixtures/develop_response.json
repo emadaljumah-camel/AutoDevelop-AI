@@ -24,7 +24,26 @@
     "visible_people": 0,
     "has_faces": false,
     "has_sky": false,
-    "confidence": 0.95
+    "confidence": 0.95,
+    "geometry_analysis": {
+      "reliable_horizontal_lines": false,
+      "reliable_vertical_lines": false,
+      "camera_roll_detected": false,
+      "perspective_convergence": "unknown",
+      "upright_candidate_mode": "off",
+      "upright_confidence": 0.0
+    },
+    "dynamic_range_analysis": {
+      "dynamic_range": "unknown",
+      "highlight_pressure": "unknown",
+      "shadow_pressure": "unknown",
+      "backlit": false,
+      "bright_sky_dark_foreground": false,
+      "bright_windows_dark_interior": false,
+      "sunrise_or_sunset": false,
+      "hdr_candidate": false,
+      "hdr_confidence": 0.0
+    }
   },
   "edit_plan": {
     "style_profile": "natural_travel",
@@ -56,9 +75,40 @@
     "confidence": 0.9,
     "reason": "Denoise is not needed for this fake scenario."
   },
+  "upright": {
+    "recommended": false,
+    "mode": "off",
+    "confidence": 0.0,
+    "reason": null
+  },
   "enable_hdr": {
     "recommended": false,
+    "enabled": false,
+    "confidence": 0.0,
     "reason": null
+  },
+  "hdr_decision": {
+    "scene_hdr_candidate": false,
+    "scene_hdr_confidence": 0.0,
+    "base_scene_evidence_score": 0.18,
+    "learning_bonus": 0.0,
+    "user_preference_bonus": 0.0,
+    "combined_evidence_score": 0.18,
+    "decision_basis": "disabled",
+    "decision_confidence": null,
+    "scene_hdr_inconsistent": false,
+    "contraindications": ["caller_unsupported"],
+    "visual_evidence_score": 0.18,
+    "hdr_evidence_score": 0.18,
+    "hdr_learning_applied": false,
+    "hdr_learning_enable_rate": null,
+    "hdr_learning_sample_count": 0,
+    "raw_hdr_recommended": false,
+    "raw_hdr_confidence": 0.0,
+    "validated_hdr_enabled": false,
+    "validated_hdr_confidence": 0.0,
+    "hdr_rejected": false,
+    "hdr_rejection_reason": "caller_unsupported"
   },
   "warnings": [],
   "model": "gpt_oss",

@@ -37,9 +37,11 @@ class CandidateRepository:
         self,
         candidates: list[RetrievalSample] | None = None,
         *,
+        hdr_candidates: list[RetrievalSample] | None = None,
         fail: bool = False,
     ) -> None:
         self.candidates = candidates or []
+        self.hdr_candidates = hdr_candidates or []
         self.fail = fail
         self.calls = 0
 
@@ -49,11 +51,23 @@ class CandidateRepository:
             raise RuntimeError("private database detail")
         return self.candidates
 
+    def hdr_retrieval_candidates(self) -> list[RetrievalSample]:
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("private database detail")
+        return self.hdr_candidates
 
-def _sample(index: int, delta: float) -> RetrievalSample:
+
+def _sample(
+    index: int,
+    delta: float,
+    *,
+    profile_id: str = "natural_travel",
+    hdr_enabled: bool | None = None,
+) -> RetrievalSample:
     return RetrievalSample(
         session_id=f"private-session-{index}",
-        profile_id="natural_travel",
+        profile_id=profile_id,
         captured_at_utc=datetime.now(UTC),
         significant_delta={"Exposure2012": delta},
         crop_delta={},
@@ -63,6 +77,7 @@ def _sample(index: int, delta: float) -> RetrievalSample:
         feature_version=1,
         vector=(1.0, 0.0),
         exif_context={"camera": "Camera", "capture_time_category": "day"},
+        hdr_enabled=hdr_enabled,
     )
 
 
@@ -243,6 +258,32 @@ def test_insufficient_samples_omit_personalization_block(tmp_path: Path) -> None
     assert learning["average_similarity"] is None
 
 
+def test_hdr_learning_crosses_profiles_without_crossing_slider_learning(
+    tmp_path: Path,
+) -> None:
+    repository = CandidateRepository(
+        [_sample(1, -0.1), _sample(2, -0.1), _sample(3, -0.1)],
+        hdr_candidates=[
+            _sample(4, 0.9, profile_id="documentary", hdr_enabled=True),
+            _sample(5, 0.9, profile_id="portrait", hdr_enabled=True),
+            _sample(6, 0.9, profile_id="landscape_impact", hdr_enabled=True),
+        ],
+    )
+    captured: dict[str, Any] = {"endpoint": "develop"}
+    with _client(tmp_path, repository, captured) as client:
+        response = client.post("/autodevelop/v1/develop", json=_body("develop"))
+
+    assert response.status_code == 200
+    prompt = captured["prompt"]
+    assert "Exposure2012: typical correction -0.1" in prompt
+    assert "Exposure2012: typical correction +0.9" not in prompt
+    assert "HDR edit mode: on (3 similar examples)" in prompt
+    learning = response.json()["learning"]
+    assert learning["hdr_personalization_applied"] is True
+    assert learning["hdr_learning_enable_rate"] == 1.0
+    assert learning["hdr_learning_sample_count"] == 3
+
+
 def test_request_disabled_learning_reports_safe_diagnostics(tmp_path: Path) -> None:
     repository = CandidateRepository(
         [_sample(1, -0.2), _sample(2, -0.1), _sample(3, -0.15)]
@@ -264,6 +305,9 @@ def test_request_disabled_learning_reports_safe_diagnostics(tmp_path: Path) -> N
         "minimum_sample_count": 3,
         "average_similarity": None,
         "feature_type": "test",
+        "hdr_personalization_applied": False,
+        "hdr_learning_enable_rate": None,
+        "hdr_learning_sample_count": 0,
         "reason": "disabled",
     }
 
@@ -302,7 +346,26 @@ def test_provider_cannot_supply_learning_diagnostics(tmp_path: Path) -> None:
 
     repository = InjectingRepository()
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_payload = json.loads(request.content)
+        prompt = request_payload["messages"][0]["content"][0]["text"]
+        if "Identify only the observable semantic signals" in prompt:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{
+                        "message": {
+                            "content": json.dumps({
+                                "primary_subject_type": "other",
+                                "scene_category": "commercial_general",
+                                "lighting_type": "daylight",
+                                "dynamic_range": "moderate",
+                                "confidence": 0.9,
+                            })
+                        }
+                    }]
+                },
+            )
         payload = _provider_payload("develop")
         payload["learning"] = {
             "enabled": True,
@@ -354,4 +417,4 @@ def test_provider_cannot_supply_learning_diagnostics(tmp_path: Path) -> None:
         response = client.post("/autodevelop/v1/develop", json=_body("develop"))
 
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "invalid_model_response"
+    assert response.json()["error"]["code"] == "invalid_model_response_repeated"

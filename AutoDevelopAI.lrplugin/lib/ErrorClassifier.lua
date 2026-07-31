@@ -64,6 +64,9 @@ function ErrorClassifier.fromHttp(status, backendCode)
         return ErrorClassifier.codes.backendError
     end
     if backendCode == "invalid_model_response"
+        or backendCode == "invalid_model_response_repeated"
+        or backendCode == "provider_json_parse_failed"
+        or backendCode == "provider_schema_mismatch"
         or backendCode == "inference_failed" then
         return ErrorClassifier.codes.invalidResponse
     end
@@ -92,9 +95,7 @@ function ErrorClassifier.isRetryable(result)
     if not result or result.ok then
         return false
     end
-    return result.category == ErrorClassifier.codes.modelTimeout
-        or result.status == 500
-        or result.status == 502
+    return result.retryable == true
 end
 
 return ErrorClassifier

@@ -1,57 +1,140 @@
 {
   "id": "portrait",
   "display_name": "Portrait",
-  "description": "Visually polished, flattering portrait rendering with realistic skin, meaningful separation, and controlled tonal depth.",
-  "version": "1.0",
+  "description": "Premium portrait rendering with flattering skin, refined tonal depth, natural color, excellent subject separation, and polished commercial quality.",
+
+  "version": "1.1",
+
   "editing_goals": [
-    "Create a clearly finished portrait with flattering tonal depth, healthy realistic skin color, and immediate subject emphasis",
-    "Use moderate global impact with conservative skin-local Texture, Clarity, and Dehaze",
-    "Create meaningful subject and background separation without artificial skin treatment or a weak natural rendering"
+    "Produce a polished premium portrait with immediate visual impact while maintaining complete realism.",
+    "Render healthy, believable skin tones under all lighting conditions.",
+    "Create confident tonal depth with clean highlights, gentle shadows, and natural contrast.",
+    "Increase subject prominence through tonal separation rather than excessive local contrast.",
+    "Preserve fine facial detail including eyes, eyelashes, eyebrows, lips, hair, and clothing texture.",
+    "Maintain realistic environmental color for travel and lifestyle portraits."
   ],
+
   "cautions": [
-    "Avoid aggressive clarity",
-    "Avoid oversaturated skin",
-    "Avoid excessive denoise smoothing",
-    "Do not interpret natural as flat, timid, or under-edited"
+    "Never create plastic or overly smoothed skin.",
+    "Avoid halos around hair, hats, shoulders, or facial features.",
+    "Avoid excessive Texture, Clarity, or Dehaze on faces.",
+    "Avoid oversaturated skin or excessive warmth.",
+    "Avoid crushed blacks that hide hair or clothing detail.",
+    "Do not remove natural skin texture.",
+    "Do not interpret natural as flat or unfinished."
   ],
+
   "slider_ranges": {
-    "Exposure2012": {"min": -0.75, "max": 1.0, "preferred": 0.15},
-    "Contrast2012": {"min": -15.0, "max": 20.0, "preferred": 4.0},
-    "Highlights2012": {"min": -50.0, "max": 10.0, "preferred": -18.0},
-    "Shadows2012": {"min": -10.0, "max": 35.0, "preferred": 12.0},
-    "Whites2012": {"min": -15.0, "max": 18.0, "preferred": 4.0},
-    "Blacks2012": {"min": -18.0, "max": 15.0, "preferred": -4.0},
-    "Texture": {"min": -25.0, "max": 10.0, "preferred": -6.0},
-    "Clarity2012": {"min": -18.0, "max": 10.0, "preferred": -3.0},
-    "Dehaze": {"min": -8.0, "max": 8.0, "preferred": 0.0},
-    "Vibrance": {"min": -10.0, "max": 20.0, "preferred": 6.0},
-    "Saturation": {"min": -12.0, "max": 8.0, "preferred": -1.0},
-    "Temperature": {"min": 4000.0, "max": 7500.0, "preferred": 5600.0},
-    "Tint": {"min": -18.0, "max": 22.0, "preferred": 3.0}
+
+    "Exposure2012": {
+      "min": -0.75,
+      "max": 1.0,
+      "preferred": 0.20
+    },
+
+    "Contrast2012": {
+      "min": -15.0,
+      "max": 24.0,
+      "preferred": 8.0
+    },
+
+    "Highlights2012": {
+      "min": -55.0,
+      "max": 10.0,
+      "preferred": -22.0
+    },
+
+    "Shadows2012": {
+      "min": -10.0,
+      "max": 38.0,
+      "preferred": 16.0
+    },
+
+    "Whites2012": {
+      "min": -15.0,
+      "max": 20.0,
+      "preferred": 6.0
+    },
+
+    "Blacks2012": {
+      "min": -20.0,
+      "max": 15.0,
+      "preferred": -6.0
+    },
+
+    "Texture": {
+      "min": -20.0,
+      "max": 12.0,
+      "preferred": -4.0
+    },
+
+    "Clarity2012": {
+      "min": -15.0,
+      "max": 12.0,
+      "preferred": -2.0
+    },
+
+    "Dehaze": {
+      "min": -8.0,
+      "max": 8.0,
+      "preferred": 1.0
+    },
+
+    "Vibrance": {
+      "min": -10.0,
+      "max": 24.0,
+      "preferred": 8.0
+    },
+
+    "Saturation": {
+      "min": -12.0,
+      "max": 8.0,
+      "preferred": 0.0
+    },
+
+    "Temperature": {
+      "min": 4000.0,
+      "max": 7800.0,
+      "preferred": 5600.0
+    },
+
+    "Tint": {
+      "min": -18.0,
+      "max": 22.0,
+      "preferred": 3.0
+    }
   },
+
   "crop_policy": {
     "allow_crop": true,
-    "max_edge_crop": 0.08,
-    "minimum_retained_area": 0.85,
+    "max_edge_crop": 0.10,
+    "minimum_retained_area": 0.84,
     "minimum_confidence": 0.75,
     "require_confidence": false,
     "preserve_aspect_ratio": true
   },
+
   "leveling_policy": {
     "allow_leveling": true,
     "maximum_absolute_angle": 3.0,
     "guidance": [
-      "Correct only obvious accidental camera roll",
-      "Do not infer level from shoulder lines, facial asymmetry, or pose",
-      "Preserve deliberate portrait framing"
+      "Correct only obvious accidental camera roll.",
+      "Never infer level from shoulders, facial asymmetry, body posture, or head tilt.",
+      "Use architectural or environmental references when available.",
+      "Preserve intentional portrait composition."
     ]
+  },
+  "upright_policy": {
+    "allow_upright": true,
+    "allowed_modes": ["off", "level"],
+    "minimum_confidence": 0.85
   },
   "denoise_policy": {
     "allow_denoise": true,
-    "minimum_iso": 800,
+    "minimum_iso": 640,
     "minimum_amount": 0.0,
-    "maximum_amount": 30.0,
-    "minimum_confidence": 0.7,
+    "maximum_amount": 35.0,
+    "minimum_confidence": 0.70,
     "preserve_detail": true
   }
 }

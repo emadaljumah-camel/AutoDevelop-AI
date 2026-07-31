@@ -75,7 +75,7 @@ def test_all_seven_packaged_profiles_load_successfully() -> None:
     profiles = StyleProfileLoader().list_profiles()
 
     assert [profile.id for profile in profiles] == PROFILE_IDS
-    assert all(profile.version == "1.0" for profile in profiles)
+    assert all(profile.version == "1.1" for profile in profiles)
     assert all(profile.slider_ranges for profile in profiles)
 
 
@@ -84,12 +84,18 @@ def test_documentary_profile_has_conservative_supported_constraints() -> None:
 
     assert profile.id == "documentary"
     assert profile.display_name == "Documentary"
-    assert profile.slider_ranges["Dehaze"].max <= 10.0
+    assert profile.slider_ranges["Dehaze"].max <= 12.0
     assert profile.slider_ranges["Saturation"].max <= 8.0
-    assert profile.slider_ranges["Texture"].max <= 16.0
+    assert profile.slider_ranges["Texture"].max <= 18.0
     assert profile.crop_policy.max_edge_crop <= 0.08
     assert profile.crop_policy.minimum_retained_area >= 0.88
-    assert profile.denoise_policy.maximum_amount <= 30.0
+    assert profile.denoise_policy.maximum_amount <= 35.0
+
+
+def test_hdr_is_not_part_of_style_profiles() -> None:
+    for profile in StyleProfileLoader().list_profiles():
+        assert "hdr_policy" not in profile.model_fields_set
+        assert not hasattr(profile, "hdr_policy")
 
 
 def test_documentary_limits_stay_within_existing_bundled_safety_envelope() -> None:

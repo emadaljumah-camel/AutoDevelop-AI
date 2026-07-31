@@ -804,6 +804,7 @@ def _provider_payload(endpoint: str, resolved_model: str) -> dict[str, Any]:
     # Learning diagnostics are constructed by the backend, not supplied by a
     # provider response.
     payload.pop("learning", None)
+    payload.pop("hdr_decision", None)
     for field in (
         "requested_style_id",
         "effective_style_id",
@@ -842,7 +843,7 @@ def test_routes_report_yaml_resolved_provider_model(
     assert response.status_code == 200
     assert response.json()["model"] == "qwen"
     assert response.json()["resolved_model"] == "yaml-qwen"
-    assert provider.calls == (2 if endpoint == "analyze" else 1)
+    assert provider.calls == 2
 
 
 def test_models_endpoint_reflects_yaml_without_calling_provider(

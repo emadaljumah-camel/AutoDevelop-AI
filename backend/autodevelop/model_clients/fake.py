@@ -11,8 +11,10 @@ from autodevelop.models import (
     DevelopResponse,
     DevelopSettings,
     EditPlan,
+    HdrRecommendation,
     LevelingRecommendation,
     TechnicalAnalysis,
+    UprightRecommendation,
 )
 from autodevelop.profiles import SceneSignals, StyleProfile, select_style
 
@@ -475,6 +477,8 @@ class FakeModelClient(ModelClient):
             ),
             crop=self._build_crop(scenario, request.options.include_crop),
             leveling=self._build_leveling(scenario),
+            upright=self._build_upright(scenario),
+            enable_hdr=HdrRecommendation(recommended=False),
             denoise=self._build_denoise(
                 scenario,
                 request.options.include_denoise,
@@ -596,6 +600,24 @@ class FakeModelClient(ModelClient):
             angle=0,
             mode="none",
         )
+
+    @staticmethod
+    def _build_upright(scenario: str) -> UprightRecommendation:
+        if scenario == "architecture":
+            return UprightRecommendation(
+                recommended=True,
+                mode="vertical",
+                confidence=0.90,
+                reason="Reliable converging building lines support correction.",
+            )
+        if scenario == "landscape":
+            return UprightRecommendation(
+                recommended=True,
+                mode="level",
+                confidence=0.82,
+                reason="A reliable horizon supports perspective leveling.",
+            )
+        return UprightRecommendation(recommended=False)
 
     @staticmethod
     def _build_denoise(

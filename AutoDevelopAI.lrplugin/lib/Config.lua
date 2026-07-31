@@ -8,6 +8,7 @@ Config.defaults = {
     requestTimeoutSeconds = 120,
     applyCompositionCrop = true,
     applyLeveling = true,
+    hdrPreference = "prefer_hdr",
     confirmationMode = "always",
     loggingLevel = "info",
     learningEnabled = true,

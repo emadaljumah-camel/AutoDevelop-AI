@@ -29,6 +29,12 @@ local loggingChoices = {
     { title = "Debug", value = "debug" },
 }
 
+local hdrPreferenceChoices = {
+    { title = "Conservative", value = "conservative" },
+    { title = "Balanced", value = "balanced" },
+    { title = "Prefer HDR", value = "prefer_hdr" },
+}
+
 local confirmationModes = {
     always = true,
     never = true,
@@ -39,6 +45,12 @@ local loggingLevels = {
     warning = true,
     info = true,
     debug = true,
+}
+
+local hdrPreferences = {
+    conservative = true,
+    balanced = true,
+    prefer_hdr = true,
 }
 
 local function store()
@@ -128,6 +140,13 @@ local function validateLoggingLevel(value)
     return value
 end
 
+local function validateHdrPreference(value)
+    if type(value) ~= "string" or not hdrPreferences[value] then
+        return nil, "Select a valid HDR preference."
+    end
+    return value
+end
+
 local validators = {
     backendBaseUrl = validateBackendBaseUrl,
     styleProfileId = validateStyleProfileId,
@@ -139,6 +158,7 @@ local validators = {
     applyLeveling = function(value)
         return validateBoolean(value, "Apply leveling correction")
     end,
+    hdrPreference = validateHdrPreference,
     confirmationMode = validateConfirmationMode,
     loggingLevel = validateLoggingLevel,
     learningEnabled = function(value)
@@ -228,6 +248,10 @@ function Preferences.getApplyLeveling()
     return Preferences.get("applyLeveling")
 end
 
+function Preferences.getHdrPreference()
+    return Preferences.get("hdrPreference")
+end
+
 function Preferences.getConfirmationMode()
     return Preferences.get("confirmationMode")
 end
@@ -291,6 +315,10 @@ end
 
 function Preferences.getLoggingChoices()
     return copyChoices(loggingChoices)
+end
+
+function Preferences.getHdrPreferenceChoices()
+    return copyChoices(hdrPreferenceChoices)
 end
 
 function Preferences.validateRequestTimeoutText(value)

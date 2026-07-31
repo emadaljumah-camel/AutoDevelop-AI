@@ -35,9 +35,7 @@ def test_local_transport_uses_configured_model_and_blank_key() -> None:
     result = asyncio.run(invoke())
     assert result == {"status": "success"}
     assert captured["json"]["model"] == "configured-qwen"  # type: ignore[index]
-    assert captured["json"]["response_format"] == {  # type: ignore[index]
-        "type": "text"
-    }
+    assert "response_format" not in captured["json"]  # type: ignore[operator]
     assert "authorization" not in captured["headers"]  # type: ignore[operator]
 
 
@@ -128,7 +126,11 @@ def test_local_malformed_output_is_invalid_model_response(content: str) -> None:
 
     with pytest.raises(InvalidModelResponseError) as raised:
         asyncio.run(invoke())
-    assert raised.value.code == "invalid_model_response"
+    assert raised.value.code == (
+        "provider_schema_mismatch"
+        if content.startswith("[")
+        else "provider_json_parse_failed"
+    )
     assert content not in str(raised.value)
 
 
@@ -183,6 +185,6 @@ def test_gemini_malformed_output_is_invalid_model_response() -> None:
 
     with pytest.raises(InvalidModelResponseError) as raised:
         asyncio.run(invoke())
-    assert raised.value.code == "invalid_model_response"
+    assert raised.value.code == "provider_json_parse_failed"
     assert secret not in str(raised.value)
     assert malformed not in str(raised.value)

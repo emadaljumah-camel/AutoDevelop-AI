@@ -37,6 +37,7 @@ from autodevelop.models import (
     ProcessingWarning,
     ProcessingOptions,
     TechnicalAnalysis,
+    UprightRecommendation,
 )
 from autodevelop.profiles import (
     ProfileNotFoundError,
@@ -211,6 +212,7 @@ class RecordingSafetyValidator(SafetyValidator):
         self.profile: StyleProfile | None = None
         self.enable_hdr: HdrRecommendation | None = None
         self.leveling: LevelingRecommendation | None = None
+        self.upright: UprightRecommendation | None = None
 
     def validate(
         self,
@@ -221,6 +223,7 @@ class RecordingSafetyValidator(SafetyValidator):
         profile: StyleProfile,
         enable_hdr: HdrRecommendation | None = None,
         leveling: LevelingRecommendation | None = None,
+        upright: UprightRecommendation | None = None,
         analysis: TechnicalAnalysis | None = None,
         options: ProcessingOptions | None = None,
     ) -> ValidationResult:
@@ -231,6 +234,7 @@ class RecordingSafetyValidator(SafetyValidator):
         self.profile = profile
         self.enable_hdr = enable_hdr
         self.leveling = leveling
+        self.upright = upright
         return super().validate(
             settings=settings,
             crop=crop,
@@ -238,6 +242,7 @@ class RecordingSafetyValidator(SafetyValidator):
             profile=profile,
             enable_hdr=enable_hdr,
             leveling=leveling,
+            upright=upright,
             analysis=analysis,
             options=options,
         )
@@ -549,7 +554,7 @@ def test_crop_is_sanitized_by_profile_policy(
                 amount=90.0,
                 confidence=0.9,
             ),
-            35.0,
+            38.0,
         ),
         (
             DenoiseRecommendation(
@@ -623,11 +628,11 @@ def test_model_and_validator_warnings_merge_deterministically_without_duplicates
 @pytest.mark.parametrize(
     ("change", "expected_code"),
     [
-        ({"request_id": UUID(OTHER_REQUEST_ID)}, "invalid_model_response"),
-        ({"filename": "Different.NEF"}, "invalid_model_response"),
-        ({"schema_version": "2.0"}, "invalid_model_response"),
-        ({"status": "partial"}, "invalid_model_response"),
-        ({"model": None}, "invalid_model_response"),
+        ({"request_id": UUID(OTHER_REQUEST_ID)}, "provider_schema_mismatch"),
+        ({"filename": "Different.NEF"}, "provider_schema_mismatch"),
+        ({"schema_version": "2.0"}, "provider_schema_mismatch"),
+        ({"status": "partial"}, "provider_schema_mismatch"),
+        ({"model": None}, "provider_schema_mismatch"),
     ],
 )
 def test_invalid_model_metadata_returns_502(
@@ -660,7 +665,7 @@ def test_unexpected_model_response_type_returns_502(app: FastAPI) -> None:
         response = client.post("/autodevelop/v1/develop", json=_request_body())
 
     assert response.status_code == 502
-    assert response.json()["error"]["code"] == "invalid_model_response"
+    assert response.json()["error"]["code"] == "provider_schema_mismatch"
 
 
 @pytest.mark.parametrize(

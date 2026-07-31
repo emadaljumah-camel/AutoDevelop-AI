@@ -1,6 +1,8 @@
 local LrDialogs = import("LrDialogs")
 local LrView = import("LrView")
 
+local Utils = ModuleLoader.load("lib/Utils.lua")
+
 local LearningFeedbackDialog = {}
 
 local detailOrder = {
@@ -69,10 +71,18 @@ function LearningFeedbackDialog.confirm(summary)
         "Unchanged photos: " .. tostring(summary.unchanged),
         "Missing pending session: " .. tostring(summary.missing),
         "Comparison failures: " .. tostring(summary.previewFailed or 0),
-        "",
-        "The backend compares current settings with the applied AI baseline.",
-        "This command does not modify any photo.",
     }
+    if summary.selected == 1 then
+        lines[#lines + 1] = "Photo: "
+            .. Utils.safeMessage(
+                summary.displayFilename,
+                summary.photoId or "Photo"
+            )
+    end
+    lines[#lines + 1] = ""
+    lines[#lines + 1] =
+        "The backend compares current settings with the applied AI baseline."
+    lines[#lines + 1] = "This command does not modify any photo."
     appendDetails(lines, "Significant tonal/color changes:",
         summary.significantChanges, detailOrder)
     appendDetails(lines, "Composition crop changes:",
@@ -80,6 +90,17 @@ function LearningFeedbackDialog.confirm(summary)
         {"CropLeft", "CropRight", "CropTop", "CropBottom"})
     appendDetails(lines, "Leveling changes:",
         summary.levelingChanges, {"CropAngle"})
+    if type(summary.modeChanges) == "table" then
+        if type(summary.modeChanges.upright) == "string" then
+            lines[#lines + 1] = ""
+            lines[#lines + 1] = "Upright mode changed to: "
+                .. summary.modeChanges.upright
+        end
+        if type(summary.modeChanges.hdr_enabled) == "boolean" then
+            lines[#lines + 1] = "HDR edit mode changed to: "
+                .. (summary.modeChanges.hdr_enabled and "On" or "Off")
+        end
+    end
     return LrDialogs.presentModalDialog({
         title = "AutoDevelop AI - Capture Editing Feedback",
         contents = factory:column({

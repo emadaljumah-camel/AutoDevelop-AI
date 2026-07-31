@@ -3,7 +3,7 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 from fastapi.responses import JSONResponse
 
 from autodevelop.api.dependencies import (
@@ -80,6 +80,10 @@ async def analyze_photo(
         SafetyValidator,
         Depends(get_safety_validator),
     ],
+    endpoint_attempt: Annotated[
+        int | None,
+        Header(alias="X-Autodevelop-Attempt", ge=1, le=10),
+    ] = None,
 ) -> AnalyzeResponse | JSONResponse:
     """Validate the selected profile and return model-generated analysis."""
 
@@ -98,7 +102,7 @@ async def analyze_photo(
         logger.info(
             (
                 "Analyze request started request_id=%s filename=%s profile=%s "
-                "model=%s model_source=%s provider=%s"
+                "model=%s model_source=%s provider=%s endpoint_attempt=%d"
             ),
             request.request_id,
             request.filename,
@@ -106,6 +110,7 @@ async def analyze_photo(
             request.model,
             selection.source,
             resolution.definition.provider,
+            endpoint_attempt or 1,
         )
         response = await model_client.analyze(request)
         response = validate_model_response(
@@ -115,15 +120,35 @@ async def analyze_photo(
             expected_resolved_model=resolution.resolved_model,
         )
         profile = profile_loader.get_cached_profile(response.effective_style_id)
-        validation_result = safety_validator.validate(
-            settings=None,
-            crop=response.crop,
-            leveling=response.leveling,
-            denoise=response.denoise,
-            profile=profile,
-            analysis=response.analysis,
-            options=request.options,
-        )
+        try:
+            validation_result = safety_validator.validate(
+                settings=None,
+                crop=response.crop,
+                leveling=response.leveling,
+                denoise=response.denoise,
+                profile=profile,
+                analysis=response.analysis,
+                options=request.options,
+            )
+        except Exception:
+            logger.error(
+                (
+                    "Analyze safety validation failed request_id=%s filename=%s "
+                    "endpoint_attempt=%d phase=final_develop "
+                    "stage=safety_validation_failed "
+                    "diagnostic_code=safety_validation_failed"
+                ),
+                request.request_id,
+                request.filename,
+                endpoint_attempt or 1,
+            )
+            return error_response(
+                request,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                code="validation_internal_error",
+                message="An internal validation error occurred.",
+                retryable=True,
+            )
         validation_warnings = [
             ProcessingWarning(
                 code=issue.code,
@@ -178,14 +203,21 @@ async def analyze_photo(
             retryable=False,
         )
     except InvalidModelResponseError as exc:
+        diagnostics = exc.diagnostics
         logger.warning(
             (
                 "Analyze model response rejected request_id=%s filename=%s "
-                "model=%s validation_category=invalid_model_response"
+                "model=%s endpoint_attempt=%d phase=%s stage=%s "
+                "diagnostic_code=%s field=%s"
             ),
             request.request_id,
             request.filename,
             request.model,
+            endpoint_attempt or 1,
+            diagnostics.phase or "<unknown>",
+            diagnostics.stage,
+            diagnostics.diagnostic_code,
+            diagnostics.field_path or "<none>",
         )
         return model_error_response(request, exc)
     except (ModelRequestError, ModelResponseError, ModelClientError) as exc:

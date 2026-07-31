@@ -58,22 +58,41 @@ convergence caused by camera position, naturally sloping terrain, leaning trees,
 irregular structures, or deliberate documentary framing. Shoulder lines and
 facial asymmetry are not leveling references. CropAngle performs rotation only;
 it does not correct converging verticals or provide Upright/Transform correction.
-Follow the supplied crop, leveling, and denoise policies."""
+Follow the supplied crop, leveling, Upright, HDR, and denoise policies."""
+
+UPRIGHT_RULES = """LIGHTROOM TRANSFORM UPRIGHT
+Upright Transform is independent of composition crop and CropAngle rotation.
+Recommend it only when reliable structural, architectural, horizon, waterline,
+or geometric evidence supports perspective correction.
+
+Use auto for mixed horizontal and vertical geometry where a general automatic
+correction is appropriate. Use level when reliable horizontal references are
+the primary need. Use vertical when distracting converging architectural
+verticals need correction. Use full only when strong horizontal and vertical
+errors are both supported by reliable geometry and the stronger correction is
+unlikely to create unnatural distortion. Otherwise use off.
+
+Never treat sloping terrain, irregular buildings, shoulder lines, trees,
+mountain ridges, or deliberate camera angles as reliable Upright references.
+Never recommend Guided because user-defined guide coordinates are unavailable."""
 
 HDR_RULES = """LIGHTROOM HDR EDIT MODE
 HDR means Lightroom HDR edit mode, not an artificial HDR look and not automatic
-tone mapping baked into normal Develop sliders. Evaluate both scene dynamic
-range and likely RAW highlight and shadow recoverability. Do not judge RAW
-recoverability solely from the JPEG preview.
+tone mapping baked into normal Develop sliders. Actively evaluate HDR for every
+eligible RAW image. Recommend it when meaningful simultaneous highlight and
+shadow pressure means HDR is likely to improve tonal smoothness, highlight
+color, shadow separation, or editing latitude. HDR is a quality-enhancement
+option, not only a rescue for catastrophic clipping. Moderate-to-high
+dynamic-range scenes may benefit even when an acceptable SDR edit is possible.
 
-HDR can be appropriate for genuinely high-range sunsets, bright skies over dark
-foregrounds, landscapes, bright-window interiors, luminous city or night
-scenes, reflections, snow, clouds, and metallic highlights. It is usually
-inappropriate for ordinary low-range scenes, routine portraits, authenticity-
-sensitive documentary work, noisy or severely underexposed files, SDR-only
-workflows, or scenes adequately handled by normal Develop adjustments. Style
-selection and HDR selection are independent. Never create halos, flattened
-microcontrast, or an artificial tone-mapped appearance."""
+Use the supplied backend evidence score as objective support, while independently
+checking the image. Prefer HDR when it creates a visibly better premium result
+that remains natural and commercially suitable. It remains inappropriate for
+low-range scenes, noisy or severely underexposed files, unsupported source
+formats, and SDR-only workflows. Subject category and selected style must not
+veto otherwise eligible HDR. Style selection and HDR selection are independent.
+Never create halos, flattened microcontrast, or an artificial tone-mapped
+appearance."""
 
 FINAL_SELF_REVIEW = """FINAL SELF-REVIEW
 For every profile, internally ask whether the edit is clearly and immediately

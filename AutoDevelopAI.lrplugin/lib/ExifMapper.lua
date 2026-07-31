@@ -1,6 +1,8 @@
 local LrTasks = import("LrTasks")
 
 local Utils = ModuleLoader.load("lib/Utils.lua")
+local DevelopModeMapper =
+    ModuleLoader.load("lib/DevelopModeMapper.lua")
 
 local ExifMapper = {}
 
@@ -138,7 +140,7 @@ function ExifMapper.mapExif(photo)
     return exif
 end
 
-function ExifMapper.mapDevelopSettings(photo)
+local function readDevelopSettings(photo)
     if not photo or type(photo.getDevelopSettings) ~= "function" then
         return nil, "develop_settings_unavailable"
     end
@@ -149,7 +151,10 @@ function ExifMapper.mapDevelopSettings(photo)
     if not ok or type(source) ~= "table" then
         return nil, "develop_settings_unavailable"
     end
+    return source, nil
+end
 
+local function mapDevelopSource(source)
     local mapped = {}
     for _, key in ipairs(developKeys) do
         local value = source[key]
@@ -157,7 +162,51 @@ function ExifMapper.mapDevelopSettings(photo)
             mapped[key] = value
         end
     end
-    return mapped, nil
+    return mapped
+end
+
+function ExifMapper.filterLearningSettings(source)
+    return mapDevelopSource(type(source) == "table" and source or {})
+end
+
+function ExifMapper.mapDevelopSettings(photo)
+    local source, reason = readDevelopSettings(photo)
+    if not source then
+        return nil, reason
+    end
+    return ExifMapper.filterLearningSettings(source), nil
+end
+
+function ExifMapper.mapLearningDevelopState(photo)
+    local source, reason = readDevelopSettings(photo)
+    if not source then
+        return nil, reason
+    end
+    local upright = DevelopModeMapper.decodeUpright(
+        source.PerspectiveUpright
+    )
+    local hdr = DevelopModeMapper.decodeHdr(source.HDREditMode)
+    local modes = {}
+    if upright.supported then
+        modes.upright = upright.mode
+        modes.upright_raw_value = upright.rawValue
+    end
+    if hdr.supported then
+        modes.hdr_enabled = hdr.enabled
+        modes.hdr_raw_value = hdr.rawValue
+    end
+    if Utils.isFiniteNumber(source.HDRMaxValue) then
+        modes.hdr_max_value = source.HDRMaxValue
+    end
+    return {
+        settings = ExifMapper.filterLearningSettings(source),
+        modes = modes,
+        diagnostics = {
+            PerspectiveUpright = source.PerspectiveUpright,
+            HDREditMode = source.HDREditMode,
+            HDRMaxValue = source.HDRMaxValue,
+        },
+    }, nil
 end
 
 function ExifMapper.hdrEditSupported(photo)

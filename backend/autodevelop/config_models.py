@@ -48,6 +48,7 @@ class _YamlModel(BaseModel):
 class LocalProviderYamlConfig(_YamlModel):
     base_url: NonBlankConfigString | None = None
     timeout_seconds: ProviderTimeout | None = None
+    response_format: Literal["json_schema", "json_object", "none"] = "json_schema"
 
     @field_validator("base_url")
     @classmethod
@@ -62,6 +63,14 @@ class GeminiProviderYamlConfig(_YamlModel):
 class ProviderYamlConfig(_YamlModel):
     local: LocalProviderYamlConfig | None = None
     gemini: GeminiProviderYamlConfig | None = None
+
+
+class DiagnosticsYamlConfig(_YamlModel):
+    log_invalid_model_response: StrictBool = False
+    invalid_response_max_chars: Annotated[
+        int,
+        Field(strict=True, ge=256, le=20_000),
+    ] = 4000
 
 
 class ModelYamlEntry(_YamlModel):
@@ -94,6 +103,7 @@ class ModelsYamlConfig(_YamlModel):
     providers: ProviderYamlConfig | None = None
     models: dict[str, ModelYamlEntry] = Field(default_factory=dict)
     learning: LearningYamlConfig | None = None
+    diagnostics: DiagnosticsYamlConfig | None = None
 
     @field_validator("default_model")
     @classmethod

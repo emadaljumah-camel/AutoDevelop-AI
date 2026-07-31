@@ -106,6 +106,12 @@ def create_app(
                 application_model_resolver,
                 application_profile_loader,
                 application_learning_service,
+                log_invalid_model_response=(
+                    resolved_settings.log_invalid_model_response
+                ),
+                invalid_response_max_chars=(
+                    resolved_settings.invalid_response_max_chars
+                ),
             )
         application.state.style_profile_loader = application_profile_loader
         application.state.safety_validator = application_safety_validator

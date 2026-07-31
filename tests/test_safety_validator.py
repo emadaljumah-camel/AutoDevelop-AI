@@ -128,7 +128,7 @@ def test_slider_above_maximum_is_clamped(
         settings=DevelopSettings(Contrast2012=100.0),
     )
 
-    assert result.settings.Contrast2012 == 25.0
+    assert result.settings.Contrast2012 == 32.0
     assert result.issues[0].code == policies.SLIDER_CLAMPED_HIGH
     assert result.clamped_fields == ["Contrast2012"]
 
@@ -149,7 +149,7 @@ def test_several_sliders_are_clamped_independently(
 
     assert result.settings.Exposure2012 == 1.0
     assert result.settings.Contrast2012 == -15.0
-    assert result.settings.Dehaze == 15.0
+    assert result.settings.Dehaze == 18.0
     assert result.clamped_fields == [
         "Exposure2012",
         "Contrast2012",
@@ -662,7 +662,7 @@ def test_denoise_amount_above_maximum_is_clamped(
     result = _validate(validator, profile, denoise=denoise)
 
     assert result.denoise is not None
-    assert result.denoise.amount == 35.0
+    assert result.denoise.amount == 38.0
     assert result.issues[0].code == policies.DENOISE_AMOUNT_CLAMPED_HIGH
 
 
@@ -829,7 +829,11 @@ def test_genuine_high_dynamic_range_scene_can_recommend_hdr(
     result = _validate(
         validator,
         profile,
-        enable_hdr=HdrRecommendation(recommended=True),
+        enable_hdr=HdrRecommendation(
+            recommended=True,
+            enabled=True,
+            confidence=0.9,
+        ),
         analysis=TechnicalAnalysis(
             scene_type=scene_type,
             lighting=lighting,
@@ -849,10 +853,19 @@ def test_genuine_high_dynamic_range_scene_can_recommend_hdr(
     assert result.enable_hdr.reason is None
 
 
-@pytest.mark.parametrize(
-    "analysis",
-    [
-        TechnicalAnalysis(
+def test_subject_category_does_not_override_hdr_technical_safety(
+    validator: SafetyValidator,
+    profile: StyleProfile,
+) -> None:
+    result = _validate(
+        validator,
+        profile,
+        enable_hdr=HdrRecommendation(
+            recommended=True,
+            enabled=True,
+            confidence=0.9,
+        ),
+        analysis=TechnicalAnalysis(
             scene_type="portrait",
             main_subject="ordinary portrait",
             lighting="soft daylight",
@@ -860,33 +873,14 @@ def test_genuine_high_dynamic_range_scene_can_recommend_hdr(
             noise_level="low",
             highlight_recoverability="moderate",
         ),
-        TechnicalAnalysis(
-            scene_type="general daylight",
-            lighting="daylight",
-            dynamic_range="low",
-            noise_level="low",
-            highlight_recoverability="high",
-        ),
-    ],
-)
-def test_ordinary_portrait_and_low_range_daylight_do_not_recommend_hdr(
-    validator: SafetyValidator,
-    profile: StyleProfile,
-    analysis: TechnicalAnalysis,
-) -> None:
-    result = _validate(
-        validator,
-        profile,
-        enable_hdr=HdrRecommendation(recommended=True),
-        analysis=analysis,
         options=ProcessingOptions(
             hdr_edit_supported=True,
             hdr_workflow="hdr",
         ),
     )
 
-    assert result.enable_hdr.recommended is False
-    assert result.rejected_fields == ["enable_hdr"]
+    assert result.enable_hdr.recommended is True
+    assert result.rejected_fields == []
 
 
 def test_landscape_style_alone_does_not_force_hdr(
@@ -896,11 +890,15 @@ def test_landscape_style_alone_does_not_force_hdr(
     result = _validate(
         validator,
         profile,
-        enable_hdr=HdrRecommendation(recommended=True),
+        enable_hdr=HdrRecommendation(
+            recommended=True,
+            enabled=True,
+            confidence=0.9,
+        ),
         analysis=TechnicalAnalysis(
             scene_type="landscape",
             lighting="daylight",
-            dynamic_range="moderate",
+            dynamic_range="low",
             highlight_recoverability="moderate",
         ),
         options=ProcessingOptions(
@@ -919,7 +917,11 @@ def test_noisy_high_range_scene_does_not_recommend_hdr(
     result = _validate(
         validator,
         profile,
-        enable_hdr=HdrRecommendation(recommended=True),
+        enable_hdr=HdrRecommendation(
+            recommended=True,
+            enabled=True,
+            confidence=0.9,
+        ),
         analysis=TechnicalAnalysis(
             scene_type="night city",
             lighting="artificial",
@@ -952,7 +954,11 @@ def test_provider_cannot_bypass_hdr_capability_or_workflow_gate(
     result = _validate(
         validator,
         profile,
-        enable_hdr=HdrRecommendation(recommended=True),
+        enable_hdr=HdrRecommendation(
+            recommended=True,
+            enabled=True,
+            confidence=0.9,
+        ),
         analysis=TechnicalAnalysis(
             scene_type="landscape",
             lighting="sunset",

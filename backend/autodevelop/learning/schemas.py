@@ -13,8 +13,13 @@ from pydantic import (
 )
 
 from autodevelop.learning.constants import LIGHTROOM_LIMITS
-from autodevelop.models import DevelopSettings, LearningDiagnostics
-from autodevelop.models.common import FiniteFloat, NonNegativeInteger
+from autodevelop.models import (
+    DevelopSettings,
+    HdrDecisionDiagnostics,
+    LearningDiagnostics,
+    UprightMode,
+)
+from autodevelop.models.common import FiniteFloat, NonNegativeInteger, UnitFloat
 
 PhotoKey = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 BoundedText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -55,6 +60,21 @@ class ValidationSummary(LearningSchema):
     removed_count: NonNegativeInteger = 0
 
 
+class DevelopModeState(LearningSchema):
+    """Categorical Lightroom modes kept separate from numeric sliders."""
+
+    upright: UprightMode | None = None
+    upright_raw_value: Literal[0, 1, 2, 3, 4] | None = None
+    hdr_enabled: bool | None = None
+    hdr_raw_value: Literal[0, 1] | None = None
+    hdr_max_value: FiniteFloat | None = None
+
+
+class LearningModeChanges(LearningSchema):
+    upright: UprightMode | None = None
+    hdr_enabled: bool | None = None
+
+
 def _validate_setting_ranges(settings: DevelopSettings) -> DevelopSettings:
     for name, value in settings.model_dump(exclude_none=True).items():
         minimum, maximum = LIGHTROOM_LIMITS[name]
@@ -77,8 +97,14 @@ class BaselineRequest(LearningSchema):
     original_settings: DevelopSettings
     recommendation: DevelopSettings
     applied_baseline: DevelopSettings
+    original_modes: DevelopModeState = Field(default_factory=DevelopModeState)
+    recommendation_modes: DevelopModeState = Field(
+        default_factory=DevelopModeState
+    )
+    applied_modes: DevelopModeState = Field(default_factory=DevelopModeState)
     exif_context: LearningExifContext = Field(default_factory=LearningExifContext)
     validation_summary: ValidationSummary = Field(default_factory=ValidationSummary)
+    hdr_decision: HdrDecisionDiagnostics | None = None
 
     _original_ranges = field_validator("original_settings")(
         _validate_setting_ranges
@@ -109,6 +135,7 @@ class FeedbackRequest(LearningSchema):
     session_id: UUID
     photo_key: PhotoKey
     final_settings: DevelopSettings
+    final_modes: DevelopModeState = Field(default_factory=DevelopModeState)
 
     _final_ranges = field_validator("final_settings")(
         _validate_setting_ranges
@@ -154,6 +181,7 @@ class FeedbackResponse(LearningSchema):
     ignored_changes: DevelopSettingDeltas
     crop_changes: DevelopSettingDeltas
     leveling_changes: DevelopSettingDeltas
+    mode_changes: LearningModeChanges
     state: Literal["feedback_captured"] = "feedback_captured"
 
 
@@ -174,6 +202,13 @@ class FeedbackPreviewResponse(LearningSchema):
     ignored_changes: dict[str, FeedbackSettingComparison]
     crop_changes: dict[str, FeedbackSettingComparison]
     leveling_changes: dict[str, FeedbackSettingComparison]
+    mode_changes: LearningModeChanges
+
+
+class ModeLearningStatus(LearningSchema):
+    usable_sample_count: NonNegativeInteger
+    change_count: NonNegativeInteger
+    acceptance_count: NonNegativeInteger
 
 
 class LearningStatusResponse(LearningSchema):
@@ -186,6 +221,8 @@ class LearningStatusResponse(LearningSchema):
     feedback_samples: NonNegativeInteger
     usable_samples: NonNegativeInteger
     accepted_without_change: NonNegativeInteger
+    upright_learning: ModeLearningStatus
+    hdr_learning: ModeLearningStatus
     minimum_samples: int = Field(ge=1)
 
 
@@ -222,6 +259,11 @@ class PersonalizationContext(LearningSchema):
     preferred_adjustments: dict[str, FiniteFloat]
     crop_adjustments: dict[str, FiniteFloat]
     leveling_adjustments: dict[str, FiniteFloat]
+    preferred_upright_mode: UprightMode | None = None
+    upright_support_count: NonNegativeInteger = 0
+    preferred_hdr_enabled: bool | None = None
+    hdr_support_count: NonNegativeInteger = 0
+    hdr_enable_rate: UnitFloat | None = None
     accepted_without_change_ratio: FiniteFloat
     feature_type: str | None
 

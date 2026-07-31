@@ -87,8 +87,11 @@ local function processPhotoBody(
     progressScope,
     context,
     preferences,
-    tracker
+    tracker,
+    photoIdentity
 )
+    photoIdentity = photoIdentity
+        or Utils.capturePhotoIdentity(photo)
     if not ExifMapper.isSupportedPhoto(photo) then
         return "skipped", "Videos are not supported."
     end
@@ -133,6 +136,7 @@ local function processPhotoBody(
     local request, requestError = RequestBuilder.build(photo, preview.path, {
         styleProfileId = preferences.styleProfileId,
         modelProfileId = preferences.modelProfileId,
+        photoIdentity = photoIdentity,
     })
     if not request then
         Logger.warn(
@@ -206,6 +210,8 @@ local function processPhotoBody(
     ResultStore.put(Utils.photoKey(photo), {
         request_id = request.request_id,
         filename = request.filename,
+        photoId = photoIdentity.photoId,
+        displayFilename = photoIdentity.displayFilename,
         style_profile = request.options.style_profile,
         analyzed_at = Utils.nowIso(),
         response = decoded,
@@ -236,6 +242,8 @@ local function processPhotoBody(
         levelingAngle = decoded.leveling.angle,
         processingDurationMs = decoded.processing_duration_ms,
         filename = request.filename,
+        photoId = photoIdentity.photoId,
+        displayFilename = photoIdentity.displayFilename,
     }
 end
 
@@ -244,7 +252,8 @@ local function processPhoto(
     batchDirectory,
     progressScope,
     preferences,
-    tracker
+    tracker,
+    photoIdentity
 )
     local ok, outcome, reason = LrTasks.pcall(function()
         return LrFunctionContext.callWithContext(
@@ -256,7 +265,8 @@ local function processPhoto(
                     progressScope,
                     context,
                     preferences,
-                    tracker
+                    tracker,
+                    photoIdentity
                 )
             end
         )
@@ -301,7 +311,8 @@ local function runBatch(
             break
         end
 
-        local filename = Utils.photoFilename(photo)
+        local photoIdentity = Utils.capturePhotoIdentity(photo)
+        local filename = photoIdentity.displayFilename
         tracker:setPhase("Preparing analysis")
         tracker:setCurrent(filename, index)
         progressScope:setCaption(tracker:caption())
@@ -311,7 +322,8 @@ local function runBatch(
             batchDirectory,
             progressScope,
             preferences,
-            tracker
+            tracker,
+            photoIdentity
         )
         if progressScope:isCanceled() then
             summary.cancelled = true

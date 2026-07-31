@@ -1,34 +1,108 @@
 {
   "id": "natural_travel",
   "display_name": "Natural Travel",
-  "description": "Strong premium travel rendering with tonal depth, rich believable color, atmospheric separation, and crisp natural detail.",
-  "version": "1.0",
+  "description": "Premium travel rendering with rich believable color, strong tonal depth, natural atmosphere, crisp detail, and polished commercial stock-photo impact.",
+  "version": "1.1",
+
   "editing_goals": [
-    "Create a strong premium travel-photography appearance with rich believable color and crisp natural detail",
-    "Build deep tonal and atmospheric separation across foreground, midground, and background",
-    "Enhance attractive skies, water, natural greens, and warm light when present"
+    "Create a polished premium travel photograph with immediate visual impact while remaining completely believable.",
+    "Build confident tonal separation using clean highlights, rich shadows, bright white points, and controlled black depth.",
+    "Enhance landscapes, cities, villages, coastlines, temples, markets, forests, lakes, and cultural scenes with vibrant but realistic color.",
+    "Improve foreground, midground, and background separation through careful local contrast and atmospheric depth.",
+    "Reveal natural texture and detail while preserving an authentic photographic appearance.",
+    "Produce images suitable for high-end travel magazines and premium commercial stock libraries."
   ],
+
   "cautions": [
-    "Preserve realistic skin and sky color",
-    "Keep clarity and dehaze restrained enough to remain believable",
-    "Avoid oversaturated or muddy foliage",
-    "Avoid timid contrast or an unfinished merely corrected result"
+    "Preserve realistic skin tones.",
+    "Maintain believable blue skies, water, foliage, and warm light.",
+    "Avoid halos, crunchy detail, and excessive local contrast.",
+    "Avoid muddy foliage or neon greens.",
+    "Respect naturally soft weather such as fog, mist, rain, or haze.",
+    "Avoid flat corrections that still resemble an unedited RAW file."
   ],
+
   "slider_ranges": {
-    "Exposure2012": {"min": -1.0, "max": 1.0, "preferred": 0.0},
-    "Contrast2012": {"min": -15.0, "max": 25.0, "preferred": 10.0},
-    "Highlights2012": {"min": -60.0, "max": 10.0, "preferred": -25.0},
-    "Shadows2012": {"min": -20.0, "max": 50.0, "preferred": 20.0},
-    "Whites2012": {"min": -20.0, "max": 25.0, "preferred": 8.0},
-    "Blacks2012": {"min": -25.0, "max": 15.0, "preferred": -8.0},
-    "Texture": {"min": -10.0, "max": 20.0, "preferred": 5.0},
-    "Clarity2012": {"min": -10.0, "max": 18.0, "preferred": 5.0},
-    "Dehaze": {"min": -5.0, "max": 15.0, "preferred": 4.0},
-    "Vibrance": {"min": -10.0, "max": 30.0, "preferred": 12.0},
-    "Saturation": {"min": -10.0, "max": 12.0, "preferred": 0.0},
-    "Temperature": {"min": 3500.0, "max": 7500.0, "preferred": 5500.0},
-    "Tint": {"min": -20.0, "max": 20.0, "preferred": 0.0}
+
+    "Exposure2012": {
+      "min": -1.0,
+      "max": 1.0,
+      "preferred": 0.05
+    },
+
+    "Contrast2012": {
+      "min": -15.0,
+      "max": 32.0,
+      "preferred": 14.0
+    },
+
+    "Highlights2012": {
+      "min": -65.0,
+      "max": 10.0,
+      "preferred": -30.0
+    },
+
+    "Shadows2012": {
+      "min": -20.0,
+      "max": 55.0,
+      "preferred": 24.0
+    },
+
+    "Whites2012": {
+      "min": -20.0,
+      "max": 30.0,
+      "preferred": 11.0
+    },
+
+    "Blacks2012": {
+      "min": -30.0,
+      "max": 15.0,
+      "preferred": -12.0
+    },
+
+    "Texture": {
+      "min": -10.0,
+      "max": 24.0,
+      "preferred": 8.0
+    },
+
+    "Clarity2012": {
+      "min": -10.0,
+      "max": 20.0,
+      "preferred": 7.0
+    },
+
+    "Dehaze": {
+      "min": -5.0,
+      "max": 18.0,
+      "preferred": 6.0
+    },
+
+    "Vibrance": {
+      "min": -10.0,
+      "max": 36.0,
+      "preferred": 16.0
+    },
+
+    "Saturation": {
+      "min": -10.0,
+      "max": 12.0,
+      "preferred": 1.0
+    },
+
+    "Temperature": {
+      "min": 3300.0,
+      "max": 7800.0,
+      "preferred": 5500.0
+    },
+
+    "Tint": {
+      "min": -20.0,
+      "max": 20.0,
+      "preferred": 0.0
+    }
   },
+
   "crop_policy": {
     "allow_crop": true,
     "max_edge_crop": 0.12,
@@ -37,20 +111,27 @@
     "require_confidence": false,
     "preserve_aspect_ratio": false
   },
+
   "leveling_policy": {
     "allow_leveling": true,
     "maximum_absolute_angle": 5.0,
     "guidance": [
-      "Correct obvious accidental horizon and waterline tilt",
-      "Preserve natural framing and environmental context",
-      "Do not confuse sloping terrain or irregular structures with camera roll"
+      "Correct obvious accidental horizon, waterline, coastline, building, or skyline tilt.",
+      "Preserve natural framing and environmental context.",
+      "Do not mistake sloping terrain, mountain ridges, bridges, or irregular structures for camera roll.",
+      "Prioritize believable travel photography over mathematically perfect leveling."
     ]
+  },
+  "upright_policy": {
+    "allow_upright": true,
+    "allowed_modes": ["off", "auto", "level", "vertical"],
+    "minimum_confidence": 0.75
   },
   "denoise_policy": {
     "allow_denoise": true,
-    "minimum_iso": 800,
+    "minimum_iso": 640,
     "minimum_amount": 0.0,
-    "maximum_amount": 35.0,
+    "maximum_amount": 38.0,
     "minimum_confidence": 0.55,
     "preserve_detail": true
   }

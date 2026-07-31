@@ -14,6 +14,8 @@ def _sample(
     exposure: float | None,
     similarity: float,
     accepted: bool = False,
+    upright: str | None = None,
+    hdr_enabled: bool | None = None,
 ) -> RetrievalSample:
     return RetrievalSample(
         session_id=session_id,
@@ -29,6 +31,8 @@ def _sample(
         feature_version=1,
         vector=(1.0, 0.0),
         exif_context={},
+        upright_mode=upright,
+        hdr_enabled=hdr_enabled,
         similarity=similarity,
     )
 
@@ -87,3 +91,95 @@ def test_context_is_bounded_aggregate_only_and_deterministic() -> None:
     assert ".NEF" not in rendered
     assert "embedding" not in rendered.lower()
     assert rendered.endswith("END PERSONAL EDITING PREFERENCES")
+
+
+def test_categorical_preferences_require_consistent_support() -> None:
+    context = aggregate_preferences(
+        [
+            _sample(
+                "one",
+                exposure=None,
+                similarity=0.9,
+                upright="vertical",
+                hdr_enabled=True,
+            ),
+            _sample(
+                "two",
+                exposure=None,
+                similarity=0.85,
+                upright="vertical",
+                hdr_enabled=True,
+            ),
+            _sample(
+                "three",
+                exposure=None,
+                similarity=0.8,
+                upright="vertical",
+                hdr_enabled=True,
+            ),
+        ],
+        profile_id="architecture",
+        usable_sample_count=3,
+        feature_type="test",
+    )
+
+    assert context is not None
+    assert context.preferred_upright_mode == "vertical"
+    assert context.preferred_hdr_enabled is True
+    assert context.hdr_enable_rate == 1.0
+    rendered = render_personalization(context)
+    assert "Upright: vertical (3 similar examples)" in rendered
+    assert "HDR edit mode: on (3 similar examples)" in rendered
+    assert "never override confidence thresholds" in rendered
+
+
+def test_hdr_preference_is_rendered_as_global_strong_context() -> None:
+    context = aggregate_preferences(
+        [
+            _sample(
+                str(index),
+                exposure=None,
+                similarity=0.9,
+                hdr_enabled=True,
+            )
+            for index in range(1, 4)
+        ],
+        profile_id="natural_travel",
+        usable_sample_count=22,
+        feature_type="test",
+    )
+
+    assert context is not None
+    rendered = render_personalization(context)
+    assert "PERSONAL HDR PREFERENCE" in rendered
+    assert "visually similar photographs" in rendered
+    assert "strong preference signal" in rendered
+    assert "acceptable SDR edit is technically possible" in rendered
+
+
+def test_two_mode_samples_do_not_create_a_preference() -> None:
+    context = aggregate_preferences(
+        [
+            _sample(
+                "one",
+                exposure=None,
+                similarity=0.9,
+                upright="level",
+                hdr_enabled=False,
+            ),
+            _sample(
+                "two",
+                exposure=None,
+                similarity=0.8,
+                upright="level",
+                hdr_enabled=False,
+            ),
+        ],
+        profile_id="natural_travel",
+        usable_sample_count=2,
+        feature_type="test",
+    )
+
+    assert context is not None
+    assert context.preferred_upright_mode is None
+    assert context.preferred_hdr_enabled is None

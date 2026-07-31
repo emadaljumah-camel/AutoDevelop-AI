@@ -1,3 +1,5 @@
+local LrTasks = import("LrTasks")
+
 local Utils = {}
 
 local randomSeeded = false
@@ -25,7 +27,7 @@ function Utils.safeRawMetadata(photo, key)
     if not photo or type(photo.getRawMetadata) ~= "function" then
         return nil
     end
-    local ok, value = pcall(function()
+    local ok, value = LrTasks.pcall(function()
         return photo:getRawMetadata(key)
     end)
     if ok then
@@ -38,7 +40,7 @@ function Utils.safeFormattedMetadata(photo, key)
     if not photo or type(photo.getFormattedMetadata) ~= "function" then
         return nil
     end
-    local ok, value = pcall(function()
+    local ok, value = LrTasks.pcall(function()
         return photo:getFormattedMetadata(key)
     end)
     if ok then
@@ -112,13 +114,7 @@ function Utils.isUuid(value)
         and #fifth == 12
 end
 
-function Utils.photoFilename(photo)
-    local filename = Utils.trim(
-        Utils.safeFormattedMetadata(photo, "fileName")
-    )
-    if filename then
-        return filename
-    end
+local function photoId(photo)
     local identifier = Utils.safePhotoProperty(photo, "localIdentifier")
     if identifier ~= nil then
         return "photo_" .. tostring(identifier)
@@ -127,14 +123,47 @@ function Utils.photoFilename(photo)
     if uuid then
         return "photo_" .. uuid
     end
-    local path = Utils.trim(Utils.safeRawMetadata(photo, "path"))
+    return "photo_catalog_item"
+end
+
+local function pathBasename(path)
+    path = Utils.trim(path)
     if path then
         local leaf = Utils.trim(path:match("([^/\\]+)$"))
         if leaf then
             return leaf
         end
     end
-    return "photo_catalog_item"
+    return nil
+end
+
+function Utils.photoId(photo)
+    return photoId(photo)
+end
+
+function Utils.capturePhotoIdentity(photo)
+    local internalId = photoId(photo)
+    local displayFilename = Utils.trim(
+        Utils.safeFormattedMetadata(photo, "fileName")
+    )
+    if not displayFilename then
+        displayFilename = Utils.trim(
+            Utils.safeRawMetadata(photo, "fileName")
+        )
+    end
+    if not displayFilename then
+        displayFilename = pathBasename(
+            Utils.safeRawMetadata(photo, "path")
+        )
+    end
+    return {
+        photoId = internalId,
+        displayFilename = displayFilename or internalId,
+    }
+end
+
+function Utils.photoFilename(photo)
+    return Utils.capturePhotoIdentity(photo).displayFilename
 end
 
 function Utils.photoKey(photo)

@@ -1,6 +1,7 @@
 """Public model-client interfaces and implementations."""
 
 from autodevelop.model_clients.base import ModelClient
+from autodevelop.model_clients.diagnostics import InvalidResponseDiagnostics
 from autodevelop.model_clients.exceptions import (
     ModelClientError,
     ModelRequestError,
@@ -28,6 +29,7 @@ __all__ = [
     "ProviderTimeoutError",
     "ProviderUnavailableError",
     "InvalidModelResponseError",
+    "InvalidResponseDiagnostics",
     "ModelResolver",
     "ResolvedModel",
     "ModelService",

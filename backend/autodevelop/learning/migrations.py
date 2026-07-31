@@ -96,9 +96,129 @@ SET leveling_delta_json = CASE
     crop_delta_json = json_remove(crop_delta_json, '$.CropAngle');
 """
 
+_MIGRATION_3 = """
+ALTER TABLE learning_sessions
+ADD COLUMN applied_upright_mode TEXT
+    CHECK (
+        applied_upright_mode IS NULL
+        OR applied_upright_mode IN ('off', 'auto', 'full', 'level', 'vertical')
+    );
+
+ALTER TABLE learning_sessions
+ADD COLUMN applied_hdr_enabled INTEGER
+    CHECK (applied_hdr_enabled IS NULL OR applied_hdr_enabled IN (0, 1));
+
+ALTER TABLE learning_feedback
+ADD COLUMN final_upright_mode TEXT
+    CHECK (
+        final_upright_mode IS NULL
+        OR final_upright_mode IN ('off', 'auto', 'full', 'level', 'vertical')
+    );
+
+ALTER TABLE learning_feedback
+ADD COLUMN final_hdr_enabled INTEGER
+    CHECK (final_hdr_enabled IS NULL OR final_hdr_enabled IN (0, 1));
+"""
+
+_MIGRATION_4 = """
+ALTER TABLE learning_sessions
+ADD COLUMN baseline_upright_mode TEXT
+    CHECK (
+        baseline_upright_mode IS NULL
+        OR baseline_upright_mode IN ('off', 'auto', 'full', 'level', 'vertical')
+    );
+
+ALTER TABLE learning_sessions
+ADD COLUMN ai_upright_mode TEXT
+    CHECK (
+        ai_upright_mode IS NULL
+        OR ai_upright_mode IN ('off', 'auto', 'full', 'level', 'vertical')
+    );
+
+ALTER TABLE learning_sessions
+ADD COLUMN baseline_hdr_enabled INTEGER
+    CHECK (baseline_hdr_enabled IS NULL OR baseline_hdr_enabled IN (0, 1));
+
+ALTER TABLE learning_sessions
+ADD COLUMN ai_hdr_enabled INTEGER
+    CHECK (ai_hdr_enabled IS NULL OR ai_hdr_enabled IN (0, 1));
+
+ALTER TABLE learning_sessions
+ADD COLUMN baseline_hdr_max_value REAL;
+
+ALTER TABLE learning_feedback
+ADD COLUMN upright_changed INTEGER
+    CHECK (upright_changed IS NULL OR upright_changed IN (0, 1));
+
+ALTER TABLE learning_feedback
+ADD COLUMN upright_accepted INTEGER
+    CHECK (upright_accepted IS NULL OR upright_accepted IN (0, 1));
+
+ALTER TABLE learning_feedback
+ADD COLUMN hdr_changed INTEGER
+    CHECK (hdr_changed IS NULL OR hdr_changed IN (0, 1));
+
+ALTER TABLE learning_feedback
+ADD COLUMN hdr_accepted INTEGER
+    CHECK (hdr_accepted IS NULL OR hdr_accepted IN (0, 1));
+"""
+
+_MIGRATION_5 = """
+ALTER TABLE learning_sessions
+ADD COLUMN scene_hdr_candidate INTEGER
+    CHECK (scene_hdr_candidate IS NULL OR scene_hdr_candidate IN (0, 1));
+
+ALTER TABLE learning_sessions ADD COLUMN scene_hdr_confidence REAL;
+ALTER TABLE learning_sessions ADD COLUMN hdr_evidence_score REAL;
+
+ALTER TABLE learning_sessions
+ADD COLUMN raw_hdr_recommended INTEGER
+    CHECK (raw_hdr_recommended IS NULL OR raw_hdr_recommended IN (0, 1));
+
+ALTER TABLE learning_sessions ADD COLUMN raw_hdr_confidence REAL;
+
+ALTER TABLE learning_sessions
+ADD COLUMN validated_hdr_enabled INTEGER
+    CHECK (validated_hdr_enabled IS NULL OR validated_hdr_enabled IN (0, 1));
+
+ALTER TABLE learning_sessions ADD COLUMN validated_hdr_confidence REAL;
+ALTER TABLE learning_sessions ADD COLUMN hdr_rejection_reason TEXT;
+
+ALTER TABLE learning_sessions
+ADD COLUMN hdr_personalization_applied INTEGER
+    CHECK (
+        hdr_personalization_applied IS NULL
+        OR hdr_personalization_applied IN (0, 1)
+    );
+
+ALTER TABLE learning_sessions ADD COLUMN hdr_learning_enable_rate REAL;
+"""
+
+_MIGRATION_6 = """
+ALTER TABLE learning_sessions ADD COLUMN base_scene_evidence_score REAL;
+ALTER TABLE learning_sessions ADD COLUMN hdr_learning_bonus REAL;
+ALTER TABLE learning_sessions ADD COLUMN hdr_preference_bonus REAL;
+ALTER TABLE learning_sessions ADD COLUMN combined_hdr_evidence_score REAL;
+ALTER TABLE learning_sessions ADD COLUMN hdr_decision_basis TEXT;
+ALTER TABLE learning_sessions ADD COLUMN hdr_decision_confidence REAL;
+
+ALTER TABLE learning_sessions
+ADD COLUMN scene_hdr_inconsistent INTEGER
+    CHECK (
+        scene_hdr_inconsistent IS NULL
+        OR scene_hdr_inconsistent IN (0, 1)
+    );
+
+ALTER TABLE learning_sessions ADD COLUMN hdr_contraindications_json TEXT;
+"""
+
 MIGRATIONS = {
     1: _MIGRATION_1,
     2: _MIGRATION_2,
+    3: _MIGRATION_3,
+    4: _MIGRATION_4,
+    5: _MIGRATION_5,
+    6: _MIGRATION_6,
 }
 
 

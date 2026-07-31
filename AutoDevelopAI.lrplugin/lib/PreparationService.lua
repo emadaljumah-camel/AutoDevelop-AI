@@ -7,6 +7,8 @@ local BatchPolicy = ModuleLoader.load("lib/BatchPolicy.lua")
 local CropMapper = ModuleLoader.load("lib/CropMapper.lua")
 local DevelopSettingsMapper =
     ModuleLoader.load("lib/DevelopSettingsMapper.lua")
+local DevelopModeMapper =
+    ModuleLoader.load("lib/DevelopModeMapper.lua")
 local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
 local Logger = ModuleLoader.load("lib/Logger.lua")
@@ -79,7 +81,9 @@ function PreparationService.request(
             tracker:setCurrent(request.filename)
             progressScope:setCaption(tracker:caption())
         end
-        local result = requestFunction(request, connectionOptions)
+        local requestOptions = Utils.deepCopy(connectionOptions or {})
+        requestOptions.endpointAttempt = retriesUsed + 1
+        local result = requestFunction(request, requestOptions)
         if progressScope:isCanceled() then
             return nil, PreparationService.failure(
                 ErrorClassifier.codes.cancelled,
@@ -92,6 +96,8 @@ function PreparationService.request(
                 .. request.request_id
                 .. " filename="
                 .. request.filename
+                .. " endpoint_attempt="
+                .. tostring(retriesUsed + 1)
                 .. " status="
                 .. tostring(
                     result.status
@@ -174,9 +180,12 @@ local function prepareDevelopPhotoBody(
     context,
     preferences,
     tracker,
+    photoIdentity,
     lifecycle
 )
     markLifecycle(lifecycle, "develop_preparation_started")
+    photoIdentity = photoIdentity
+        or Utils.capturePhotoIdentity(photo)
     if not ExifMapper.isSupportedPhoto(photo) then
         return "skipped", "Videos are not supported."
     end
@@ -238,6 +247,8 @@ local function prepareDevelopPhotoBody(
             includeDenoise = true,
             preserveCurrentAdjustments = true,
             learningEnabled = preferences.learningEnabled,
+            hdrPreference = preferences.hdrPreference,
+            photoIdentity = photoIdentity,
         }
     )
     if not request then
@@ -348,20 +359,37 @@ local function prepareDevelopPhotoBody(
     local denoiseRecommended = type(decoded.denoise) == "table"
         and decoded.denoise.recommended == true
     mappedSettings = mergeSettings(mappedSettings, mappedGeometry)
-    local enableHdr = type(decoded.enable_hdr) == "table"
+    local uprightRecommended = type(decoded.upright) == "table"
+        and decoded.upright.recommended == true
+    local currentUpright = DevelopModeMapper.decodeUpright(
+        currentSettings.PerspectiveUpright
+    )
+    local uprightMode = uprightRecommended
+        and currentUpright.supported
+        and decoded.upright.mode
+        or nil
+    local hdrRecommended = type(decoded.enable_hdr) == "table"
         and decoded.enable_hdr.recommended == true
-        and (
-            currentSettings.HDREditMode == 0
-            or currentSettings.HDREditMode == 1
-        )
+    local currentHdr = DevelopModeMapper.decodeHdr(
+        currentSettings.HDREditMode
+    )
+    local enableHdr = hdrRecommended
+        and decoded.enable_hdr.enabled == true
+        and currentHdr.supported
     if progressScope:isCanceled() then
         return "cancelled", PreparationService.failure(
             ErrorClassifier.codes.cancelled,
             "user_cancelled"
         )
     end
-    local settingCount = countSettings(mappedSettings)
-    if settingCount == 0 and not enableHdr then
+    local finalSettings = ApplyService.prepareFinalSettings(
+        mappedSettings,
+        currentSettings,
+        uprightMode,
+        enableHdr
+    )
+    local settingCount = countSettings(finalSettings)
+    if settingCount == 0 then
         return "skipped", {
             cropDisabled = cropDisabled,
             cropRecommended = cropRecommended,
@@ -370,13 +398,15 @@ local function prepareDevelopPhotoBody(
             levelingAngle = levelingRecommended
                 and decoded.leveling.angle or nil,
             denoiseRecommended = denoiseRecommended,
+            uprightRecommended = uprightRecommended,
+            hdrRecommended = hdrRecommended,
         }
     end
 
     markLifecycle(lifecycle, "pending_operation_build_started")
     local originalSettings = ApplyService.captureOriginal(
         currentSettings,
-        mappedSettings
+        finalSettings
     )
     if countSettings(originalSettings) ~= settingCount then
         logStageFailure(
@@ -388,13 +418,11 @@ local function prepareDevelopPhotoBody(
             "original_settings_unavailable"
         )
     end
-    if enableHdr then
-        originalSettings.HDREditMode = currentSettings.HDREditMode
-    end
-
     local operation = PendingOperation.new({
         photo = photo,
         photoKey = Utils.photoKey(photo),
+        photoId = photoIdentity.photoId,
+        displayFilename = photoIdentity.displayFilename,
         filename = request.filename,
         requestId = request.request_id,
         profileId = decoded.effective_style_id,
@@ -406,6 +434,7 @@ local function prepareDevelopPhotoBody(
         sceneConfidence = decoded.scene_confidence,
         originalSettings = originalSettings,
         mappedSettings = mappedSettings,
+        finalSettings = finalSettings,
         cropRecommended = cropRecommended,
         compositionCropIncluded = mappedGeometry ~= nil
             and cropRecommended
@@ -417,7 +446,24 @@ local function prepareDevelopPhotoBody(
         levelingMode = decoded.leveling.mode,
         levelingAngle = decoded.leveling.angle,
         denoiseRecommended = denoiseRecommended,
-        enableHdr = enableHdr,
+        upright = {
+            recommended = uprightRecommended,
+            mode = decoded.upright.mode,
+            confidence = decoded.upright.confidence,
+            reason = decoded.upright.reason,
+        },
+        hdr = {
+            recommended = hdrRecommended,
+            enabled = enableHdr,
+            confidence = decoded.enable_hdr.confidence,
+            reason = decoded.enable_hdr.reason,
+        },
+        hdrDecision = decoded.hdr_decision,
+        modeDiagnostics = {
+            perspectiveUpright = currentSettings.PerspectiveUpright,
+            hdrEditMode = currentSettings.HDREditMode,
+            hdrMaxValue = currentSettings.HDRMaxValue,
+        },
         warnings = Utils.deepCopy(decoded.warnings or {}),
         model = validatedModel,
         resolvedModel = decoded.resolved_model,
@@ -461,7 +507,8 @@ function PreparationService.prepareDevelopPhoto(
     batchDirectory,
     progressScope,
     preferences,
-    tracker
+    tracker,
+    photoIdentity
 )
     local lifecycle = {
         stage = "develop_preparation_entry",
@@ -477,6 +524,7 @@ function PreparationService.prepareDevelopPhoto(
                     context,
                     preferences,
                     tracker,
+                    photoIdentity,
                     lifecycle
                 )
                 return {

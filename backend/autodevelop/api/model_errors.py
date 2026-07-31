@@ -51,7 +51,22 @@ _ERRORS: dict[str, tuple[int, str, bool]] = {
     "invalid_model_response": (
         status.HTTP_502_BAD_GATEWAY,
         "The selected model returned an invalid response.",
-        True,
+        False,
+    ),
+    "invalid_model_response_repeated": (
+        status.HTTP_502_BAD_GATEWAY,
+        "The selected model repeatedly returned an invalid response.",
+        False,
+    ),
+    "provider_json_parse_failed": (
+        status.HTTP_502_BAD_GATEWAY,
+        "The selected model returned malformed JSON.",
+        False,
+    ),
+    "provider_schema_mismatch": (
+        status.HTTP_502_BAD_GATEWAY,
+        "The selected model response did not match the required schema.",
+        False,
     ),
     "invalid_response_metadata": (
         status.HTTP_502_BAD_GATEWAY,
@@ -80,6 +95,18 @@ def model_error_response(
             True,
         ),
     )
+    diagnostics = getattr(exc, "diagnostics", None)
+    if (
+        exc.code == "provider_json_parse_failed"
+        and diagnostics is not None
+        and diagnostics.diagnostic_code == "truncated_json"
+    ):
+        retryable = True
+    if (
+        diagnostics is not None
+        and diagnostics.stage == "empty_provider_content"
+    ):
+        retryable = True
     return error_response(
         request,
         status_code=status_code,

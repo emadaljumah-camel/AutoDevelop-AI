@@ -19,11 +19,16 @@ _MODEL_SETTING_FIELDS = (
     "default_model",
     "local_base_url",
     "local_timeout_seconds",
+    "local_response_format",
     "gemma_model",
     "qwen_model",
     "gpt_oss_model",
     "gemini_model",
     "gemini_timeout_seconds",
+)
+_DIAGNOSTIC_SETTING_FIELDS = (
+    "log_invalid_model_response",
+    "invalid_response_max_chars",
 )
 _LEARNING_SETTING_FIELDS = (
     "learning_enabled",
@@ -168,6 +173,7 @@ def _flatten_yaml_config(
                 values["local_base_url"] = local.base_url
             if local.timeout_seconds is not None:
                 values["local_timeout_seconds"] = local.timeout_seconds
+            values["local_response_format"] = local.response_format
         if config.providers.gemini is not None:
             gemini = config.providers.gemini
             if gemini.timeout_seconds is not None:
@@ -195,6 +201,16 @@ def _flatten_yaml_config(
                 "learning_max_results": learning.maximum_results,
                 "learning_min_similarity": learning.minimum_similarity,
                 "learning_max_candidate_pool": learning.maximum_candidate_pool,
+            }
+        )
+    diagnostics = config.diagnostics
+    if diagnostics is not None:
+        values.update(
+            {
+                "log_invalid_model_response": (
+                    diagnostics.log_invalid_model_response
+                ),
+                "invalid_response_max_chars": diagnostics.invalid_response_max_chars,
             }
         )
     return values
@@ -234,7 +250,11 @@ def load_settings(
     settings = Settings(_env_file=None, **resolved_values)
 
     sources = {}
-    for field_name in _MODEL_SETTING_FIELDS + _LEARNING_SETTING_FIELDS:
+    for field_name in (
+        _MODEL_SETTING_FIELDS
+        + _LEARNING_SETTING_FIELDS
+        + _DIAGNOSTIC_SETTING_FIELDS
+    ):
         if field_name in environment_fields:
             sources[field_name] = "environment"
         elif field_name in yaml_values:

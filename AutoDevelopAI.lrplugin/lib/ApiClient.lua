@@ -20,6 +20,21 @@ local jsonHeaders = {
     },
 }
 
+local function headersForAttempt(attempt)
+    local headers = {}
+    for index, header in ipairs(jsonHeaders) do
+        headers[index] = {
+            field = header.field,
+            value = header.value,
+        }
+    end
+    headers[#headers + 1] = {
+        field = "X-Autodevelop-Attempt",
+        value = tostring(attempt or 1),
+    }
+    return headers
+end
+
 local function failure(category, fields)
     fields = fields or {}
     fields.ok = false
@@ -28,13 +43,15 @@ local function failure(category, fields)
 end
 
 local function networkFailure(headers)
-    return failure(ErrorClassifier.fromNetworkInfo(headers), {
+    local category = ErrorClassifier.fromNetworkInfo(headers)
+    return failure(category, {
         status = nil,
         headers = headers,
         code = type(headers) == "table"
             and type(headers.error) == "table"
             and headers.error.errorCode or nil,
-        retryable = false,
+        retryable = category == ErrorClassifier.codes.modelTimeout
+            or category == ErrorClassifier.codes.networkError,
     })
 end
 
@@ -114,7 +131,7 @@ local function postJson(path, request, options)
         return LrHttp.post(
             url,
             encoded,
-            jsonHeaders,
+            headersForAttempt(options and options.endpointAttempt),
             "POST",
             timeout
         )
@@ -124,7 +141,7 @@ local function postJson(path, request, options)
         return failure(ErrorClassifier.codes.networkError, {
             status = nil,
             code = "http_call_failed",
-            retryable = false,
+            retryable = true,
         })
     end
     return httpResult(responseBody, responseHeaders)
