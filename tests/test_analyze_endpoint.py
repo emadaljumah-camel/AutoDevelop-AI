@@ -475,6 +475,22 @@ def test_analyze_identity_failure_does_not_expose_or_log_bad_value(
     assert secret not in caplog.text
 
 
+def test_analyze_logs_base64_transport_without_image_content(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    encoded = "ZmFrZS1wcmV2aWV3"
+
+    response = client.post(
+        "/autodevelop/v1/analyze",
+        json=_request_body(preview_path=None, preview_base64=encoded),
+    )
+
+    assert response.status_code == 200
+    assert "preview_source=preview_base64" in caplog.text
+    assert encoded not in caplog.text
+
+
 @pytest.mark.parametrize(
     ("error", "expected_status", "expected_code", "retryable"),
     [

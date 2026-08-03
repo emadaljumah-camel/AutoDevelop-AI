@@ -102,7 +102,8 @@ async def analyze_photo(
         logger.info(
             (
                 "Analyze request started request_id=%s filename=%s profile=%s "
-                "model=%s model_source=%s provider=%s endpoint_attempt=%d"
+                "model=%s model_source=%s provider=%s preview_source=%s "
+                "endpoint_attempt=%d"
             ),
             request.request_id,
             request.filename,
@@ -110,6 +111,11 @@ async def analyze_photo(
             request.model,
             selection.source,
             resolution.definition.provider,
+            (
+                "preview_base64"
+                if request.preview_base64 is not None
+                else "preview_path"
+            ),
             endpoint_attempt or 1,
         )
         response = await model_client.analyze(request)

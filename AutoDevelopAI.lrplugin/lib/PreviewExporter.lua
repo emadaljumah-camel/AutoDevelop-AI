@@ -4,6 +4,8 @@ local LrPathUtils = import("LrPathUtils")
 local LrTasks = import("LrTasks")
 
 local Utils = ModuleLoader.load("lib/Utils.lua")
+local PreviewTransport =
+    ModuleLoader.load("lib/PreviewTransport.lua")
 
 local PreviewExporter = {}
 
@@ -127,9 +129,17 @@ local function renderPhoto(
         if not LrPathUtils.isAbsolute(uniquePath) then
             return nil, "The temporary preview path was not absolute."
         end
+        local encoded, encodeError, transport =
+            PreviewTransport.encodeFile(uniquePath)
+        if not encoded then
+            return nil, encodeError or "preview_encoding_failed"
+        end
         return {
             path = uniquePath,
             directory = photoDirectory,
+            base64 = encoded,
+            rawBytes = transport.rawBytes,
+            encodedBytes = transport.encodedBytes,
         }
     end
 

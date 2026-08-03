@@ -46,6 +46,16 @@ local learningReasonLabels = {
     retrieval_unavailable = "Learning retrieval unavailable",
 }
 
+local denoiseExclusionLabels = {
+    denoise_preset_missing = "Required preset missing",
+    denoise_preset_lookup_failed = "Preset lookup failed",
+    denoise_preset_amount_unsupported = "Unsupported preset amount",
+    denoise_source_unsupported = "Unsupported source format",
+    denoise_baseline_unavailable = "Restorable baseline unavailable",
+    denoise_already_enabled = "Denoise already enabled",
+    denoise_unavailable = "Denoise unavailable",
+}
+
 local function titleCase(value)
     local text = Utils.safeMessage(value, "Unavailable"):gsub("_", " ")
     return text:sub(1, 1):upper() .. text:sub(2)
@@ -451,6 +461,24 @@ local function sortedCounts(values, display)
     return entries
 end
 
+local function denoiseExclusionSummary(summary)
+    local entries = sortedCounts(
+        summary.denoiseExclusionReasons,
+        function(identifier)
+            return denoiseExclusionLabels[identifier]
+                or titleCase(identifier)
+        end
+    )
+    if #entries == 0 then
+        return "none"
+    end
+    local parts = {}
+    for _, item in ipairs(entries) do
+        parts[#parts + 1] = item.label .. " (" .. item.count .. ")"
+    end
+    return table.concat(parts, ", ")
+end
+
 local function appendStyleLines(lines, summary)
     lines[#lines + 1] = ""
     lines[#lines + 1] = "Style"
@@ -528,6 +556,10 @@ local function finalLines(summary)
             .. tostring(summary.denoiseRecommendedCount or 0),
         "Denoise applied: "
             .. tostring(summary.denoiseAppliedCount or 0),
+        "Denoise excluded: "
+            .. tostring(summary.denoiseIgnored or 0),
+        "Denoise exclusion reasons: "
+            .. denoiseExclusionSummary(summary),
         "Personalization applied: "
             .. tostring(summary.personalizationApplied or 0)
             .. " photos",

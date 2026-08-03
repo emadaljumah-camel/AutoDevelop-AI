@@ -195,11 +195,16 @@ async def develop_photo(
     logger.info(
         (
             "Develop request started request_id=%s filename=%s profile=%s "
-            "endpoint_attempt=%d"
+            "preview_source=%s endpoint_attempt=%d"
         ),
         request.request_id,
         request.filename,
         profile_id,
+        (
+            "preview_base64"
+            if request.preview_base64 is not None
+            else "preview_path"
+        ),
         endpoint_attempt or 1,
     )
 

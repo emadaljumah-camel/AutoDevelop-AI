@@ -1,0 +1,87 @@
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00        ">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+   crs:PresetType="Normal"
+   crs:Cluster=""
+   crs:UUID="43384D0A49919348ABEC0343720A14B5"
+   crs:SupportsAmount2="True"
+   crs:SupportsAmount="True"
+   crs:SupportsColor="True"
+   crs:SupportsMonochrome="True"
+   crs:SupportsHighDynamicRange="True"
+   crs:SupportsNormalDynamicRange="True"
+   crs:SupportsSceneReferred="True"
+   crs:SupportsOutputReferred="True"
+   crs:RequiresRGBTables="False"
+   crs:ShowInPresets="True"
+   crs:ShowInQuickActions="False"
+   crs:CameraModelRestriction=""
+   crs:Copyright=""
+   crs:ContactInfo=""
+   crs:Version="18.4"
+   crs:CompatibleVersion="285212672"
+   crs:ProcessVersion="15.4"
+   crs:Table_EE676A53141BE0B627A347C7DB292A60="n5000pY/cq'KcVfG'+7/!ZTkTS.KRK4Vzw91n@]ow}y^8.l]-Lr*jLtj!J|Xw8U]Aaif/EP2M)enDg5(/uI05F}^odCGiBhbn]%kts6QKHn'%0[CEbje6(/5hX:DNXvLr:[?VY:xf'T+.YV6.+SGn]@Ek@2$*yZh5SoQ*@9)D?LjOeBYa%S{#uxn-s^[SsL.1]q3=o9e)mrP4/NuQreO.`yOFYa?%dv?5rxEG=Ym|*P9mY}gGkIDhCGXnoY'xmd#GC+jRIIdt)7uh3vKrZLKn$=hjRk(-rVp4[|uGG.q}8gEKS5'[TJhfzO7yKoTqM4aLtvCS4FJ4NaE!v/L3n:pXgXg:H-a?8CbDCoLbNyiS(mNIUuv0Vux2"
+   crs:AllowFilters="1"
+   crs:HasSettings="True">
+   <crs:Name>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default">AutoDevelop AI - Denoise 25</rdf:li>
+    </rdf:Alt>
+   </crs:Name>
+   <crs:ShortName>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default"/>
+    </rdf:Alt>
+   </crs:ShortName>
+   <crs:SortName>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default"/>
+    </rdf:Alt>
+   </crs:SortName>
+   <crs:Group>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default"/>
+    </rdf:Alt>
+   </crs:Group>
+   <crs:Description>
+    <rdf:Alt>
+     <rdf:li xml:lang="x-default"/>
+    </rdf:Alt>
+   </crs:Description>
+   <crs:FilterList rdf:parseType="Resource">
+    <crs:Filters>
+     <rdf:Seq>
+      <rdf:li
+       crs:Name="Enhance"
+       crs:Title="$$$/CRaw/Filter/Title/Denoise=Denoise"
+       crs:FilterID="1"
+       crs:MinDisplayVersion="285212672"
+       crs:MinEditVersion="285212672"
+       crs:OrderIndexN="100000"
+       crs:OrderIndexD="1"
+       crs:SrcBoundsTop="0"
+       crs:SrcBoundsLeft="0"
+       crs:SrcBoundsBottom="5520"
+       crs:SrcBoundsRight="8288"
+       crs:DstBoundsTop="0"
+       crs:DstBoundsLeft="0"
+       crs:DstBoundsBottom="5520"
+       crs:DstBoundsRight="8288"
+       crs:SrcDefaultCropAreaTop="8"
+       crs:SrcDefaultCropAreaLeft="16"
+       crs:SrcDefaultCropAreaBottom="5512"
+       crs:SrcDefaultCropAreaRight="8272"
+       crs:DstDefaultCropAreaTop="8"
+       crs:DstDefaultCropAreaLeft="16"
+       crs:DstDefaultCropAreaBottom="5512"
+       crs:DstDefaultCropAreaRight="8272"
+       crs:ShouldDeleteImagesDueToUpstream="true"
+       crs:CompressedSettings="EE676A53141BE0B627A347C7DB292A60"/>
+     </rdf:Seq>
+    </crs:Filters>
+   </crs:FilterList>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>

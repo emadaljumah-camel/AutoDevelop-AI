@@ -241,7 +241,7 @@ local function prepareDevelopPhotoBody(
     markLifecycle(lifecycle, "request_build_started")
     local request, requestError = RequestBuilder.buildDevelop(
         photo,
-        preview.path,
+        preview.base64,
         {
             styleProfileId = preferences.styleProfileId,
             modelProfileId = preferences.modelProfileId,
@@ -373,6 +373,33 @@ local function prepareDevelopPhotoBody(
     end
     local denoiseIncluded = denoiseRecommended
         and denoiseCapability.ready == true
+    if denoiseRecommended then
+        Logger.info(
+            "denoise_preparation filename="
+                .. Utils.safeMessage(
+                    photoIdentity.displayFilename,
+                    "Photo"
+                )
+                .. " amount="
+                .. tostring(decoded.denoise.amount or "<none>")
+                .. " source_format="
+                .. tostring(request.exif.file_format or "<none>")
+                .. " included="
+                .. tostring(denoiseIncluded)
+                .. " code="
+                .. Utils.safeErrorCode(
+                    denoiseCapability.code,
+                    denoiseIncluded
+                        and "denoise_ready"
+                        or "denoise_unavailable"
+                )
+                .. " preset="
+                .. Utils.safeMessage(
+                    denoiseCapability.presetName,
+                    "<none>"
+                )
+        )
+    end
     local operationWarnings = Utils.deepCopy(decoded.warnings or {})
     if denoiseRecommended and not denoiseIncluded then
         operationWarnings[#operationWarnings + 1] = {

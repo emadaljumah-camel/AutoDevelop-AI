@@ -299,6 +299,27 @@ def test_valid_request_uses_real_fake_client_and_validator(
     assert payload["develop_settings"]["Exposure2012"] == 0.1
 
 
+def test_develop_logs_base64_transport_without_image_content(
+    app: FastAPI,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    encoded = "ZmFrZS1wcmV2aWV3"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/autodevelop/v1/develop",
+            json=_request_body(
+                preview_path=None,
+                preview_base64=encoded,
+            ),
+        )
+
+    assert response.status_code == 200
+    captured = capfd.readouterr()
+    assert "preview_source=preview_base64" in captured.err
+    assert encoded not in captured.err
+
+
 def test_valid_nondefault_profile_is_authoritative(
     client: TestClient,
 ) -> None:

@@ -133,11 +133,15 @@ local function processPhotoBody(
         )
     end
 
-    local request, requestError = RequestBuilder.build(photo, preview.path, {
-        styleProfileId = preferences.styleProfileId,
-        modelProfileId = preferences.modelProfileId,
-        photoIdentity = photoIdentity,
-    })
+    local request, requestError = RequestBuilder.buildAnalyze(
+        photo,
+        preview.base64,
+        {
+            styleProfileId = preferences.styleProfileId,
+            modelProfileId = preferences.modelProfileId,
+            photoIdentity = photoIdentity,
+        }
+    )
     if not request then
         Logger.warn(
             "operation=build_analyze_request category=validation_error "

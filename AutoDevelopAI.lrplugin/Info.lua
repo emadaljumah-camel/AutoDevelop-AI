@@ -2,7 +2,7 @@ return {
     LrSdkVersion = 13.0,
     LrSdkMinimumVersion = 6.0,
     LrToolkitIdentifier = "com.emad.autodevelopai",
-    LrPluginName = "AutoDevelop AI",
+    LrPluginName = "04 AutoDevelop AI",
     LrPluginInfoProvider = "PluginManager.lua",
 
     VERSION = {

@@ -151,6 +151,50 @@ The health endpoint is available at:
 GET http://127.0.0.1:8005/autodevelop/v1/health
 ```
 
+### Lightroom on another computer
+
+The Lightroom plug-in uploads each temporary 1600-pixel JPEG preview in the
+request as `preview_base64`. It never sends the Lightroom computer's local
+temporary path to the backend. The backend retains `preview_path` only for
+backward-compatible API clients.
+
+Base64 expands binary content by approximately one third. The plug-in rejects
+a preview above 8 MiB before encoding, rejects an estimated or actual encoded
+payload above 11 MiB, and still deletes the per-photo temporary JPEG through
+the normal cleanup path. Preview content and local paths are not written to
+ordinary logs or learning records.
+
+To keep the backend and LM Studio on one computer while Lightroom runs on
+another computer on the same private LAN:
+
+1. Copy the complete `AutoDevelopAI.lrplugin` directory to the Lightroom
+   computer and add it through **File > Plug-in Manager**.
+2. Start the backend on the backend computer with an explicit LAN bind:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m uvicorn autodevelop.main:app `
+       --app-dir backend --host 0.0.0.0 --port 8005
+   ```
+
+3. Permit inbound TCP port 8005 in Windows Firewall only on the Private
+   profile and preferably only from the Lightroom computer's IP address.
+4. Do not expose LM Studio port 1234. It remains bound to
+   `127.0.0.1:1234` for backend-only access.
+5. On the Lightroom computer, verify
+   `http://BACKEND-LAN-IP:8005/autodevelop/v1/health`, then set **Backend
+   URL** in the plug-in preferences to `http://BACKEND-LAN-IP:8005` without
+   the API suffix.
+6. Keep the request timeout high enough for the Base64 upload plus inference.
+   The default is 120 seconds; the plug-in accepts 10 through 600 seconds.
+7. Create or import the three native Denoise presets on the Lightroom
+   computer if Denoise 25, 50, and 75 should all be available.
+
+Verify a deployment by running Analyze and Auto Develop on one photo, checking
+that the backend receives `preview_base64` and no `preview_path`, and confirming
+that the Lightroom temporary preview is removed afterward. Port 8005 must not
+be exposed directly to the public internet because this API does not provide
+transport encryption or client authentication.
+
 LM Studio defaults to its OpenAI-compatible API at
 `http://127.0.0.1:1234/v1`. Local model output is parsed against the strict
 Version 1 response contract and then passed through the SafetyValidator.

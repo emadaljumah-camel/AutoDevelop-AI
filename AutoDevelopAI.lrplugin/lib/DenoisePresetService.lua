@@ -78,13 +78,18 @@ local function sourceFormat(photo)
     return value and value:upper() or nil
 end
 
-local function captureOriginal(currentSettings)
+local function captureOriginal(currentSettings, absentFilterIsEmpty)
     local original = {}
-    if type(currentSettings) ~= "table"
-        or type(currentSettings.FilterList) ~= "table" then
+    if type(currentSettings) ~= "table" then
         return original
     end
-    original.FilterList = Utils.deepCopy(currentSettings.FilterList)
+    if currentSettings.FilterList == nil and absentFilterIsEmpty then
+        original.FilterList = {}
+    elseif type(currentSettings.FilterList) == "table" then
+        original.FilterList = Utils.deepCopy(currentSettings.FilterList)
+    else
+        return original
+    end
     if Utils.isFiniteNumber(currentSettings.ColorNoiseReduction) then
         original.ColorNoiseReduction = currentSettings.ColorNoiseReduction
     end
@@ -114,7 +119,10 @@ function DenoisePresetService.prepare(
         }
     end
     if type(currentSettings) ~= "table"
-        or type(currentSettings.FilterList) ~= "table" then
+        or (
+            currentSettings.FilterList ~= nil
+            and type(currentSettings.FilterList) ~= "table"
+        ) then
         return {
             ready = false,
             amount = amount,
@@ -122,7 +130,8 @@ function DenoisePresetService.prepare(
             reason = "The current Lightroom Denoise state cannot be restored safely.",
         }
     end
-    if containsDenoise(currentSettings.FilterList) then
+    if type(currentSettings.FilterList) == "table"
+        and containsDenoise(currentSettings.FilterList) then
         return {
             ready = false,
             amount = amount,
@@ -146,12 +155,12 @@ function DenoisePresetService.prepare(
         amount = amount,
         preset = preset,
         presetName = presetNames[amount],
-        originalSettings = captureOriginal(currentSettings),
+        originalSettings = captureOriginal(currentSettings, true),
     }
 end
 
 function DenoisePresetService.sanitizeRestore(settings)
-    return captureOriginal(settings)
+    return captureOriginal(settings, false)
 end
 
 function DenoisePresetService.isSupportedAmount(value)

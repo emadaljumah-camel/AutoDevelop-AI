@@ -242,8 +242,7 @@ function ApplyService.applyBatch(catalog, operations, options)
                         local applyOk = LrTasks.pcall(function()
                             if operation.denoiseIncluded == true then
                                 operation.photo:applyDevelopPreset(
-                                    operation.denoisePreset,
-                                    "AutoDevelop AI"
+                                    operation.denoisePreset
                                 )
                             end
                             if finalSettingCount > 0 then

@@ -248,7 +248,8 @@ def test_requests_use_backend_contract_field_names() -> None:
     assert "schema_version" in builder
     assert "Config.SCHEMA_VERSION" in builder
     assert "request_id" in builder
-    assert "preview_path" in builder
+    assert "preview_base64" in builder
+    assert "preview_path" not in builder
     assert "current_settings" in builder
     assert "style_profile" in builder
     assert "current_develop_settings" not in builder
@@ -278,6 +279,8 @@ def test_preview_cleanup_covers_protected_and_batch_paths() -> None:
     assert "cleanupDirectory(handle.directory)" in exporter
     assert "cleanupDirectory(batchDirectory)" in exporter
     assert "LrPathUtils.isAbsolute(uniquePath)" in exporter
+    assert "PreviewTransport.encodeFile(uniquePath)" in exporter
+    assert "base64 = encoded" in exporter
 
     constructed = command.index("local progressScope = LrProgressScope")
     registered = command.index(
@@ -296,6 +299,28 @@ def test_preview_cleanup_covers_protected_and_batch_paths() -> None:
     assert constructed < cleanup_call < registered < configured
     assert "if progressFinished then" in command[constructed:registered]
     assert "progressScope:" not in command[constructed:registered]
+
+
+def test_remote_preview_transport_is_bounded_and_path_free() -> None:
+    transport = _read("lib/PreviewTransport.lua")
+    exporter = _read("lib/PreviewExporter.lua")
+    builder = _read("lib/RequestBuilder.lua")
+    analyze = _read("lib/AnalyzeCommand.lua")
+    preparation = _read("lib/PreparationService.lua")
+
+    assert 'import("LrFileUtils")' in transport
+    assert 'import("LrStringUtils")' in transport
+    assert "LrFileUtils.readFile" in transport
+    assert "LrStringUtils.encodeBase64" in transport
+    assert "MAX_RAW_PREVIEW_BYTES" in transport
+    assert "MAX_ENCODED_PREVIEW_BYTES" in transport
+    assert "4 * math.ceil(rawBytes / 3)" in transport
+    assert "#encoded > MAX_ENCODED_PREVIEW_BYTES" in transport
+    assert "PreviewTransport.encodeFile(uniquePath)" in exporter
+    assert "preview_base64 = previewBase64" in builder
+    assert "preview_path" not in builder
+    assert "preview.base64" in analyze
+    assert "preview.base64" in preparation
 
 
 def test_response_validation_requires_request_match_and_analysis() -> None:
@@ -558,6 +583,11 @@ def test_denoise_uses_verified_native_preset_pipeline() -> None:
     assert 'format ~= "RAW" and format ~= "DNG"' in service
     assert "containsDenoise(currentSettings.FilterList)" in service
     assert "original.FilterList = Utils.deepCopy" in service
+    assert "currentSettings.FilterList ~= nil" in service
+    assert "absentFilterIsEmpty" in service
+    assert "original.FilterList = {}" in service
+    assert "captureOriginal(currentSettings, true)" in service
+    assert "captureOriginal(settings, false)" in service
     assert "DenoisePresetService.prepare(" in preparation
     assert "denoisePreset = denoiseCapability.preset" in preparation
     assert "denoiseOriginalSettings = denoiseCapability.originalSettings" in preparation
@@ -566,6 +596,7 @@ def test_denoise_uses_verified_native_preset_pipeline() -> None:
     assert "denoiseOriginalSettings = Utils.deepCopy" in pending
     assert "operation.denoiseIncluded == true" in apply_service
     assert 'operation.photo:applyDevelopPreset(' in apply_service
+    assert 'operation.denoisePreset,\n' not in apply_service
     assert "restoreForOperation(operation)" in apply_service
     apply_path = apply_service.index("operation.photo:applyDevelopPreset(")
     settings_path = apply_service.index("operation.photo:applyDevelopSettings(")
@@ -575,6 +606,9 @@ def test_denoise_uses_verified_native_preset_pipeline() -> None:
     assert '"Denoise preset: "' in review
     assert "operation.denoiseIncluded and \"Yes\" or \"No\"" in review
     assert "if operation.denoiseIncluded ~= true then" in summary
+    assert "denoiseExclusionReasons" in summary
+    assert "denoise_preparation filename=" in preparation
+    assert "denoiseCapability.code" in preparation
     assert "FilterList" not in _read("lib/DevelopSettingsMapper.lua")
 
 
@@ -1286,6 +1320,8 @@ def test_final_develop_dialog_is_incremental_and_informational() -> None:
         "HDR applied:",
         "Denoise recommended:",
         "Denoise applied:",
+        "Denoise excluded:",
+        "Denoise exclusion reasons:",
         "Personalization applied:",
         "Style distribution:",
         "Editing intensity distribution:",

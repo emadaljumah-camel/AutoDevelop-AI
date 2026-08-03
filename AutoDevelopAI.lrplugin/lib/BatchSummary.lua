@@ -32,6 +32,7 @@ function BatchSummary.new(selected, kind, startedAt)
         denoiseRecommendedCount = 0,
         denoiseAppliedCount = 0,
         denoiseIgnored = 0,
+        denoiseExclusionReasons = {},
         warningCount = 0,
         cancelled = false,
         terminalCategory = nil,
@@ -215,6 +216,14 @@ function BatchSummary.recordPrepared(summary, operation)
             (summary.denoiseRecommendedCount or 0) + 1
         if operation.denoiseIncluded ~= true then
             summary.denoiseIgnored = (summary.denoiseIgnored or 0) + 1
+            local denoise = type(operation.denoise) == "table"
+                and operation.denoise or {}
+            local code = Utils.safeErrorCode(
+                denoise.unavailableCode,
+                "denoise_unavailable"
+            )
+            summary.denoiseExclusionReasons[code] =
+                (summary.denoiseExclusionReasons[code] or 0) + 1
         end
     end
 end

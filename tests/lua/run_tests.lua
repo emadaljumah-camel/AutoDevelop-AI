@@ -21,6 +21,7 @@ local fakeHttpResponseHeaders = { status = 200 }
 local fakeHttpResponder = nil
 local lastHttpPostBody = nil
 local lastHttpPostHeaders = nil
+local fakePreviewFiles = {}
 
 _G._PLUGIN = {
     path = "AutoDevelopAI.lrplugin",
@@ -50,7 +51,18 @@ _G.import = function(name)
         end
     end
     if name == "LrFileUtils" then
-        return {}
+        return {
+            readFile = function(path)
+                return fakePreviewFiles[path]
+            end,
+        }
+    end
+    if name == "LrStringUtils" then
+        return {
+            encodeBase64 = function(value)
+                return "encoded:" .. value
+            end,
+        }
     end
     if name == "LrExportSession" then
         return function()
@@ -221,6 +233,8 @@ local PluginManagerController =
     ModuleLoader.load("lib/PluginManagerController.lua")
 local ExifMapper = ModuleLoader.load("lib/ExifMapper.lua")
 local RequestBuilder = ModuleLoader.load("lib/RequestBuilder.lua")
+local PreviewTransport =
+    ModuleLoader.load("lib/PreviewTransport.lua")
 local Validation = ModuleLoader.load("lib/Validation.lua")
 local BatchPolicy = ModuleLoader.load("lib/BatchPolicy.lua")
 local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
@@ -754,6 +768,37 @@ assertEqual(
 assertEqual(denoiseCapability.originalSettings.ColorNoiseReduction, 25)
 assertTrue(type(denoiseCapability.originalSettings.FilterList) == "table")
 
+local implicitEmptyDenoiseBaseline = DenoisePresetService.prepare(
+    denoiseSource,
+    { ColorNoiseReduction = 20 },
+    50
+)
+assertEqual(implicitEmptyDenoiseBaseline.ready, true)
+assertTrue(
+    type(
+        implicitEmptyDenoiseBaseline.originalSettings.FilterList
+    ) == "table"
+)
+assertEqual(
+    next(implicitEmptyDenoiseBaseline.originalSettings.FilterList),
+    nil
+)
+assertEqual(
+    implicitEmptyDenoiseBaseline.originalSettings.ColorNoiseReduction,
+    20
+)
+
+local malformedDenoiseBaseline = DenoisePresetService.prepare(
+    denoiseSource,
+    { FilterList = "invalid" },
+    50
+)
+assertEqual(malformedDenoiseBaseline.ready, false)
+assertEqual(
+    malformedDenoiseBaseline.code,
+    "denoise_baseline_unavailable"
+)
+
 local missingDenoisePreset = DenoisePresetService.prepare(
     denoiseSource,
     denoiseSource:getDevelopSettings(),
@@ -938,7 +983,7 @@ assertTrue(type(postedPreview.final_modes) == "table")
 
 local request = assert(RequestBuilder.build(
     mappedPhoto,
-    "D:\\Temp\\AutoDevelopAI\\preview.jpg",
+    "cHJldmlldy1ieXRlcw==",
     {
         styleProfileId = "natural_travel",
         modelProfileId = "gemma",
@@ -951,10 +996,11 @@ assertEqual(request.schema_version, "1.0")
 assertEqual(request.options.style_profile, "natural_travel")
 assertEqual(request.model, "gemma")
 assertEqual(request.current_settings.Exposure2012, 0)
-assertEqual(request.preview_path, "D:\\Temp\\AutoDevelopAI\\preview.jpg")
+assertEqual(request.preview_base64, "cHJldmlldy1ieXRlcw==")
+assertTrue(request.preview_path == nil)
 assertEqual(StyleProfiles.getDefaultId(), "auto")
 assertTrue(
-    RequestBuilder.build(mappedPhoto, "D:\\Temp\\missing-style.jpg", {
+    RequestBuilder.build(mappedPhoto, "cHJldmlldw==", {
         uuidFactory = function()
             return "12345678-1234-4abc-8abc-1234567890ab"
         end,
@@ -971,7 +1017,7 @@ assertEqual(Preferences.getStyleProfileId(), "architecture")
 
 local configured = assert(RequestBuilder.build(
     mappedPhoto,
-    "D:\\Temp\\preview.jpg",
+    "Y29uZmlndXJlZC1wcmV2aWV3",
     {
         styleProfileId = "architecture",
         modelProfileId = "qwen",
@@ -985,7 +1031,7 @@ assertEqual(configured.model, "qwen")
 
 local developRequest = assert(RequestBuilder.buildDevelop(
     mappedPhoto,
-    "D:\\Temp\\develop-preview.jpg",
+    "ZGV2ZWxvcC1wcmV2aWV3",
     {
         styleProfileId = "portrait",
         modelProfileId = "gpt_oss",
@@ -1004,6 +1050,30 @@ assertEqual(developRequest.options.dry_run, false)
 assertEqual(developRequest.options.preserve_current_adjustments, true)
 assertEqual(developRequest.options.hdr_edit_supported, true)
 assertEqual(developRequest.options.hdr_workflow, "unknown")
+assertEqual(developRequest.preview_base64, "ZGV2ZWxvcC1wcmV2aWV3")
+assertTrue(developRequest.preview_path == nil)
+assertTrue(
+    RequestBuilder.buildDevelop(mappedPhoto, "", {
+        styleProfileId = "portrait",
+        modelProfileId = "gpt_oss",
+    }) == nil,
+    "request building must reject missing preview content"
+)
+fakePreviewFiles["D:\\Temp\\transport-preview.jpg"] = "jpeg-bytes"
+local encodedPreview, encodedError, encodedDiagnostics =
+    PreviewTransport.encodeFile("D:\\Temp\\transport-preview.jpg")
+assertEqual(encodedPreview, "encoded:jpeg-bytes")
+assertTrue(encodedError == nil)
+assertEqual(encodedDiagnostics.rawBytes, 10)
+assertEqual(encodedDiagnostics.encodedBytes, 18)
+assertEqual(PreviewTransport.estimatedBase64Bytes(1), 4)
+assertEqual(PreviewTransport.estimatedBase64Bytes(2), 4)
+assertEqual(PreviewTransport.estimatedBase64Bytes(3), 4)
+assertEqual(PreviewTransport.estimatedBase64Bytes(4), 8)
+local missingEncoded, missingEncodeError =
+    PreviewTransport.encodeFile("D:\\Temp\\missing-preview.jpg")
+assertTrue(missingEncoded == nil)
+assertEqual(missingEncodeError, "preview_read_failed")
 assertEqual(Config.apiPaths.develop, "/autodevelop/v1/develop")
 assertEqual(Config.defaults.backendBaseUrl, "http://127.0.0.1:8005")
 assertEqual(Config.defaults.learningShowSummary, true)
@@ -2263,9 +2333,10 @@ assertEqual(safeOperation.mappedSettings.UnknownSetting, 123)
 
 local denoiseApplyEvents = {}
 local denoiseApplyPhoto = {
-    applyDevelopPreset = function(_, preset)
+    applyDevelopPreset = function(_, preset, plugin)
         assertTrue(insideWrite, "preset apply must run inside write access")
         assertTrue(preset == denoisePreset50)
+        assertTrue(plugin == nil, "global presets must not receive a plugin")
         denoiseApplyEvents[#denoiseApplyEvents + 1] = "preset"
     end,
     applyDevelopSettings = function(_, values)
@@ -3441,6 +3512,45 @@ assertEqual(incrementalSummary.cropAppliedCount, 1)
 assertEqual(incrementalSummary.levelingAppliedCount, 1)
 assertEqual(incrementalSummary.hdrAppliedCount, 1)
 assertEqual(incrementalSummary.denoiseAppliedCount, 0)
+
+local denoiseDiagnosticSummary = BatchSummary.new(1, "develop")
+denoiseDiagnosticSummary.profileId = "natural_travel"
+denoiseDiagnosticSummary.models = {}
+denoiseDiagnosticSummary.resolvedModels = {}
+BatchSummary.recordPrepared(
+    denoiseDiagnosticSummary,
+    PendingOperation.new({
+        denoise = {
+            recommended = true,
+            included = false,
+            amount = 25,
+            unavailableCode = "denoise_preset_missing",
+            unavailableReason = "Required Lightroom preset was not found.",
+        },
+    })
+)
+assertEqual(denoiseDiagnosticSummary.denoiseIgnored, 1)
+assertEqual(
+    denoiseDiagnosticSummary
+        .denoiseExclusionReasons
+        .denoise_preset_missing,
+    1
+)
+lastDialog = nil
+AutoDevelopConfirmationDialog.showFinal(
+    denoiseDiagnosticSummary,
+    {}
+)
+assertTrue(
+    lastDialog.message:find("Denoise excluded: 1", 1, true) ~= nil
+)
+assertTrue(
+    lastDialog.message:find(
+        "Denoise exclusion reasons: Required preset missing (1)",
+        1,
+        true
+    ) ~= nil
+)
 
 BatchSummary.recordSkipped(incrementalSummary)
 assertEqual(incrementalSummary.processed, 2)
