@@ -13,7 +13,7 @@ from autodevelop.learning.constants import (
 )
 from autodevelop.learning.models import RetrievalSample
 from autodevelop.learning.schemas import PersonalizationContext
-from autodevelop.models import UprightMode
+from autodevelop.models import RECOMMENDABLE_UPRIGHT_MODES, UprightMode
 
 
 def _weighted_median(values: list[tuple[float, float]]) -> float:
@@ -142,7 +142,7 @@ def aggregate_preferences(
     upright, upright_support = _categorical_preference([
         (sample.upright_mode, _sample_weight(sample))
         for sample in samples
-        if sample.upright_mode is not None
+        if sample.upright_mode in RECOMMENDABLE_UPRIGHT_MODES
     ])
     hdr, hdr_support, hdr_enable_rate = aggregate_hdr_preference(samples)
 
@@ -180,6 +180,11 @@ def aggregate_preferences(
 
 
 def render_personalization(context: PersonalizationContext) -> str:
+    preferred_upright_mode = (
+        context.preferred_upright_mode
+        if context.preferred_upright_mode in RECOMMENDABLE_UPRIGHT_MODES
+        else None
+    )
     lines = [
         "PERSONAL EDITING PREFERENCES FROM SIMILAR PHOTOS",
         "",
@@ -213,15 +218,15 @@ def render_personalization(context: PersonalizationContext) -> str:
                 value = context.leveling_adjustments[name]
                 lines.append(f"- {name}: typical correction {value:+.4g}")
     if (
-        context.preferred_upright_mode is not None
+        preferred_upright_mode is not None
         or context.preferred_hdr_enabled is not None
     ):
         lines.append("")
         lines.append("Observed categorical mode preferences (soft context):")
-        if context.preferred_upright_mode is not None:
+        if preferred_upright_mode is not None:
             lines.append(
                 "- Upright: "
-                f"{context.preferred_upright_mode.value} "
+                f"{preferred_upright_mode.value} "
                 f"({context.upright_support_count} similar examples)"
             )
         if context.preferred_hdr_enabled is not None:

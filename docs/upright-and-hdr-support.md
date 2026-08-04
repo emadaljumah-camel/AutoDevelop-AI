@@ -47,6 +47,14 @@ objects. Upright defaults to inactive mode `off`. HDR defaults to
 `enabled=false`, but a model-supplied Off confidence and reason are retained
 for audit; confidence is zero only when no assessment was supplied.
 
+AutoDevelop AI exposes only Off, Auto, and Level to model prompts and final
+recommendations. Full and Vertical remain in the transport enum solely to read
+existing Lightroom metadata and historical learning records. Profile loading
+removes unsupported or duplicate Upright modes, restores the authoritative
+Off/Auto/Level order, logs the normalization, and falls back to Off when no
+recommendable mode remains. Model responses containing Full or Vertical are
+rejected safely to inactive Off.
+
 Scene analysis now runs before every Develop request, including manually
 selected profiles. It supplies semantic geometry and dynamic-range evidence
 to the final Develop stage. HDR is evaluated as a natural quality-enhancement
@@ -145,7 +153,9 @@ Existing rows remain readable and are not populated with invented values.
 
 Personalization aggregates modes independently from slider corrections. It
 requires at least three similar usable examples and a weighted consensus
-before exposing a soft preference. Slider, crop, rotational-leveling, and
+before exposing a soft preference. Historical Full and Vertical preferences
+remain readable but are ignored during aggregation and prompt rendering.
+Slider, crop, rotational-leveling, and
 Upright retrieval remains scoped to the effective style. HDR retrieval is
 global across profiles and supplies a weighted enable rate because HDR is based
 on scene need rather than visual style. Learning never overrides Upright

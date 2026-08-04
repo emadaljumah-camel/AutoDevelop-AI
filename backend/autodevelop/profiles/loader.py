@@ -1,15 +1,18 @@
 """Package-relative loading and caching for style profiles."""
 
 import json
+import logging
 import re
 from pathlib import Path
 
 from pydantic import ValidationError
 
+from autodevelop.models import RECOMMENDABLE_UPRIGHT_MODES, UprightMode
 from autodevelop.profiles.models import StyleProfile
 from autodevelop.profiles.registry import get_style
 
 _PROFILE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+logger = logging.getLogger(__name__)
 
 
 class ProfileNotFoundError(LookupError):
@@ -97,6 +100,8 @@ class StyleProfileLoader:
         except OSError as exc:
             raise ProfileValidationError(f"{path}: could not read profile: {exc}") from exc
 
+        self._sanitize_upright_modes(raw_profile, path.stem)
+
         try:
             profile = StyleProfile.model_validate(raw_profile)
         except ValidationError as exc:
@@ -121,6 +126,45 @@ class StyleProfileLoader:
                 }
             )
         return profile
+
+    @staticmethod
+    def _sanitize_upright_modes(
+        raw_profile: object,
+        profile_id: str,
+    ) -> None:
+        """Normalize configured Upright modes without hiding other errors."""
+
+        if not isinstance(raw_profile, dict):
+            return
+        policy = raw_profile.get("upright_policy")
+        if not isinstance(policy, dict):
+            return
+        modes = policy.get("allowed_modes")
+        if not isinstance(modes, list):
+            return
+
+        supported_order = [
+            mode.value for mode in RECOMMENDABLE_UPRIGHT_MODES
+        ]
+        sanitized = [
+            mode for mode in supported_order if mode in modes
+        ]
+        removed = [
+            mode for mode in modes if mode not in supported_order
+        ]
+        if not sanitized:
+            sanitized = [UprightMode.OFF.value]
+
+        if sanitized != modes:
+            policy["allowed_modes"] = sanitized
+            logger.warning(
+                "upright_modes_sanitized profile_id=%s "
+                "removed_modes=%s original_modes=%s allowed_modes=%s",
+                profile_id,
+                removed,
+                modes,
+                sanitized,
+            )
 
     @staticmethod
     def _copy_profile(profile: StyleProfile) -> StyleProfile:

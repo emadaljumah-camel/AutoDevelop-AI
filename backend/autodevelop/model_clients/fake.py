@@ -606,9 +606,9 @@ class FakeModelClient(ModelClient):
         if scenario == "architecture":
             return UprightRecommendation(
                 recommended=True,
-                mode="vertical",
+                mode="auto",
                 confidence=0.90,
-                reason="Reliable converging building lines support correction.",
+                reason="Reliable building geometry supports automatic correction.",
             )
         if scenario == "landscape":
             return UprightRecommendation(

@@ -10,6 +10,7 @@ from autodevelop.models import (
     DevelopRequest,
     DevelopResponse,
     HdrDecisionDiagnostics,
+    RECOMMENDABLE_UPRIGHT_MODES,
 )
 from autodevelop.profiles import StyleProfile
 from autodevelop.profiles.selection import SceneSignals, StyleSelection
@@ -42,6 +43,16 @@ _BACKEND_IDENTITY_FIELDS = (
 )
 
 
+def _restrict_upright_schema(schema: dict[str, Any]) -> None:
+    """Expose only modes that providers may recommend."""
+
+    upright_definition = schema.get("$defs", {}).get("UprightMode")
+    if isinstance(upright_definition, dict):
+        upright_definition["enum"] = [
+            mode.value for mode in RECOMMENDABLE_UPRIGHT_MODES
+        ]
+
+
 def provider_response_schema(operation: str) -> dict[str, Any]:
     """Return the canonical response schema without backend-owned identity."""
 
@@ -56,13 +67,16 @@ def provider_response_schema(operation: str) -> dict[str, Any]:
             field for field in required if field not in _BACKEND_IDENTITY_FIELDS
         ]
     schema.pop("examples", None)
+    _restrict_upright_schema(schema)
     return schema
 
 
 def scene_analysis_schema() -> dict[str, Any]:
     """Return the strict provider contract for Auto scene preflight."""
 
-    return SceneSignals.model_json_schema(mode="validation")
+    schema = SceneSignals.model_json_schema(mode="validation")
+    _restrict_upright_schema(schema)
+    return schema
 
 
 def build_repair_prompt(

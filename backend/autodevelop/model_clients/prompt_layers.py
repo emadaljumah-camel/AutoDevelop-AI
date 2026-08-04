@@ -65,12 +65,10 @@ Upright Transform is independent of composition crop and CropAngle rotation.
 Recommend it only when reliable structural, architectural, horizon, waterline,
 or geometric evidence supports perspective correction.
 
-Use auto for mixed horizontal and vertical geometry where a general automatic
-correction is appropriate. Use level when reliable horizontal references are
-the primary need. Use vertical when distracting converging architectural
-verticals need correction. Use full only when strong horizontal and vertical
-errors are both supported by reliable geometry and the stronger correction is
-unlikely to create unnatural distortion. Otherwise use off.
+The only permitted Upright modes are off, auto, and level. Use auto for a
+general automatic perspective correction supported by reliable geometry. Use
+level when reliable horizontal references are the primary need. Otherwise use
+off.
 
 Never treat sloping terrain, irregular buildings, shoulder lines, trees,
 mountain ridges, or deliberate camera angles as reliable Upright references.

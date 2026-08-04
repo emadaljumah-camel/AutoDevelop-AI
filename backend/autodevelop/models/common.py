@@ -328,6 +328,13 @@ class UprightMode(StrEnum):
     VERTICAL = "vertical"
 
 
+RECOMMENDABLE_UPRIGHT_MODES = (
+    UprightMode.OFF,
+    UprightMode.AUTO,
+    UprightMode.LEVEL,
+)
+
+
 class GeometryAnalysis(TransportModel):
     """Semantic geometry evidence without Lightroom implementation values."""
 

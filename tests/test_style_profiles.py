@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from autodevelop.models import UprightMode
 from autodevelop.profiles import (
     ProfileNotFoundError,
     ProfileValidationError,
@@ -77,6 +78,53 @@ def test_all_seven_packaged_profiles_load_successfully() -> None:
     assert [profile.id for profile in profiles] == PROFILE_IDS
     assert all(profile.version == "1.1" for profile in profiles)
     assert all(profile.slider_ranges for profile in profiles)
+
+
+@pytest.mark.parametrize(
+    ("modes", "expected", "removed"),
+    [
+        (
+            ["level", "auto", "auto", "vertical"],
+            ["auto", "level"],
+            ["vertical"],
+        ),
+        (["level", "off", "auto"], ["off", "auto", "level"], []),
+        (["vertical", "full"], ["off"], ["vertical", "full"]),
+        ([], ["off"], []),
+    ],
+)
+def test_startup_reload_sanitizes_upright_modes_without_failing(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    modes: list[str],
+    expected: list[str],
+    removed: list[str],
+) -> None:
+    data = _profile_data()
+    data["upright_policy"] = {
+        "allow_upright": True,
+        "allowed_modes": modes,
+        "minimum_confidence": 0.6,
+    }
+    _write_profile(tmp_path, "test_profile", data)
+
+    with caplog.at_level("WARNING", logger="autodevelop.profiles.loader"):
+        profiles = StyleProfileLoader(tmp_path).reload_profiles()
+
+    assert [mode.value for mode in profiles[0].upright_policy.allowed_modes] == expected
+    assert "upright_modes_sanitized profile_id=test_profile" in caplog.text
+    assert f"removed_modes={removed!r}" in caplog.text
+
+
+def test_all_packaged_profiles_use_only_recommendable_upright_modes() -> None:
+    recommendable = {
+        UprightMode.OFF,
+        UprightMode.AUTO,
+        UprightMode.LEVEL,
+    }
+
+    for profile in StyleProfileLoader().list_profiles():
+        assert set(profile.upright_policy.allowed_modes) <= recommendable
 
 
 def test_documentary_profile_has_conservative_supported_constraints() -> None:

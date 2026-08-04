@@ -12,6 +12,7 @@ from autodevelop.models import (
     HdrRecommendation,
     LevelingRecommendation,
     ProcessingOptions,
+    RECOMMENDABLE_UPRIGHT_MODES,
     TechnicalAnalysis,
     UprightMode,
     UprightRecommendation,
@@ -236,6 +237,20 @@ class SafetyValidator:
             state.add_issue(
                 code=policies.UPRIGHT_INVALID_STATE,
                 message="Recommended Upright mode cannot be Off.",
+                field_name="upright.mode",
+                original_value=recommendation.mode.value,
+                adjusted_value=UprightMode.OFF.value,
+                action=ValidationAction.REJECTED,
+                track_field="upright",
+            )
+            return safe_false
+        if recommendation.mode not in RECOMMENDABLE_UPRIGHT_MODES:
+            state.add_issue(
+                code=policies.UPRIGHT_MODE_NOT_ALLOWED,
+                message=(
+                    f"Upright mode {recommendation.mode.value} is not "
+                    "available for recommendations."
+                ),
                 field_name="upright.mode",
                 original_value=recommendation.mode.value,
                 adjusted_value=UprightMode.OFF.value,

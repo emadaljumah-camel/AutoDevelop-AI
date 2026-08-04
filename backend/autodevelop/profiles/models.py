@@ -110,8 +110,6 @@ class UprightPolicy(_ProfileModel):
             raise ValueError("allowed_modes must not be empty")
         if len(set(self.allowed_modes)) != len(self.allowed_modes):
             raise ValueError("allowed_modes must not contain duplicates")
-        if UprightMode.OFF not in self.allowed_modes:
-            raise ValueError("allowed_modes must include off")
         return self
 
 

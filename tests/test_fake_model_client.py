@@ -372,6 +372,20 @@ def test_architecture_returns_independent_crop_and_leveling() -> None:
     assert response.leveling.mode == "vertical"
 
 
+def test_architecture_develop_returns_auto_upright(
+    profile: StyleProfile,
+) -> None:
+    response = asyncio.run(
+        FakeModelClient(scenario="architecture").develop(
+            _develop_request(),
+            profile,
+        )
+    )
+
+    assert response.upright.recommended is True
+    assert response.upright.mode == "auto"
+
+
 @pytest.mark.parametrize(
     "scenario",
     ["neutral", "underexposed", "overexposed", "high_iso", "night", "portrait"],

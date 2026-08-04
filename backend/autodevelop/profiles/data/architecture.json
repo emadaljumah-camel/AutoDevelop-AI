@@ -110,7 +110,7 @@
   },
   "upright_policy": {
     "allow_upright": true,
-    "allowed_modes": ["off", "auto", "level", "vertical", "full"],
+    "allowed_modes": ["off", "auto", "level"],
     "minimum_confidence": 0.7
   },
   "denoise_policy": {

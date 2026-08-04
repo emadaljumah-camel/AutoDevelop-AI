@@ -35,6 +35,11 @@ independent categorical decision and is never simulated with `CropAngle`.
 Lightroom combines accepted crop and rotational-leveling geometry only at
 application time.
 
+AutoDevelop AI recommends only Upright Off, Auto, or Level. Lightroom Full and
+Vertical remain readable for existing photo metadata and historical learning
+records, but they are excluded from prompts, profile policies, personalization,
+and final recommendations.
+
 HDR Edit Mode is also a first-class categorical decision. It is selected from
 current scene evidence, model confidence, optional global HDR feedback, and the
 Lightroom preference. HDR is not enabled or disabled by the selected style

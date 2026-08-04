@@ -6,6 +6,7 @@ from autodevelop.models import (
     GeometryAnalysis,
     HdrRecommendation,
     ProcessingOptions,
+    RECOMMENDABLE_UPRIGHT_MODES,
     TechnicalAnalysis,
     UprightMode,
     UprightRecommendation,
@@ -96,9 +97,9 @@ def test_upright_profile_policy_rejects_unsafe_recommendations(
 def test_upright_allowed_mode_above_threshold_is_preserved() -> None:
     recommendation = UprightRecommendation(
         recommended=True,
-        mode=UprightMode.VERTICAL,
+        mode=UprightMode.AUTO,
         confidence=0.9,
-        reason="Reliable converging verticals.",
+        reason="Reliable geometry supports automatic correction.",
     )
     result = SafetyValidator().validate(
         settings=None,
@@ -110,6 +111,49 @@ def test_upright_allowed_mode_above_threshold_is_preserved() -> None:
 
     assert result.upright == recommendation
     assert result.rejected_fields == []
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [UprightMode.VERTICAL, UprightMode.FULL],
+)
+def test_unsupported_ai_upright_mode_becomes_off(mode: UprightMode) -> None:
+    result = SafetyValidator().validate(
+        settings=None,
+        crop=None,
+        denoise=None,
+        profile=StyleProfileLoader().get_profile("architecture"),
+        upright=UprightRecommendation(
+            recommended=True,
+            mode=mode,
+            confidence=1.0,
+        ),
+    )
+
+    assert result.upright == UprightRecommendation(recommended=False)
+    assert result.issues[0].code == policies.UPRIGHT_MODE_NOT_ALLOWED
+
+
+@pytest.mark.parametrize("mode", list(UprightMode))
+def test_every_final_upright_recommendation_uses_a_recommendable_mode(
+    mode: UprightMode,
+) -> None:
+    validator = SafetyValidator()
+    recommendation = UprightRecommendation(
+        recommended=True,
+        mode=mode,
+        confidence=1.0,
+    )
+
+    for profile in StyleProfileLoader().list_profiles():
+        result = validator.validate(
+            settings=None,
+            crop=None,
+            denoise=None,
+            profile=profile,
+            upright=recommendation,
+        )
+        assert result.upright.mode in RECOMMENDABLE_UPRIGHT_MODES
 
 
 def test_hdr_allowed_above_threshold_with_scene_evidence_is_preserved() -> None:

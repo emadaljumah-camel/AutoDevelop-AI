@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from autodevelop.model_clients.prompt import build_prompt, build_scene_analysis_prompt
+from autodevelop.model_clients.prompt import (
+    build_prompt,
+    build_scene_analysis_prompt,
+    scene_analysis_schema,
+)
 from autodevelop.models import (
     AnalyzeRequest,
     DevelopRequest,
@@ -81,6 +85,8 @@ def test_prompt_uses_canonical_provider_contract(
     }
     assert context["crop_policy"] == profile.crop_policy.model_dump(mode="json")
     assert context["denoise_policy"] == profile.denoise_policy.model_dump(mode="json")
+    assert context["upright_policy"]["allowed_modes"] == ["off", "auto", "level"]
+    assert schema["$defs"]["UprightMode"]["enum"] == ["off", "auto", "level"]
 
     properties = schema["properties"]
     for trusted_field in (
@@ -106,6 +112,14 @@ def test_prompt_uses_canonical_provider_contract(
     assert "warnings" in properties
     assert ("enable_hdr" in properties) is has_develop_settings
     assert ("develop_settings" in properties) is has_develop_settings
+
+
+def test_scene_analysis_prompt_exposes_only_recommendable_upright_modes() -> None:
+    assert scene_analysis_schema()["$defs"]["UprightMode"]["enum"] == [
+        "off",
+        "auto",
+        "level",
+    ]
 
 
 def test_prompt_states_safety_and_null_rules_without_sensitive_image(profile) -> None:

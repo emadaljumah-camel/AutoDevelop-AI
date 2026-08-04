@@ -100,21 +100,21 @@ def test_categorical_preferences_require_consistent_support() -> None:
                 "one",
                 exposure=None,
                 similarity=0.9,
-                upright="vertical",
+                upright="level",
                 hdr_enabled=True,
             ),
             _sample(
                 "two",
                 exposure=None,
                 similarity=0.85,
-                upright="vertical",
+                upright="level",
                 hdr_enabled=True,
             ),
             _sample(
                 "three",
                 exposure=None,
                 similarity=0.8,
-                upright="vertical",
+                upright="level",
                 hdr_enabled=True,
             ),
         ],
@@ -124,13 +124,35 @@ def test_categorical_preferences_require_consistent_support() -> None:
     )
 
     assert context is not None
-    assert context.preferred_upright_mode == "vertical"
+    assert context.preferred_upright_mode == "level"
     assert context.preferred_hdr_enabled is True
     assert context.hdr_enable_rate == 1.0
     rendered = render_personalization(context)
-    assert "Upright: vertical (3 similar examples)" in rendered
+    assert "Upright: level (3 similar examples)" in rendered
     assert "HDR edit mode: on (3 similar examples)" in rendered
     assert "never override confidence thresholds" in rendered
+
+
+def test_unsupported_historical_upright_preferences_are_ignored() -> None:
+    for mode in ("vertical", "full"):
+        context = aggregate_preferences(
+            [
+                _sample(
+                    str(index),
+                    exposure=None,
+                    similarity=0.9,
+                    upright=mode,
+                )
+                for index in range(3)
+            ],
+            profile_id="architecture",
+            usable_sample_count=3,
+            feature_type="test",
+        )
+
+        assert context is not None
+        assert context.preferred_upright_mode is None
+        assert f"Upright: {mode}" not in render_personalization(context)
 
 
 def test_hdr_preference_is_rendered_as_global_strong_context() -> None:
