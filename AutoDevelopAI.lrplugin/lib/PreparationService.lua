@@ -198,6 +198,10 @@ local function prepareDevelopPhotoBody(
         )
     end
 
+    local request = lifecycle.downloadedRequest
+    local decoded = lifecycle.downloadedResponse
+    local validatedModel
+    if request == nil or decoded == nil then
     markLifecycle(lifecycle, "preview_export_started")
     local preview, previewError = PreviewExporter.exportPhoto(
         photo,
@@ -239,7 +243,8 @@ local function prepareDevelopPhotoBody(
     end
 
     markLifecycle(lifecycle, "request_build_started")
-    local request, requestError = RequestBuilder.buildDevelop(
+    local requestError
+    request, requestError = RequestBuilder.buildDevelop(
         photo,
         preview.base64,
         {
@@ -292,7 +297,8 @@ local function prepareDevelopPhotoBody(
     end
 
     markLifecycle(lifecycle, "json_decode_started")
-    local decoded, decodeError = ApiClient.decodeBody(response)
+    local decodeError
+    decoded, decodeError = ApiClient.decodeBody(response)
     if not decoded then
         logStageFailure(
             lifecycle.stage,
@@ -306,7 +312,8 @@ local function prepareDevelopPhotoBody(
     markLifecycle(lifecycle, "json_decode_completed")
 
     markLifecycle(lifecycle, "response_validation_started")
-    local valid, validationError, validatedModel =
+    local valid, validationError
+    valid, validationError, validatedModel =
         Validation.validateDevelopResponse(decoded, request)
     if not valid then
         logStageFailure(
@@ -319,6 +326,23 @@ local function prepareDevelopPhotoBody(
         )
     end
     markLifecycle(lifecycle, "response_validation_completed")
+    else
+        markLifecycle(lifecycle, "response_validation_started")
+        local valid, validationError
+        valid, validationError, validatedModel =
+            Validation.validateDevelopResponse(decoded, request)
+        if not valid then
+            logStageFailure(
+                lifecycle.stage,
+                ErrorClassifier.codes.invalidResponse
+            )
+            return "failed", PreparationService.failure(
+                ErrorClassifier.codes.invalidResponse,
+                "response_validation_failed"
+            )
+        end
+        markLifecycle(lifecycle, "response_validation_completed")
+    end
 
     markLifecycle(lifecycle, "develop_mapping_started")
     local currentSettings = currentDevelopSettings(photo)
@@ -623,6 +647,54 @@ function PreparationService.prepareDevelopPhoto(
         return "failed", stagedFailure(
             ErrorClassifier.codes.internalError,
             "invalid_preparation_result",
+            lifecycle
+        )
+    end
+    return result.outcome, result.value
+end
+
+function PreparationService.prepareDevelopResult(
+    photo,
+    request,
+    decoded,
+    progressScope,
+    preferences,
+    photoIdentity
+)
+    local lifecycle = {
+        stage = "downloaded_develop_entry",
+        downloadedRequest = request,
+        downloadedResponse = decoded,
+    }
+    local ok, result = LrTasks.pcall(function()
+        return LrFunctionContext.callWithContext(
+            "AutoDevelop AI Prepare Downloaded Result",
+            function(context)
+                local outcome, value = prepareDevelopPhotoBody(
+                    photo,
+                    nil,
+                    progressScope,
+                    context,
+                    preferences,
+                    nil,
+                    photoIdentity,
+                    lifecycle
+                )
+                return {
+                    outcome = outcome,
+                    value = value,
+                }
+            end
+        )
+    end)
+    if not ok or type(result) ~= "table" then
+        logStageFailure(
+            lifecycle.stage,
+            ErrorClassifier.codes.internalError
+        )
+        return "failed", stagedFailure(
+            ErrorClassifier.codes.internalError,
+            "unexpected_downloaded_result_error",
             lifecycle
         )
     end

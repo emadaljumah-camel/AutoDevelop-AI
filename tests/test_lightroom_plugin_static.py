@@ -72,6 +72,7 @@ def test_menu_order_excludes_unimplemented_placeholder_commands() -> None:
 
     assert list(items) == [
         "Auto Develop Selected Photos",
+        "Check AutoDevelop Job / Apply Results",
         "Capture Editing Feedback",
         "Analyze Selected Photos",
     ]
@@ -152,9 +153,9 @@ def test_primary_menu_scripts_delegate_directly_to_commands() -> None:
     )
     assert auto_develop_entry.strip() == (
         'require "ModuleLoader.lua"\n\n'
-        "local AutoDevelopCommand = "
-        'ModuleLoader.load("lib/AutoDevelopCommand.lua")\n'
-        "AutoDevelopCommand.start()"
+        "local DurableDevelopCommand =\n"
+        '    ModuleLoader.load("lib/DurableDevelopCommand.lua")\n'
+        "DurableDevelopCommand.start()"
     )
 
 
@@ -232,6 +233,7 @@ def test_backend_configuration_uses_autodevelop_port_and_route() -> None:
     assert 'Config.API_PREFIX = "/autodevelop/v1"' in config
     assert 'analyze = Config.API_PREFIX .. "/analyze"' in config
     assert 'develop = Config.API_PREFIX .. "/develop"' in config
+    assert 'jobs = Config.API_PREFIX .. "/jobs"' in config
     assert 'health = Config.API_PREFIX .. "/health"' in config
     assert "Config.apiPaths.analyze" in client
     assert "Config.apiPaths.develop" in client
@@ -241,6 +243,90 @@ def test_backend_configuration_uses_autodevelop_port_and_route() -> None:
     assert "8004" not in client
 
 
+def test_durable_job_state_and_resumable_client_are_bundled() -> None:
+    state = _read("lib/JobState.lua")
+    client = _read("lib/JobClient.lua")
+    api = _read("lib/ApiClient.lua")
+    assert '"AutoDevelop AI Jobs"' in state
+    assert 'path .. ".tmp"' in state
+    assert 'path .. ".bak"' in state
+    assert "function JobState.saveActive" in state
+    for method in ("create", "uploaded", "upload", "run", "status", "result", "submit"):
+        assert f"function JobClient.{method}" in client
+    assert "uploaded_photo_ids" in client
+    assert "PreviewTransport.encodeFile" in client
+    assert "function ApiClient.postPath" in api
+    assert "function ApiClient.getPath" in api
+
+
+def test_auto_develop_menu_submits_a_durable_job_without_applying() -> None:
+    wrapper = _read("AutoDevelopSelectedPhotos.lua")
+    command = _read("lib/DurableDevelopCommand.lua")
+    builder = _read("lib/RequestBuilder.lua")
+    exporter = _read("lib/PreviewExporter.lua")
+    assert 'ModuleLoader.load("lib/DurableDevelopCommand.lua")' in wrapper
+    assert "DurableDevelopCommand.start()" in wrapper
+    assert "function RequestBuilder.buildDevelopJob" in builder
+    job_builder = builder[builder.index("function RequestBuilder.buildDevelopJob"):]
+    assert "request.preview_base64 = nil" in job_builder
+    assert "request.preview_path = nil" in job_builder
+    assert "options.encode == false" in exporter
+    assert "JobState.writeJson" in command
+    assert "JobState.saveActive" in command
+    assert "JobClient.submit" in command
+    assert command.index("JobState.writeJson") < command.index("JobClient.submit")
+    assert command.index("JobState.saveActive") < command.index("JobClient.submit")
+    for forbidden in (
+        "ApplyService",
+        "applyDevelopSettings",
+        "withWriteAccessDo",
+        "LearningBaselineService",
+    ):
+        assert forbidden not in command
+
+
+def test_durable_submission_protects_unapplied_job_and_persists_context() -> None:
+    command = _read("lib/DurableDevelopCommand.lua")
+    assert 'active.status ~= "applied"' in command
+    assert 'active.closed ~= true' in command
+    assert 'status = "submitting"' in command
+    assert "catalog_path = safeCatalogPath(catalog)" in command
+    assert "submitted_settings" in command
+    assert "local_identifier" in command
+    assert "catalog_uuid" in command
+    assert "develop_state = developState" in command
+    assert "Check AutoDevelop Job / Apply Results" in command
+
+
+def test_durable_job_review_validates_caches_and_reuses_apply_pipeline() -> None:
+    command = _read("lib/DevelopJobReviewCommand.lua")
+    preparation = _read("lib/PreparationService.lua")
+    assert "completed_result.json" in command
+    assert command.index("JobState.writeJson(resultPath, result)") < command.index(
+        "AutoDevelopCommand.processSequential"
+    )
+    assert "safeCatalogPath(catalog) ~= active.catalog_path" in command
+    assert "catalog:findPhotoByUuid" in command
+    assert "catalog:getAllPhotos()" in command
+    assert "validateResult(" in command
+    assert command.index("stateMatches(photo, entry)") < command.index(
+        "PreparationService.prepareDevelopResult"
+    )
+    assert "ApplyService.applyOne" in command
+    assert "LearningBaselineService.recordOne" in command
+    assert "AutoDevelopConfirmationDialog.confirmPhoto" in command
+    assert "applied_photo_ids" in command
+    assert "active.status = \"applied\"" in command
+    assert "summary.failed == 0" in command
+    assert "summary.notProcessed == 0" in command
+    assert "function PreparationService.prepareDevelopResult" in preparation
+    downloaded = preparation[preparation.index(
+        "function PreparationService.prepareDevelopResult"
+    ):]
+    assert "ApiClient" not in downloaded
+    assert "PreviewExporter" not in downloaded
+
+
 def test_requests_use_backend_contract_field_names() -> None:
     builder = _read("lib/RequestBuilder.lua")
 
@@ -248,7 +334,7 @@ def test_requests_use_backend_contract_field_names() -> None:
     assert "Config.SCHEMA_VERSION" in builder
     assert "request_id" in builder
     assert "preview_base64" in builder
-    assert "preview_path" not in builder
+    assert "preview_path" not in builder[:builder.index("function RequestBuilder.buildDevelopJob")]
     assert "current_settings" in builder
     assert "style_profile" in builder
     assert "current_develop_settings" not in builder
@@ -317,7 +403,9 @@ def test_remote_preview_transport_is_bounded_and_path_free() -> None:
     assert "#encoded > MAX_ENCODED_PREVIEW_BYTES" in transport
     assert "PreviewTransport.encodeFile(uniquePath)" in exporter
     assert "preview_base64 = previewBase64" in builder
-    assert "preview_path" not in builder
+    normal_builder = builder[:builder.index("function RequestBuilder.buildDevelopJob")]
+    assert "preview_path" not in normal_builder
+    assert "request.preview_path = nil" in builder
     assert "preview.base64" in analyze
     assert "preview.base64" in preparation
 
@@ -1322,6 +1410,8 @@ def test_final_develop_dialog_is_incremental_and_informational() -> None:
         "Denoise excluded:",
         "Denoise exclusion reasons:",
         "Personalization applied:",
+        "Photos updated with Develop recommendations:",
+        "The counters below cover optional operations only.",
         "Style distribution:",
         "Editing intensity distribution:",
     ):

@@ -99,7 +99,8 @@ end
 local function renderPhoto(
     photo,
     photoDirectory,
-    progressScope
+    progressScope,
+    options
 )
     local session = LrExportSession({
         photosToExport = { photo },
@@ -129,6 +130,12 @@ local function renderPhoto(
         if not LrPathUtils.isAbsolute(uniquePath) then
             return nil, "The temporary preview path was not absolute."
         end
+        if options.encode == false then
+            return {
+                path = uniquePath,
+                directory = photoDirectory,
+            }
+        end
         local encoded, encodeError, transport =
             PreviewTransport.encodeFile(uniquePath)
         if not encoded then
@@ -146,7 +153,13 @@ local function renderPhoto(
     return nil, "Preview rendering was cancelled."
 end
 
-function PreviewExporter.exportPhoto(photo, batchDirectory, progressScope)
+function PreviewExporter.exportPhoto(
+    photo,
+    batchDirectory,
+    progressScope,
+    options
+)
+    options = options or {}
     local photoDirectory = LrPathUtils.child(
         batchDirectory,
         Utils.newUuid()
@@ -162,7 +175,8 @@ function PreviewExporter.exportPhoto(photo, batchDirectory, progressScope)
         renderPhoto,
         photo,
         photoDirectory,
-        progressScope
+        progressScope,
+        options
     )
     if not ok or not preview then
         local cleaned, cleanupError = cleanupDirectory(photoDirectory)

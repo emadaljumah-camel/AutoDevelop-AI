@@ -73,4 +73,18 @@ function RequestBuilder.buildDevelop(photo, previewBase64, options)
     return request
 end
 
+function RequestBuilder.buildDevelopJob(photo, options)
+    local request, reason = RequestBuilder.buildDevelop(
+        photo,
+        "pending-job-preview",
+        options
+    )
+    if not request then
+        return nil, reason
+    end
+    request.preview_base64 = nil
+    request.preview_path = nil
+    return request
+end
+
 return RequestBuilder

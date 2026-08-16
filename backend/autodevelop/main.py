@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from autodevelop import __version__
 from autodevelop.api.router import api_router
 from autodevelop.config import Settings, get_settings
+from autodevelop.develop_service import process_develop
+from autodevelop.jobs import JobRunner, JobStore
 from autodevelop.logging_config import configure_logging
 from autodevelop.learning.database import LearningDatabase, LearningDatabaseError
 from autodevelop.learning.embedding import LocalColorLuminanceEmbedding
@@ -31,6 +33,8 @@ def create_app(
     model_client: ModelClient | None = None,
     model_resolver: ModelResolver | None = None,
     learning_service: LearningService | None = None,
+    job_store: JobStore | None = None,
+    job_runner: JobRunner | None = None,
 ) -> FastAPI:
     """Create the AutoDevelop AI ASGI application."""
 
@@ -42,6 +46,8 @@ def create_app(
     application_model_resolver = model_resolver or ModelResolver(resolved_settings)
     application_model_service = model_client
     application_learning_service = learning_service
+    application_job_store = job_store
+    application_job_runner = job_runner
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -118,6 +124,33 @@ def create_app(
         application.state.model_service = application_model_service
         application.state.model_resolver = application_model_resolver
         application.state.learning_service = application_learning_service
+        nonlocal application_job_store, application_job_runner
+        if application_job_store is None:
+            application_job_store = JobStore(
+                resolved_settings.jobs_dir,
+                max_preview_bytes=resolved_settings.max_job_preview_bytes,
+            )
+        if application_job_runner is None:
+            async def develop_processor(request):
+                return await process_develop(
+                    request,
+                    model_client=application_model_service,
+                    model_resolver=application_model_resolver,
+                    settings=resolved_settings,
+                    profile_loader=application_profile_loader,
+                    safety_validator=application_safety_validator,
+                )
+
+            application_job_runner = JobRunner(
+                application_job_store,
+                resolved_settings.max_job_workers,
+                develop_processor,
+                logger,
+            )
+        application.state.job_store = application_job_store
+        application.state.job_runner = application_job_runner
+        for job_id in application_job_store.mark_running_jobs_interrupted():
+            logger.warning("job_interrupted_after_restart job_id=%s", job_id)
         logger.info(
             (
                 "learning_initialized enabled=%s database_available=%s "
@@ -128,7 +161,10 @@ def create_app(
             application_learning_service.embedding_available,
             application_learning_service.feature_type,
         )
-        yield
+        try:
+            yield
+        finally:
+            application_job_runner.shutdown()
 
     application = FastAPI(
         title=resolved_settings.app_name,

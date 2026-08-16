@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from autodevelop.api.routes.analyze import router as analyze_router
 from autodevelop.api.routes.develop import router as develop_router
 from autodevelop.api.routes.health import router as health_router
+from autodevelop.api.routes.jobs import router as jobs_router
 from autodevelop.api.routes.learning import router as learning_router
 from autodevelop.api.routes.models import router as models_router
 
@@ -12,5 +13,6 @@ api_router = APIRouter()
 api_router.include_router(analyze_router)
 api_router.include_router(develop_router)
 api_router.include_router(health_router)
+api_router.include_router(jobs_router)
 api_router.include_router(models_router)
 api_router.include_router(learning_router)

@@ -16,6 +16,7 @@ local share = LrView.share
 
 local observedKeys = {
     "backendBaseUrl",
+    "jobRoot",
     "styleProfileId",
     "modelProfileId",
     "requestTimeoutText",
@@ -234,6 +235,16 @@ return {
                             value = bind("backendBaseUrl"),
                             immediate = true,
                             width_in_chars = 36,
+                        })
+                    ),
+
+                    preferenceRow(
+                        factory,
+                        "Local job storage",
+                        factory:edit_field({
+                            value = bind("jobRoot"),
+                            immediate = true,
+                            width_in_chars = 48,
                         })
                     ),
 

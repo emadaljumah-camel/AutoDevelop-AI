@@ -31,6 +31,7 @@ def test_plugin_manager_populates_all_required_properties() -> None:
 
     for property_name in (
         "backendBaseUrl",
+        "jobRoot",
         "styleProfileId",
         "requestTimeoutText",
         "applyCompositionCrop",
@@ -47,6 +48,17 @@ def test_plugin_manager_populates_all_required_properties() -> None:
     assert 'properties.connectionState = "idle"' in controller
     assert 'properties.connectionStatusText = "Not tested"' in controller
     assert "properties.connectionTestRunning = false" in controller
+
+
+def test_local_durable_job_storage_is_configurable() -> None:
+    source = _read("PluginManager.lua")
+    preferences = _read("lib/Preferences.lua")
+    controller = _read("lib/PluginManagerController.lua")
+    assert '"Local job storage"' in source
+    assert 'bind("jobRoot")' in source
+    assert "JobState.defaultRoot()" in preferences
+    assert "LrPathUtils.isAbsolute(normalized)" in preferences
+    assert '"jobRoot"' in controller
 
 
 def test_popup_choices_use_ordered_getters_and_exact_labels() -> None:

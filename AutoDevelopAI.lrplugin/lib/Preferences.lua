@@ -1,6 +1,8 @@
 local LrPrefs = import("LrPrefs")
+local LrPathUtils = import("LrPathUtils")
 
 local Config = ModuleLoader.load("lib/Config.lua")
+local JobState = ModuleLoader.load("lib/JobState.lua")
 local StyleProfiles = ModuleLoader.load("lib/StyleProfiles.lua")
 local ModelProfiles = ModuleLoader.load("lib/ModelProfiles.lua")
 local Utils = ModuleLoader.load("lib/Utils.lua")
@@ -14,6 +16,7 @@ local function defaultValues()
     end
     defaults.styleProfileId = StyleProfiles.getDefaultId()
     defaults.modelProfileId = ModelProfiles.getDefaultId()
+    defaults.jobRoot = JobState.defaultRoot()
     return defaults
 end
 
@@ -85,6 +88,21 @@ local function validateBackendBaseUrl(value)
     return normalized
 end
 
+local function validateJobRoot(value)
+    local normalized = Utils.trim(value)
+    if not normalized or not LrPathUtils.isAbsolute(normalized) then
+        return nil, "Local job storage must be an absolute path."
+    end
+    local withoutTrailing = normalized:gsub("[\\/]+$", "")
+    if withoutTrailing:match("^%a:$") then
+        return withoutTrailing .. normalized:sub(3, 3)
+    end
+    if withoutTrailing == "" then
+        return normalized:sub(1, 1)
+    end
+    return withoutTrailing
+end
+
 local function validateStyleProfileId(value)
     local normalized = Utils.trim(value)
     if not normalized or not StyleProfiles.isValidId(normalized) then
@@ -149,6 +167,7 @@ end
 
 local validators = {
     backendBaseUrl = validateBackendBaseUrl,
+    jobRoot = validateJobRoot,
     styleProfileId = validateStyleProfileId,
     modelProfileId = validateModelProfileId,
     requestTimeoutSeconds = validateRequestTimeoutSeconds,
@@ -226,6 +245,10 @@ end
 
 function Preferences.getBackendBaseUrl()
     return Preferences.get("backendBaseUrl")
+end
+
+function Preferences.getJobRoot()
+    return Preferences.get("jobRoot")
 end
 
 function Preferences.getStyleProfileId()

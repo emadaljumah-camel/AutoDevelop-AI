@@ -2,6 +2,7 @@ local Config = {}
 
 Config.API_PREFIX = "/autodevelop/v1"
 Config.SCHEMA_VERSION = "1.0"
+Config.PLUGIN_VERSION = "0.1.0"
 
 Config.defaults = {
     backendBaseUrl = "http://127.0.0.1:8005",
@@ -20,6 +21,7 @@ Config.apiPaths = {
     analyze = Config.API_PREFIX .. "/analyze",
     develop = Config.API_PREFIX .. "/develop",
     health = Config.API_PREFIX .. "/health",
+    jobs = Config.API_PREFIX .. "/jobs",
     learningBaseline = Config.API_PREFIX .. "/learning/baselines",
     learningFeedbackPreview =
         Config.API_PREFIX .. "/learning/feedback/preview",

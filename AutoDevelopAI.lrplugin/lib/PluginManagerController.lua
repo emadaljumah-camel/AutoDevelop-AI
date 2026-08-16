@@ -4,6 +4,7 @@ local PluginManagerController = {}
 
 local preferenceKeys = {
     "backendBaseUrl",
+    "jobRoot",
     "styleProfileId",
     "modelProfileId",
     "applyCompositionCrop",
@@ -18,6 +19,7 @@ local preferenceKeys = {
 
 local getters = {
     backendBaseUrl = Preferences.getBackendBaseUrl,
+    jobRoot = Preferences.getJobRoot,
     styleProfileId = Preferences.getStyleProfileId,
     modelProfileId = Preferences.getModelProfileId,
     applyCompositionCrop = Preferences.getApplyCompositionCrop,

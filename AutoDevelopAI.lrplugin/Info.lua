@@ -18,6 +18,10 @@ return {
             file = "AutoDevelopSelectedPhotos.lua",
         },
         {
+            title = "Check AutoDevelop Job / Apply Results",
+            file = "CheckAutoDevelopJob.lua",
+        },
+        {
             title = "Capture Editing Feedback",
             file = "CaptureEditingFeedback.lua",
         },

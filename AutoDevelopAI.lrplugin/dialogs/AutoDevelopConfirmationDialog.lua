@@ -540,6 +540,9 @@ local function finalLines(summary)
         "",
         "Geometry and processing",
         "-----------------------",
+        "Photos updated with Develop recommendations: "
+            .. tostring(summary.applied or 0),
+        "The counters below cover optional operations only.",
         "Composition crop recommended: "
             .. tostring(summary.cropRecommendedCount or 0),
         "Composition crops applied: "

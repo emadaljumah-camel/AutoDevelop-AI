@@ -147,6 +147,38 @@ local function postJson(path, request, options)
     return httpResult(responseBody, responseHeaders)
 end
 
+local function getJson(path, options)
+    local baseUrl, timeout = resolveConnection(options)
+    if not baseUrl or not timeout then
+        return failure(ErrorClassifier.codes.validationError, {
+            code = "invalid_preferences",
+            retryable = false,
+        })
+    end
+    local ok, responseBody, responseHeaders = LrTasks.pcall(function()
+        return LrHttp.get(
+            Config.apiUrl(baseUrl, path),
+            jsonHeaders,
+            timeout
+        )
+    end)
+    if not ok then
+        return failure(ErrorClassifier.codes.networkError, {
+            code = "http_call_failed",
+            retryable = true,
+        })
+    end
+    return httpResult(responseBody, responseHeaders)
+end
+
+function ApiClient.postPath(path, request, options)
+    return postJson(path, request, options)
+end
+
+function ApiClient.getPath(path, options)
+    return getJson(path, options)
+end
+
 function ApiClient.analyze(request, options)
     return postJson(Config.apiPaths.analyze, request, options)
 end
@@ -168,51 +200,11 @@ function ApiClient.learningFeedbackPreview(request, options)
 end
 
 function ApiClient.health(options)
-    local baseUrl, timeout = resolveConnection(options)
-    if not baseUrl or not timeout then
-        return failure(ErrorClassifier.codes.validationError, {
-            code = "invalid_preferences",
-            retryable = false,
-        })
-    end
-    local ok, responseBody, responseHeaders = LrTasks.pcall(function()
-        return LrHttp.get(
-            Config.apiUrl(baseUrl, Config.apiPaths.health),
-            jsonHeaders,
-            timeout
-        )
-    end)
-    if not ok then
-        return failure(ErrorClassifier.codes.networkError, {
-            code = "http_call_failed",
-            retryable = false,
-        })
-    end
-    return httpResult(responseBody, responseHeaders)
+    return getJson(Config.apiPaths.health, options)
 end
 
 function ApiClient.learningStatus(options)
-    local baseUrl, timeout = resolveConnection(options)
-    if not baseUrl or not timeout then
-        return failure(ErrorClassifier.codes.validationError, {
-            code = "invalid_preferences",
-            retryable = false,
-        })
-    end
-    local ok, responseBody, responseHeaders = LrTasks.pcall(function()
-        return LrHttp.get(
-            Config.apiUrl(baseUrl, Config.apiPaths.learningStatus),
-            jsonHeaders,
-            timeout
-        )
-    end)
-    if not ok then
-        return failure(ErrorClassifier.codes.networkError, {
-            code = "http_call_failed",
-            retryable = false,
-        })
-    end
-    return httpResult(responseBody, responseHeaders)
+    return getJson(Config.apiPaths.learningStatus, options)
 end
 
 function ApiClient.decodeBody(response)

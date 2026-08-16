@@ -33,6 +33,14 @@ _G.import = function(name)
             child = function(parent, child)
                 return parent .. "/" .. child
             end,
+            getStandardFilePath = function()
+                return "C:/Documents"
+            end,
+            isAbsolute = function(path)
+                return type(path) == "string"
+                    and (path:match("^%a:[/\\]") ~= nil
+                        or path:sub(1, 1) == "/")
+            end,
         }
     end
     if name == "LrApplication" then
@@ -240,6 +248,8 @@ local BatchPolicy = ModuleLoader.load("lib/BatchPolicy.lua")
 local BatchSummary = ModuleLoader.load("lib/BatchSummary.lua")
 local ErrorClassifier = ModuleLoader.load("lib/ErrorClassifier.lua")
 local ApiClient = ModuleLoader.load("lib/ApiClient.lua")
+local JobClient = ModuleLoader.load("lib/JobClient.lua")
+local JobState = ModuleLoader.load("lib/JobState.lua")
 local ApplicationGate = ModuleLoader.load("lib/ApplicationGate.lua")
 local BatchOperationRecorder =
     ModuleLoader.load("lib/BatchOperationRecorder.lua")
@@ -1052,6 +1062,20 @@ assertEqual(developRequest.options.hdr_edit_supported, true)
 assertEqual(developRequest.options.hdr_workflow, "unknown")
 assertEqual(developRequest.preview_base64, "ZGV2ZWxvcC1wcmV2aWV3")
 assertTrue(developRequest.preview_path == nil)
+local durableDevelopRequest = assert(RequestBuilder.buildDevelopJob(
+    mappedPhoto,
+    {
+        styleProfileId = "portrait",
+        modelProfileId = "gpt_oss",
+        uuidFactory = function()
+            return "43345678-1234-4abc-8abc-1234567890ab"
+        end,
+    }
+))
+assertTrue(durableDevelopRequest.preview_base64 == nil)
+assertTrue(durableDevelopRequest.preview_path == nil)
+assertEqual(durableDevelopRequest.options.style_profile, "portrait")
+assertEqual(durableDevelopRequest.model, "gpt_oss")
 assertTrue(
     RequestBuilder.buildDevelop(mappedPhoto, "", {
         styleProfileId = "portrait",
@@ -1075,6 +1099,9 @@ local missingEncoded, missingEncodeError =
 assertTrue(missingEncoded == nil)
 assertEqual(missingEncodeError, "preview_read_failed")
 assertEqual(Config.apiPaths.develop, "/autodevelop/v1/develop")
+assertEqual(Config.apiPaths.jobs, "/autodevelop/v1/jobs")
+assertEqual(Config.PLUGIN_VERSION, "0.1.0")
+assertEqual(JobState.defaultRoot(), "C:/Documents/AutoDevelop AI Jobs")
 assertEqual(Config.defaults.backendBaseUrl, "http://127.0.0.1:8005")
 assertEqual(Config.defaults.learningShowSummary, true)
 assertEqual(Config.SCHEMA_VERSION, "1.0")
@@ -1093,6 +1120,13 @@ assertEqual(
 )
 assertEqual(Preferences.getStyleProfileId(), "auto")
 assertEqual(Preferences.getRequestTimeoutSeconds(), 120)
+assertEqual(Preferences.getJobRoot(), "C:/Documents/AutoDevelop AI Jobs")
+assertTrue(Preferences.set("jobRoot", "relative/jobs") == nil)
+assertEqual(
+    Preferences.set("jobRoot", "C:/Durable Jobs/"),
+    "C:/Durable Jobs"
+)
+assertEqual(Preferences.set("jobRoot", "C:/"), "C:/")
 Preferences.initializeDefaults()
 assertEqual(Preferences.getApplyCompositionCrop(), false)
 assertEqual(Preferences.getApplyLeveling(), false)
@@ -4526,5 +4560,32 @@ assertTrue(
     ) == nil
 )
 modalDialogResult = "ok"
+
+fakeHttpResponder = nil
+fakeHttpResponseHeaders = { status = 200 }
+fakeHttpResponseBody = '{"job_id":"job-1","photo_id":"photo-1"}'
+fakePreviewFiles["C:/Durable Jobs/preview.jpg"] = "jpeg-bytes"
+local jobUpload = assert(JobClient.upload(
+    {
+        backendBaseUrl = "http://127.0.0.1:8005",
+        requestTimeoutSeconds = 120,
+    },
+    "job-1",
+    "photo-1",
+    "C:/Durable Jobs/preview.jpg"
+))
+assertEqual(jobUpload.photo_id, "photo-1")
+local jobUploadBody = assert(Json.decode(lastHttpPostBody))
+assertEqual(jobUploadBody.image_base64, "encoded:jpeg-bytes")
+
+fakeHttpResponseBody = '{"job_id":"job-1","uploaded_photo_ids":["photo-1"]}'
+local uploadedJobPhotos = assert(JobClient.uploaded(
+    {
+        backendBaseUrl = "http://127.0.0.1:8005",
+        requestTimeoutSeconds = 120,
+    },
+    "job-1"
+))
+assertEqual(uploadedJobPhotos.uploaded_photo_ids[1], "photo-1")
 
 print("Lua assertions passed: " .. tostring(assertions))

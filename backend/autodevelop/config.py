@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     database_path: Path = Path("data/autodevelop.db")
     log_path: Path = Path("logs/autodevelop.log")
     temp_dir: Path = Path("temp")
+    jobs_dir: Path = (
+        Path(__file__).resolve().parents[2] / "data" / "jobs"
+    )
+    max_job_workers: int = Field(default=1, ge=1, le=16)
+    max_job_preview_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        ge=1024,
+        le=32 * 1024 * 1024,
+    )
     profiles_dir: Path = Path("profiles")
     log_level: str = "INFO"
     exiftool_path: str = "exiftool"
@@ -156,10 +165,10 @@ class Settings(BaseSettings):
             raise ValueError("default_model is not selectable")
         return value
 
-    @field_validator("learning_db")
+    @field_validator("learning_db", "jobs_dir")
     @classmethod
-    def resolve_learning_database_path(cls, value: Path) -> Path:
-        """Resolve relative overrides from the stable application root."""
+    def resolve_application_data_path(cls, value: Path) -> Path:
+        """Resolve relative data paths from the stable application root."""
 
         path = value.expanduser()
         if not path.is_absolute():

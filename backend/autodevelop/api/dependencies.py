@@ -6,6 +6,7 @@ from autodevelop.model_clients import ModelClient
 from autodevelop.model_clients import ModelResolver
 from autodevelop.learning.service import LearningService
 from autodevelop.config import Settings
+from autodevelop.jobs import JobRunner, JobStore
 from autodevelop.profiles import StyleProfileLoader
 from autodevelop.validation import SafetyValidator
 
@@ -44,3 +45,15 @@ async def get_learning_service(request: Request) -> LearningService:
     """Return the application-scoped personalized-learning service."""
 
     return request.app.state.learning_service
+
+
+async def get_job_store(request: Request) -> JobStore:
+    """Return the application-scoped durable job store."""
+
+    return request.app.state.job_store
+
+
+async def get_job_runner(request: Request) -> JobRunner:
+    """Return the application-scoped bounded job runner."""
+
+    return request.app.state.job_runner
