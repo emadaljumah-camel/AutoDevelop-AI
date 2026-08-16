@@ -74,7 +74,6 @@ def test_menu_order_excludes_unimplemented_placeholder_commands() -> None:
         "Auto Develop Selected Photos",
         "Capture Editing Feedback",
         "Analyze Selected Photos",
-        "Settings",
     ]
     for title, script in (
         ("Apply Recommended Crop", "ApplyRecommendedCrop.lua"),

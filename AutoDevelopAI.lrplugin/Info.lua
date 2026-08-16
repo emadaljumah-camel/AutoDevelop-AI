@@ -9,7 +9,7 @@ return {
         major = 0,
         minor = 1,
         revision = 0,
-        build = 1,
+        build = 2,
     },
 
     LrLibraryMenuItems = {
@@ -24,10 +24,6 @@ return {
         {
             title = "Analyze Selected Photos",
             file = "AnalyzeSelectedPhotos.lua",
-        },
-        {
-            title = "Settings",
-            file = "Settings.lua",
         },
     },
 }
