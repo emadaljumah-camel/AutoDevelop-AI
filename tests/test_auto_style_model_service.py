@@ -124,7 +124,7 @@ def test_auto_develop_uses_scene_then_effective_style_for_learning() -> None:
     assert response.effective_style_id == "landscape_impact"
     assert response.style_selection_mode == "auto"
     assert response.style_selection_reason == "Landscape-dominant scene"
-    assert response.editing_intensity == "moderate"
+    assert response.editing_intensity == "strong"
     assert learning.profile_ids == ["landscape_impact"]
 
 

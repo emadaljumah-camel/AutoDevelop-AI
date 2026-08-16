@@ -18,6 +18,7 @@ from autodevelop.api.model_errors import model_error_response
 from autodevelop.api.model_selection import resolve_model_request
 from autodevelop.config import Settings
 from autodevelop.denoise_decision import decide_denoise
+from autodevelop.geometry_decision import decide_geometry
 from autodevelop.hdr_decision import decide_hdr
 from autodevelop.model_clients import (
     ModelClient,
@@ -333,11 +334,17 @@ async def develop_photo(
             analysis=raw_response.analysis,
             options=request.options,
         )
+        geometry_decision = decide_geometry(
+            leveling=raw_response.leveling,
+            upright=raw_response.upright,
+            analysis=raw_response.analysis,
+            profile=profile,
+        )
         validation_result = safety_validator.validate(
             settings=raw_response.develop_settings,
             crop=raw_response.crop,
             leveling=raw_response.leveling,
-            upright=raw_response.upright,
+            upright=geometry_decision.upright,
             denoise=proposed_denoise,
             profile=profile,
             enable_hdr=proposed_hdr,
@@ -399,7 +406,8 @@ async def develop_photo(
             "effective_style=%s "
             "model=%s provider=%s resolved_model=%s outcome=%s duration_ms=%s "
             "validation_issues=%d "
-            "crop_rejected=%s upright_mode=%s upright_confidence=%.2f "
+            "crop_rejected=%s geometry_basis=%s geometry_fallback=%s "
+            "upright_mode=%s upright_confidence=%.2f "
             "upright_rejected=%s scene_hdr_candidate=%s "
             "scene_hdr_confidence=%.2f base_scene_evidence_score=%.2f "
             "hdr_learning_bonus=%.2f hdr_preference_bonus=%.2f "
@@ -427,6 +435,8 @@ async def develop_photo(
         raw_response.processing_duration_ms,
         len(validation_result.issues),
         "crop" in validation_result.rejected_fields,
+        geometry_decision.basis,
+        geometry_decision.fallback_applied,
         validation_result.upright.mode.value,
         validation_result.upright.confidence,
         "upright" in validation_result.rejected_fields,

@@ -167,6 +167,18 @@ def test_prompt_layers_are_ordered_and_master_philosophy_appears_once(profile) -
     assert prompt.count("MASTER EDITING PHILOSOPHY") == 1
     assert "strong but believable" in prompt
     assert "visually weak" in normalized
+    assert "all-null or all-unchanged develop recommendation" in normalized
+    assert "final Lightroom target values, not increments" in normalized
+    assert "Avoid tiny defensive adjustments" in prompt
+    assert "Actively evaluate rotational leveling for every image" in prompt
+    assert "approximately 0.3 degrees" in normalized
+    assert "Use recommended=false only when" in prompt
+    assert "Perspective convergence can coexist with accidental camera roll" in prompt
+    assert "converging verticals alone veto" in normalized
+    assert "Actively evaluate Upright for every architectural" in normalized
+    assert "normally recommend Upright auto" in normalized
+    assert "prefer Upright auto" in prompt
+    assert "both leveling=false and Upright off" in normalized
     assert "Do not return this reasoning" in prompt
 
 

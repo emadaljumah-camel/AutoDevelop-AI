@@ -102,11 +102,11 @@ class StyleSelection:
 _MANUAL_INTENSITY: dict[str, EditingIntensity] = {
     "natural_travel": "strong",
     "landscape_impact": "strong",
-    "architecture": "moderate",
-    "stock_neutral": "moderate",
+    "architecture": "strong",
+    "stock_neutral": "strong",
     "portrait": "moderate",
-    "night": "moderate",
-    "documentary": "moderate",
+    "night": "strong",
+    "documentary": "strong",
 }
 
 
@@ -127,11 +127,11 @@ def select_style(requested_style_id: str, scene: SceneSignals) -> StyleSelection
 
     effective = "stock_neutral"
     reason = "Ambiguous scene; broad commercial treatment"
-    intensity: EditingIntensity = "moderate"
+    intensity: EditingIntensity = "strong"
     if scene.night_scene or scene.scene_category == "night":
         effective = "night"
         reason = "Night or low-light scene"
-        intensity = "moderate"
+        intensity = "strong"
     elif scene.portrait_dominant or scene.scene_category == "portrait":
         effective = "portrait"
         reason = "Portrait-dominant subject"
@@ -139,11 +139,11 @@ def select_style(requested_style_id: str, scene: SceneSignals) -> StyleSelection
     elif scene.documentary_context or scene.scene_category == "documentary":
         effective = "documentary"
         reason = "Documentary or editorial context"
-        intensity = "moderate"
+        intensity = "strong"
     elif scene.architecture_dominant or scene.scene_category == "architecture":
         effective = "architecture"
         reason = "Architectural study"
-        intensity = "moderate"
+        intensity = "strong"
     elif scene.scene_category == "scenic_travel" or scene.primary_subject_type in {
         "landscape",
         "nature",
@@ -172,11 +172,11 @@ def select_style(requested_style_id: str, scene: SceneSignals) -> StyleSelection
                 intensity = "strong"
             else:
                 reason = "Landscape-dominant scene"
-                intensity = "moderate"
+                intensity = "strong"
         else:
             effective = "natural_travel"
             reason = "Mixed scenic travel scene"
-            intensity = "moderate"
+            intensity = "strong"
 
     return StyleSelection(
         requested_style_id=requested_style_id,

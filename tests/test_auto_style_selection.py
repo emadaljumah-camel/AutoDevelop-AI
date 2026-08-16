@@ -71,7 +71,7 @@ def test_dramatic_scenic_scene_selects_landscape_impact() -> None:
                 "confidence": 0.9,
             },
             "landscape_impact",
-            "moderate",
+            "strong",
             id="overcast-wetland-and-mountains",
         ),
         pytest.param(
@@ -109,7 +109,7 @@ def test_dramatic_scenic_scene_selects_landscape_impact() -> None:
                 "confidence": 0.85,
             },
             "landscape_impact",
-            "moderate",
+            "strong",
             id="foggy-muted-forest",
         ),
         pytest.param(
@@ -120,7 +120,7 @@ def test_dramatic_scenic_scene_selects_landscape_impact() -> None:
                 "confidence": 0.92,
             },
             "natural_travel",
-            "moderate",
+            "strong",
             id="tourist-in-front-of-mountains",
         ),
         pytest.param(
@@ -130,7 +130,7 @@ def test_dramatic_scenic_scene_selects_landscape_impact() -> None:
                 "confidence": 0.9,
             },
             "natural_travel",
-            "moderate",
+            "strong",
             id="scenic-village-street",
         ),
         pytest.param(
@@ -141,7 +141,7 @@ def test_dramatic_scenic_scene_selects_landscape_impact() -> None:
                 "confidence": 0.9,
             },
             "architecture",
-            "moderate",
+            "strong",
             id="temple-with-landscape-background",
         ),
         pytest.param(
@@ -151,7 +151,7 @@ def test_dramatic_scenic_scene_selects_landscape_impact() -> None:
                 "confidence": 0.64,
             },
             "natural_travel",
-            "moderate",
+            "strong",
             id="low-confidence-landscape",
         ),
         pytest.param(
@@ -162,7 +162,7 @@ def test_dramatic_scenic_scene_selects_landscape_impact() -> None:
                 "confidence": 0.9,
             },
             "night",
-            "moderate",
+            "strong",
             id="night-mountain-scene",
         ),
         pytest.param(
@@ -231,6 +231,34 @@ def test_manual_style_override_is_exact(style_id: str) -> None:
 
     assert result.mode == "manual"
     assert result.effective_style_id == style_id
+
+
+@pytest.mark.parametrize(
+    ("style_id", "expected_intensity"),
+    [
+        ("natural_travel", "strong"),
+        ("landscape_impact", "strong"),
+        ("architecture", "strong"),
+        ("stock_neutral", "strong"),
+        ("portrait", "moderate"),
+        ("night", "strong"),
+        ("documentary", "strong"),
+    ],
+)
+def test_manual_intensity_is_moderate_only_for_portrait(
+    style_id: str,
+    expected_intensity: str,
+) -> None:
+    result = select_style(
+        style_id,
+        SceneSignals(
+            primary_subject_type="unknown",
+            scene_category="unknown",
+            confidence=0.8,
+        ),
+    )
+
+    assert result.editing_intensity == expected_intensity
 
 
 def test_unsupported_manual_style_is_rejected() -> None:

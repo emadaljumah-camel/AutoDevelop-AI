@@ -76,10 +76,10 @@
     "reason": "Denoise is not needed for this fake scenario."
   },
   "upright": {
-    "recommended": false,
-    "mode": "off",
-    "confidence": 0.0,
-    "reason": null
+    "recommended": true,
+    "mode": "level",
+    "confidence": 0.75,
+    "reason": "Use Lightroom Upright Level for local horizon and roll analysis."
   },
   "enable_hdr": {
     "recommended": false,

@@ -75,6 +75,8 @@ def _raw_response(
     settings: DevelopSettings | None = None,
     crop: CropRecommendation | None = None,
     leveling: LevelingRecommendation | None = None,
+    upright: UprightRecommendation | None = None,
+    analysis: TechnicalAnalysis | None = None,
     denoise: DenoiseRecommendation | None = None,
     warnings: list[ProcessingWarning] | None = None,
     model: str | None = None,
@@ -84,7 +86,7 @@ def _raw_response(
         request_id=request.request_id,
         filename=request.filename,
         status="success",
-        analysis=None,
+        analysis=analysis,
         edit_plan=EditPlan(
             style_profile=request.options.style_profile,
             goals=["Produce a safe recommendation"],
@@ -97,6 +99,7 @@ def _raw_response(
             angle=0,
             mode="none",
         ),
+        upright=upright or UprightRecommendation(recommended=False),
         denoise=denoise,
         warnings=warnings or [],
         model=model or request.model,
@@ -470,6 +473,28 @@ def test_injected_dependencies_are_used_and_inputs_are_not_mutated(
     assert validator.profile is profile
     assert profile.model_dump() == profile_before
     assert profile_loader.requested_ids == ["natural_travel"]
+
+
+def test_develop_adds_lightroom_level_fallback_without_another_model_call(
+    app: FastAPI,
+) -> None:
+    model_client = RecordingModelClient()
+    validator = RecordingSafetyValidator()
+    _set_overrides(
+        app,
+        model_client=model_client,
+        safety_validator=validator,
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/autodevelop/v1/develop", json=_request_body())
+
+    assert response.status_code == 200
+    assert model_client.develop_calls == 1
+    assert validator.upright is not None
+    assert validator.upright.recommended is True
+    assert validator.upright.mode == "level"
+    assert response.json()["upright"]["mode"] == "level"
 
 
 def test_settings_are_sanitized_without_inventing_values(
