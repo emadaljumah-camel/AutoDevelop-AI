@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 
 from autodevelop.api.dependencies import get_job_runner, get_job_store
 from autodevelop.jobs import (
@@ -52,6 +52,39 @@ def upload_job_preview(
     _require_job(job_id, store)
     try:
         digest, reused = store.save_preview(job_id, photo_id, request.image_base64)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Unknown photo_id for this job",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PreviewConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "job_id": job_id,
+        "photo_id": photo_id,
+        "sha256": digest,
+        "reused": reused,
+    }
+
+
+@router.post("/{job_id}/photos/{photo_id}/preview/binary")
+def upload_binary_job_preview(
+    job_id: str,
+    photo_id: str,
+    store: Annotated[JobStore, Depends(get_job_store)],
+    data: bytes = Body(media_type="image/jpeg"),
+    content_type: str | None = Header(default=None),
+) -> dict[str, object]:
+    _require_job(job_id, store)
+    if (content_type or "").split(";", 1)[0].strip().lower() != "image/jpeg":
+        raise HTTPException(
+            status_code=415,
+            detail="Preview Content-Type must be image/jpeg",
+        )
+    try:
+        digest, reused = store.save_preview_bytes(job_id, photo_id, data)
     except KeyError as exc:
         raise HTTPException(
             status_code=404,

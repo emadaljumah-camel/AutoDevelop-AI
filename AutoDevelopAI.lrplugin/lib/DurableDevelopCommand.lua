@@ -120,6 +120,7 @@ local function buildManifest(
     }
     local previewRoot = LrPathUtils.child(jobFolder, "previews")
     local seenPhotoIds = {}
+    local preparedPhotos = {}
     local skipped = 0
     for index, photo in ipairs(photos) do
         if progressScope:isCanceled() then
@@ -133,16 +134,6 @@ local function buildManifest(
             return nil, "duplicate_photo_id"
         else
             seenPhotoIds[identity.photoId] = true
-            progressScope:setCaption("Exporting " .. identity.displayFilename)
-            local preview, previewError = PreviewExporter.exportPhoto(
-                photo,
-                previewRoot,
-                progressScope,
-                { encode = false }
-            )
-            if not preview then
-                return nil, previewError or "preview_export_failed"
-            end
             local request, requestError = RequestBuilder.buildDevelopJob(
                 photo,
                 {
@@ -165,10 +156,10 @@ local function buildManifest(
                 return nil, developStateError
                     or "submitted_develop_state_unavailable"
             end
-            manifest.photos[#manifest.photos + 1] = {
+            preparedPhotos[#preparedPhotos + 1] = {
+                photo = photo,
                 photo_id = identity.photoId,
                 filename = identity.displayFilename,
-                preview_path = preview.path,
                 local_identifier = tostring(
                     Utils.safePhotoProperty(photo, "localIdentifier") or ""
                 ),
@@ -180,10 +171,32 @@ local function buildManifest(
             }
         end
     end
-    manifest.skipped_photos = skipped
-    if #manifest.photos == 0 then
+    if #preparedPhotos == 0 then
         return nil, "no_supported_photos"
     end
+    progressScope:setCaption("Exporting " .. tostring(#preparedPhotos) .. " previews")
+    local exportPhotos = {}
+    for index, item in ipairs(preparedPhotos) do
+        exportPhotos[index] = item.photo
+    end
+    local previews, previewError = PreviewExporter.exportBatch(
+        exportPhotos,
+        previewRoot,
+        progressScope
+    )
+    if not previews then
+        return nil, previewError or "preview_export_failed"
+    end
+    for index, item in ipairs(preparedPhotos) do
+        local preview = previews[PreviewExporter.photoKey(item.photo, index)]
+        if not preview then
+            return nil, "preview_mapping_failed"
+        end
+        item.photo = nil
+        item.preview_path = preview.path
+        manifest.photos[#manifest.photos + 1] = item
+    end
+    manifest.skipped_photos = skipped
     return manifest
 end
 

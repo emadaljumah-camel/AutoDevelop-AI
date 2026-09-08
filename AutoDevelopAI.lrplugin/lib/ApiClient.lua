@@ -147,6 +147,35 @@ local function postJson(path, request, options)
     return httpResult(responseBody, responseHeaders)
 end
 
+local function postBytes(path, data, contentType, options)
+    local baseUrl, timeout = resolveConnection(options)
+    if not baseUrl or not timeout then
+        return failure(ErrorClassifier.codes.validationError, {
+            code = "invalid_preferences",
+            retryable = false,
+        })
+    end
+    local headers = headersForAttempt(options and options.endpointAttempt)
+    headers[1] = { field = "Content-Type", value = contentType }
+    local ok, responseBody, responseHeaders = LrTasks.pcall(function()
+        return LrHttp.post(
+            Config.apiUrl(baseUrl, path),
+            data,
+            headers,
+            "POST",
+            timeout
+        )
+    end)
+    if not ok then
+        return failure(ErrorClassifier.codes.networkError, {
+            status = nil,
+            code = "http_call_failed",
+            retryable = true,
+        })
+    end
+    return httpResult(responseBody, responseHeaders)
+end
+
 local function getJson(path, options)
     local baseUrl, timeout = resolveConnection(options)
     if not baseUrl or not timeout then
@@ -173,6 +202,10 @@ end
 
 function ApiClient.postPath(path, request, options)
     return postJson(path, request, options)
+end
+
+function ApiClient.postBytesPath(path, data, contentType, options)
+    return postBytes(path, data, contentType, options)
 end
 
 function ApiClient.getPath(path, options)

@@ -150,14 +150,22 @@ class JobStore:
         photo_id: str,
         image_base64: str,
     ) -> tuple[str, bool]:
-        request = self.get_request(job_id)
-        safe_photo_id = self._safe_identifier(photo_id, "photo_id")
-        if safe_photo_id not in {photo.photo_id for photo in request.photos}:
-            raise KeyError(photo_id)
         try:
             data = base64.b64decode(image_base64, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ValueError("Preview is not valid base64") from exc
+        return self.save_preview_bytes(job_id, photo_id, data)
+
+    def save_preview_bytes(
+        self,
+        job_id: str,
+        photo_id: str,
+        data: bytes,
+    ) -> tuple[str, bool]:
+        request = self.get_request(job_id)
+        safe_photo_id = self._safe_identifier(photo_id, "photo_id")
+        if safe_photo_id not in {photo.photo_id for photo in request.photos}:
+            raise KeyError(photo_id)
         if len(data) > self.max_preview_bytes:
             raise ValueError("Preview exceeds the configured size limit")
         if len(data) < 3 or data[:3] != b"\xff\xd8\xff":

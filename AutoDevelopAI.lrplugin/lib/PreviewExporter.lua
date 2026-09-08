@@ -81,6 +81,18 @@ local function exportSettings(destination)
     }
 end
 
+function PreviewExporter.photoKey(photo, fallback)
+    local localIdentifier = Utils.safePhotoProperty(photo, "localIdentifier")
+    if localIdentifier ~= nil then
+        return "local-" .. tostring(localIdentifier)
+    end
+    local uuid = Utils.safeRawMetadata(photo, "uuid")
+    if uuid and uuid ~= "" then
+        return "uuid-" .. tostring(uuid)
+    end
+    return "position-" .. tostring(fallback or "unknown")
+end
+
 function PreviewExporter.createBatchDirectory()
     local temporaryRoot = LrPathUtils.getStandardFilePath("temp")
     local batchDirectory = LrPathUtils.child(
@@ -190,6 +202,46 @@ function PreviewExporter.exportPhoto(
         return nil, renderError
     end
     return preview
+end
+
+function PreviewExporter.exportBatch(photos, destination, progressScope)
+    local settings = exportSettings(destination)
+    settings.LR_collisionHandling = "rename"
+    settings.LR_renamingTokensOn = true
+    settings.LR_initialSequenceNumber = 1
+    settings.LR_tokens = "autodevelop-ai-{{naming_sequenceNumber_5Digits}}"
+    local session = LrExportSession({
+        photosToExport = photos,
+        exportSettings = settings,
+    })
+    local previews = {}
+    local rendered = 0
+    for _, rendition in session:renditions({
+        progressScope = progressScope,
+        stopIfCanceled = true,
+    }) do
+        if progressScope and progressScope:isCanceled() then
+            return nil, "cancelled"
+        end
+        local success, renderedPath = rendition:waitForRender()
+        if not success then
+            return nil, "Lightroom could not render the preview."
+        end
+        rendered = rendered + 1
+        local key = PreviewExporter.photoKey(rendition.photo, rendered)
+        if previews[key] then
+            return nil, "duplicate_preview_photo"
+        end
+        if LrFileUtils.exists(renderedPath) ~= "file"
+            or not LrPathUtils.isAbsolute(renderedPath) then
+            return nil, "preview_path_invalid"
+        end
+        previews[key] = { path = renderedPath, directory = destination }
+    end
+    if rendered ~= #photos then
+        return nil, "preview_count_mismatch"
+    end
+    return previews
 end
 
 function PreviewExporter.cleanupPreview(handle)

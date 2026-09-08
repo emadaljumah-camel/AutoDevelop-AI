@@ -254,8 +254,11 @@ def test_durable_job_state_and_resumable_client_are_bundled() -> None:
     for method in ("create", "uploaded", "upload", "run", "status", "result", "submit"):
         assert f"function JobClient.{method}" in client
     assert "uploaded_photo_ids" in client
-    assert "PreviewTransport.encodeFile" in client
+    assert "PreviewTransport.encodeFile" not in client
+    assert "postBytesPath" in client
+    assert "preview/binary" in client
     assert "function ApiClient.postPath" in api
+    assert "function ApiClient.postBytesPath" in api
     assert "function ApiClient.getPath" in api
 
 
@@ -274,6 +277,9 @@ def test_auto_develop_menu_submits_a_durable_job_without_applying() -> None:
     assert "JobState.writeJson" in command
     assert "JobState.saveActive" in command
     assert "JobClient.submit" in command
+    assert "PreviewExporter.exportBatch" in command
+    assert "photosToExport = photos" in exporter
+    assert "LR_initialSequenceNumber = 1" in exporter
     assert command.index("JobState.writeJson") < command.index("JobClient.submit")
     assert command.index("JobState.saveActive") < command.index("JobClient.submit")
     for forbidden in (

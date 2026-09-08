@@ -1,7 +1,5 @@
 local ApiClient = ModuleLoader.load("lib/ApiClient.lua")
 local Config = ModuleLoader.load("lib/Config.lua")
-local PreviewTransport = ModuleLoader.load("lib/PreviewTransport.lua")
-
 local JobClient = {}
 
 local function validIdentifier(value)
@@ -69,16 +67,22 @@ function JobClient.upload(settings, jobId, photoId, previewPath)
     if not validIdentifier(jobId) or not validIdentifier(photoId) then
         return nil, { code = "invalid_job_photo_id", retryable = false }
     end
-    local encoded, encodeError = PreviewTransport.encodeFile(previewPath)
-    if not encoded then
-        return nil, { code = encodeError, retryable = false }
+    local file = io.open(previewPath, "rb")
+    if not file then
+        return nil, { code = "preview_read_failed", retryable = false }
     end
-    return decoded(ApiClient.postPath(
+    local jpeg = file:read("*all")
+    file:close()
+    if type(jpeg) ~= "string" or jpeg == "" then
+        return nil, { code = "preview_read_failed", retryable = false }
+    end
+    return decoded(ApiClient.postBytesPath(
         Config.apiPaths.jobs
             .. "/" .. jobId
             .. "/photos/" .. photoId
-            .. "/preview",
-        { image_base64 = encoded },
+            .. "/preview/binary",
+        jpeg,
+        "image/jpeg",
         connection(settings)
     ))
 end

@@ -214,3 +214,46 @@ def test_job_api_create_upload_queue_status_and_not_found(tmp_path: Path) -> Non
     assert missing.status_code == 404
     runner.queue.assert_called_once_with("runner-job")
     runner.shutdown.assert_called_once_with()
+
+
+def test_job_api_accepts_binary_preview_and_preserves_legacy_retries(
+    tmp_path: Path,
+) -> None:
+    store = JobStore(tmp_path / "jobs")
+    runner = Mock()
+    app = create_app(
+        Settings(
+            _env_file=None,
+            log_path=tmp_path / "autodevelop.log",
+            jobs_dir=tmp_path / "jobs",
+        ),
+        model_client=FakeModelClient(),
+        job_store=store,
+        job_runner=runner,
+    )
+
+    with TestClient(app) as client:
+        client.post("/autodevelop/v1/jobs", json=_manifest().model_dump(mode="json"))
+        uploaded = client.post(
+            "/autodevelop/v1/jobs/runner-job/photos/photo-1/preview/binary",
+            content=JPEG + b"\x00Exif",
+            headers={"Content-Type": "image/jpeg"},
+        )
+        repeated = client.post(
+            "/autodevelop/v1/jobs/runner-job/photos/photo-1/preview",
+            json={
+                "image_base64": base64.b64encode(JPEG + b"\x00Exif").decode(
+                    "ascii"
+                )
+            },
+        )
+        invalid_type = client.post(
+            "/autodevelop/v1/jobs/runner-job/photos/photo-2/preview/binary",
+            content=JPEG,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+
+    assert uploaded.status_code == 200
+    assert uploaded.json()["reused"] is False
+    assert repeated.json()["reused"] is True
+    assert invalid_type.status_code == 415

@@ -141,6 +141,23 @@ def test_create_and_preview_upload_are_idempotent(tmp_path: Path) -> None:
     ).decode("ascii")
 
 
+def test_binary_preview_preserves_bytes_and_matches_legacy_upload(tmp_path: Path) -> None:
+    store = JobStore(tmp_path)
+    job_id, _ = store.create_job(_manifest())
+    preview = JPEG_ONE + b"\x00Exif"
+    digest, reused = store.save_preview_bytes(job_id, "photo-1", preview)
+    repeated_digest, repeated = store.save_preview(
+        job_id,
+        "photo-1",
+        base64.b64encode(preview).decode("ascii"),
+    )
+
+    assert reused is False
+    assert repeated is True
+    assert repeated_digest == digest
+    assert store.preview_path(job_id, "photo-1").read_bytes() == preview
+
+
 def test_manifest_and_preview_conflicts_are_rejected(tmp_path: Path) -> None:
     store = JobStore(tmp_path)
     job_id, _ = store.create_job(_manifest())
