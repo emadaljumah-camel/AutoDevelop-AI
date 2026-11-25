@@ -216,6 +216,34 @@ def test_job_api_create_upload_queue_status_and_not_found(tmp_path: Path) -> Non
     runner.shutdown.assert_called_once_with()
 
 
+def test_job_api_cancels_created_job(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs")
+    runner = JobRunner(store, 1, _success, logging.getLogger("job-test"))
+    app = create_app(
+        Settings(
+            _env_file=None,
+            log_path=tmp_path / "autodevelop.log",
+            jobs_dir=tmp_path / "jobs",
+        ),
+        model_client=FakeModelClient(),
+        job_store=store,
+        job_runner=runner,
+    )
+
+    with TestClient(app) as client:
+        client.post("/autodevelop/v1/jobs", json=_manifest().model_dump(mode="json"))
+        cancelled = client.post("/autodevelop/v1/jobs/runner-job/cancel")
+        status = client.get("/autodevelop/v1/jobs/runner-job/status")
+        rerun = client.post("/autodevelop/v1/jobs/runner-job/run")
+
+    runner.shutdown()
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert status.json()["status"] == "cancelled"
+    assert status.json()["resumable"] is False
+    assert rerun.status_code == 409
+
+
 def test_job_api_accepts_binary_preview_and_preserves_legacy_retries(
     tmp_path: Path,
 ) -> None:

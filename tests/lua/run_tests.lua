@@ -4575,8 +4575,9 @@ local jobUpload = assert(JobClient.upload(
     "C:/Durable Jobs/preview.jpg"
 ))
 assertEqual(jobUpload.photo_id, "photo-1")
-local jobUploadBody = assert(Json.decode(lastHttpPostBody))
-assertEqual(jobUploadBody.image_base64, "encoded:jpeg-bytes")
+assertEqual(lastHttpPostBody, "jpeg-bytes")
+assertEqual(lastHttpPostHeaders[1].field, "Content-Type")
+assertEqual(lastHttpPostHeaders[1].value, "image/jpeg")
 
 fakeHttpResponseBody = '{"job_id":"job-1","uploaded_photo_ids":["photo-1"]}'
 local uploadedJobPhotos = assert(JobClient.uploaded(

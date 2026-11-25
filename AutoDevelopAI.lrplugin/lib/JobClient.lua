@@ -98,6 +98,17 @@ function JobClient.run(settings, jobId)
     ))
 end
 
+function JobClient.cancel(settings, jobId)
+    if not validIdentifier(jobId) then
+        return nil, { code = "invalid_job_id", retryable = false }
+    end
+    return decoded(ApiClient.postPath(
+        Config.apiPaths.jobs .. "/" .. jobId .. "/cancel",
+        {},
+        connection(settings)
+    ))
+end
+
 function JobClient.status(settings, jobId)
     if not validIdentifier(jobId) then
         return nil, { code = "invalid_job_id", retryable = false }

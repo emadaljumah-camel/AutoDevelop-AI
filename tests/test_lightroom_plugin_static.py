@@ -251,7 +251,7 @@ def test_durable_job_state_and_resumable_client_are_bundled() -> None:
     assert 'path .. ".tmp"' in state
     assert 'path .. ".bak"' in state
     assert "function JobState.saveActive" in state
-    for method in ("create", "uploaded", "upload", "run", "status", "result", "submit"):
+    for method in ("create", "uploaded", "upload", "run", "cancel", "status", "result", "submit"):
         assert f"function JobClient.{method}" in client
     assert "uploaded_photo_ids" in client
     assert "PreviewTransport.encodeFile" not in client
@@ -307,6 +307,9 @@ def test_durable_submission_protects_unapplied_job_and_persists_context() -> Non
 def test_durable_job_review_validates_caches_and_reuses_apply_pipeline() -> None:
     command = _read("lib/DevelopJobReviewCommand.lua")
     preparation = _read("lib/PreparationService.lua")
+    assert command.index("local knownStatus = JobClient.status") < command.index(
+        "local submitted, submitError = JobClient.submit"
+    )
     assert "completed_result.json" in command
     assert command.index("JobState.writeJson(resultPath, result)") < command.index(
         "AutoDevelopCommand.processSequential"

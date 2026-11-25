@@ -15,7 +15,15 @@ from pydantic import (
 
 from autodevelop.models import DevelopRequest, DevelopResponse, ErrorResponse
 
-JobStatus = Literal["created", "running", "completed", "failed", "interrupted"]
+JobStatus = Literal[
+    "created",
+    "running",
+    "cancelling",
+    "cancelled",
+    "completed",
+    "failed",
+    "interrupted",
+]
 JobIdentifier = Annotated[
     str,
     StringConstraints(

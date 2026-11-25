@@ -127,6 +127,19 @@ def run_job(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.post("/{job_id}/cancel")
+def cancel_job(
+    job_id: str,
+    store: Annotated[JobStore, Depends(get_job_store)],
+    runner: Annotated[JobRunner, Depends(get_job_runner)],
+) -> dict[str, object]:
+    _require_job(job_id, store)
+    try:
+        return runner.cancel(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/{job_id}/status")
 def job_status(
     job_id: str,

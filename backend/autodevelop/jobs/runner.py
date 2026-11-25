@@ -43,6 +43,7 @@ class JobRunner:
             thread_name_prefix="autodevelop-job",
         )
         self._active: set[str] = set()
+        self._cancel_requested: set[str] = set()
         self._lock = Lock()
 
     def queue(self, job_id: str) -> dict[str, object]:
@@ -55,6 +56,8 @@ class JobRunner:
                 "already_running": False,
                 "resumed": False,
             }
+        if status.get("status") in {"cancelled", "cancelling"}:
+            raise ValueError("Cancelled jobs cannot be queued")
         with self._lock:
             if job_id in self._active:
                 return {
@@ -93,6 +96,41 @@ class JobRunner:
             "resumed": status.get("status") in {"failed", "interrupted"},
         }
 
+    def cancel(self, job_id: str) -> dict[str, object]:
+        """Cancel a job without discarding its durable files or checkpoints."""
+
+        status = self.store.get_status(job_id)
+        current = status.get("status")
+        if current == "completed":
+            raise ValueError("Completed jobs cannot be cancelled")
+        if current == "cancelled":
+            return {"job_id": job_id, "status": "cancelled", "already_cancelled": True}
+
+        progress = JobProgress.model_validate(status.get("progress", {}))
+        with self._lock:
+            active = job_id in self._active
+            if active:
+                self._cancel_requested.add(job_id)
+
+        if active:
+            self.store.set_status(
+                job_id,
+                "cancelling",
+                progress,
+                errors=[],
+                resumable=False,
+            )
+            return {"job_id": job_id, "status": "cancelling", "already_cancelled": False}
+
+        self.store.set_status(
+            job_id,
+            "cancelled",
+            progress,
+            errors=[],
+            resumable=False,
+        )
+        return {"job_id": job_id, "status": "cancelled", "already_cancelled": False}
+
     def _run(self, job_id: str) -> None:
         try:
             self.process(job_id)
@@ -105,6 +143,7 @@ class JobRunner:
         finally:
             with self._lock:
                 self._active.discard(job_id)
+                self._cancel_requested.discard(job_id)
 
     def _mark_failed(self, job_id: str, error_code: str) -> None:
         try:
@@ -124,6 +163,9 @@ class JobRunner:
         completed = self.store.load_checkpoint(job_id)
         total = len(request.photos)
         for photo in request.photos:
+            if self._is_cancel_requested(job_id):
+                self._mark_cancelled(job_id, len(completed), total)
+                return
             if photo.photo_id in completed:
                 continue
             self.store.set_status(
@@ -144,6 +186,9 @@ class JobRunner:
             result = self._checkpoint_result(photo.photo_id, outcome)
             self.store.save_checkpoint(job_id, result)
             completed[photo.photo_id] = result
+            if self._is_cancel_requested(job_id):
+                self._mark_cancelled(job_id, len(completed), total)
+                return
             self.store.set_status(
                 job_id,
                 "running",
@@ -184,6 +229,29 @@ class JobRunner:
             total,
             succeeded,
             total - succeeded,
+        )
+
+    def _is_cancel_requested(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._cancel_requested
+
+    def _mark_cancelled(self, job_id: str, processed: int, total: int) -> None:
+        self.store.set_status(
+            job_id,
+            "cancelled",
+            JobProgress(
+                stage="cancelled",
+                processed_photos=processed,
+                total_photos=total,
+            ),
+            errors=[],
+            resumable=False,
+        )
+        self.logger.info(
+            "job_cancelled job_id=%s processed=%d total=%d",
+            job_id,
+            processed,
+            total,
         )
 
     @staticmethod

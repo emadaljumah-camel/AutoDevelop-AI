@@ -127,7 +127,7 @@ class JobStore:
             completed_at = previous.get("completed_at")
             if status == "running" and not started_at:
                 started_at = now
-            if status == "completed":
+            if status in {"completed", "cancelled"}:
                 completed_at = now
             self._write_json(
                 self.job_dir(job_id) / "status.json",
@@ -136,7 +136,9 @@ class JobStore:
                     "status": status,
                     "progress": progress.model_dump(mode="json"),
                     "errors": previous.get("errors", []) if errors is None else errors,
-                    "resumable": status != "completed" if resumable is None else resumable,
+                    "resumable": status not in {"completed", "cancelled"}
+                    if resumable is None
+                    else resumable,
                     "created_at": previous.get("created_at", now),
                     "updated_at": now,
                     "started_at": started_at,

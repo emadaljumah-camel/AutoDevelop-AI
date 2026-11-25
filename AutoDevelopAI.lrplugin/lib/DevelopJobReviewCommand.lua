@@ -157,17 +157,33 @@ local function preferencesFor(manifest, active)
     return preferences
 end
 
-local function showRunning(status, manifest)
+local function offerCancellation(status, manifest, preferences, jobId)
     local progress = status.progress or {}
-    LrDialogs.message(
-        "AutoDevelop AI job still running",
+    local choice = LrDialogs.confirm(
+        "AutoDevelop AI job status",
         "Stage: " .. tostring(progress.stage or "unknown")
             .. "\nProgress: "
             .. tostring(progress.processed_photos or 0)
             .. "/"
-            .. tostring(progress.total_photos or #(manifest.photos or {})),
-        "info"
+            .. tostring(progress.total_photos or #(manifest.photos or {}))
+            .. "\n\nThe job remains available for checking later.",
+        "Cancel Job",
+        "Keep Waiting"
     )
+    if choice ~= "ok" then
+        return nil
+    end
+    local confirm = LrDialogs.confirm(
+        "Cancel AutoDevelop AI job?",
+        "This stops further processing. Completed recommendations, if any, "
+            .. "will not be applied by this job.",
+        "Cancel Job",
+        "Keep Job"
+    )
+    if confirm ~= "ok" then
+        return nil
+    end
+    return JobClient.cancel(preferences, jobId)
 end
 
 local function obtainResult(
@@ -186,6 +202,22 @@ local function obtainResult(
     end
 
     if active.status == "submitting" then
+        progressScope:setCaption("Checking submitted job status")
+        local knownStatus = JobClient.status(preferences, active.job_id)
+        if knownStatus and knownStatus.status == "cancelled" then
+            active.status = "cancelled"
+            active.closed = true
+            active.closed_at = os.time()
+            if not saveActive(jobRoot, active) then
+                return nil, "active_job_save_failed"
+            end
+            LrDialogs.message(
+                "AutoDevelop AI job cancelled",
+                "The job was cancelled. You may submit a new job.",
+                "info"
+            )
+            return nil, "job_cancelled"
+        end
         local submitted, submitError = JobClient.submit(
             preferences,
             manifest,
@@ -216,8 +248,53 @@ local function obtainResult(
         return nil, "active_job_save_failed"
     end
     if status.status == "created" or status.status == "running" then
-        showRunning(status, manifest)
+        local cancellation, cancellationError = offerCancellation(
+            status,
+            manifest,
+            preferences,
+            active.job_id
+        )
+        if cancellation then
+            active.status = cancellation.status or "cancelling"
+            if active.status == "cancelled" then
+                active.closed = true
+                active.closed_at = os.time()
+            end
+            saveActive(jobRoot, active)
+            LrDialogs.message(
+                "AutoDevelop AI job cancellation",
+                active.status == "cancelled"
+                    and "The job was cancelled. You may submit a new job."
+                    or "Cancellation was requested. The current photo will finish safely.",
+                "info"
+            )
+            return nil, "job_cancelled"
+        end
+        if cancellationError then
+            return nil, type(cancellationError) == "table"
+                and cancellationError.code or "job_cancel_failed"
+        end
         return nil, "job_still_running"
+    end
+    if status.status == "cancelling" then
+        LrDialogs.message(
+            "AutoDevelop AI job cancelling",
+            "Cancellation is in progress. Check again after the current photo finishes.",
+            "info"
+        )
+        return nil, "job_still_running"
+    end
+    if status.status == "cancelled" then
+        active.status = "cancelled"
+        active.closed = true
+        active.closed_at = os.time()
+        saveActive(jobRoot, active)
+        LrDialogs.message(
+            "AutoDevelop AI job cancelled",
+            "The job was cancelled. You may submit a new job.",
+            "info"
+        )
+        return nil, "job_cancelled"
     end
     if status.status == "failed" or status.status == "interrupted" then
         local resume = LrDialogs.confirm(
@@ -349,7 +426,8 @@ local function runReview(context)
     )
     if not result then
         if resultError ~= "job_still_running"
-            and resultError ~= "job_resume_pending" then
+            and resultError ~= "job_resume_pending"
+            and resultError ~= "job_cancelled" then
             Logger.warn(
                 "operation=job_review_result category=network_error code="
                     .. Utils.safeErrorCode(resultError, "job_result_failed")
