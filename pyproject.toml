@@ -7,6 +7,7 @@ name = "autodevelop-ai"
 version = "0.1.0"
 description = "Backend service for the AutoDevelop AI Lightroom Classic plug-in"
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115,<1",
@@ -22,6 +23,10 @@ dependencies = [
 test = [
     "pytest>=8.3,<10",
 ]
+
+[project.urls]
+Repository = "https://github.com/emadaljumah-camel/AutoDevelop-AI"
+Issues = "https://github.com/emadaljumah-camel/AutoDevelop-AI/issues"
 
 [tool.setuptools]
 package-dir = {"" = "backend"}

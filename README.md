@@ -1,6 +1,6 @@
 # AutoDevelop AI
 
-AutoDevelop AI is a separate Lightroom Classic automation project composed of:
+AutoDevelop AI is an experimental Lightroom Classic automation project composed of:
 
 - the `AutoDevelopAI.lrplugin` Lightroom Classic Lua plug-in;
 - a Python 3.12 FastAPI backend;
@@ -11,6 +11,15 @@ AutoDevelop AI is a separate Lightroom Classic automation project composed of:
 
 The plug-in supports Analyze, validated Auto Develop, style and model
 selection, production preferences, and optional local personalized learning.
+
+Version 0.1.x requires manual testing in your Lightroom version. Back up your
+catalog and test with disposable photos before applying changes to important
+work. AI recommendations can be wrong. The backend has no client authentication
+or built-in TLS; see [security and privacy](SECURITY.md).
+
+Local inference is the default. Selecting the optional Gemini provider sends
+previews and prompts to Google's API and may incur charges. Model weights,
+Lightroom, and inference runtimes are not included.
 
 ## Premium editing and automatic style selection
 
@@ -54,6 +63,8 @@ the selected profile's ISO, confidence, and maximum-amount safeguards. The
 validated amount is quantized to a verified preset without exceeding the
 profile maximum.
 
+### Denoise presets
+
 The Lightroom plug-in applies Denoise through native Develop presets so that
 Lightroom generates its photo-specific AI `FilterList`. Create these presets
 in Lightroom with only the Denoise/AI Edit setting selected:
@@ -77,18 +88,29 @@ Analyze remains read-only while reporting both geometry decisions separately.
 ## Requirements
 
 - Python 3.12
-- Lightroom Classic for loading the plug-in
-- LM Studio for future local model integration
-- ExifTool for future image metadata extraction
+- Lightroom Classic, installed and licensed separately. The plug-in declares
+  SDK 13.0 and minimum SDK 6.0; recent HDR and Denoise features require a
+  compatible host and source photo. This is not a tested compatibility matrix.
+- LM Studio or another OpenAI-compatible server with a suitable vision-capable
+  model, or an explicitly configured Gemini account/API key. Hardware
+  requirements depend on your chosen runtime and model.
+- ExifTool on PATH if using the backend's metadata-extraction API
+- Lua 5.1 or LuaJIT to include the standalone plug-in test harness
 
 ## Setup
 
 ```powershell
+git clone https://github.com/emadaljumah-camel/AutoDevelop-AI.git
+cd AutoDevelop-AI
 py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[test]"
+.\.venv\Scripts\python.exe -m pip install -e ".[test]"
 Copy-Item .env.example .env
 ```
+
+Run commands from the repository root. Copy examples only on first setup;
+preserve an existing local configuration. [pyproject.toml](pyproject.toml)
+defines the installation dependencies; [requirements.txt](requirements.txt)
+is a version snapshot.
 
 ## Configure AI models
 
@@ -100,6 +122,10 @@ Copy-Item config\models.example.yaml config\models.yaml
 
 Edit provider model identifiers to match the models exposed by the configured
 inference provider:
+
+Start the inference server and load a vision-capable model yourself. These
+identifiers are examples: replace them with exact IDs exposed by your server.
+Not every listed model supports images. This setup does not download models.
 
 ```yaml
 models:
@@ -113,6 +139,11 @@ models:
 Model, provider, and learning behavior is configured through YAML.
 Environment variables remain supported for secrets and existing
 application/runtime settings such as port and log paths.
+
+For model/provider settings, environment variables and `.env` entries override
+YAML. The copied `.env.example` includes model IDs and a default model: update
+those values too, or remove the corresponding entries from your local `.env`
+to let YAML control them. Keep credentials in the environment or `.env`.
 
 Legacy `AUTODEVELOP_LEARNING_*` environment variables are ignored. Configure
 learning behavior in the `learning` section of `config/models.yaml`.
@@ -150,27 +181,58 @@ The equivalent direct command is:
 uvicorn autodevelop.main:app --app-dir backend --host 127.0.0.1 --port 8005
 ```
 
+Without activating the virtual environment, prefix that command with
+`.\.venv\Scripts\python.exe -m`. The launcher explicitly binds loopback and
+port 8005; environment host/port values do not override its command arguments.
+
 The health endpoint is available at:
 
 ```text
 GET http://127.0.0.1:8005/autodevelop/v1/health
 ```
 
+A healthy API does not prove that the selected model is loaded or can process
+images. Test **Analyze Selected Photos** on one photo to verify inference.
+
+### Install and use the Lightroom plug-in
+
+1. Open **File > Plug-in Manager** in Lightroom Classic and add the complete
+   [AutoDevelopAI.lrplugin/](AutoDevelopAI.lrplugin/) directory.
+2. In the plug-in settings, set Backend URL to `http://127.0.0.1:8005`
+   without `/autodevelop/v1` when both applications use the same computer.
+3. Choose a configured model and style; begin with **Analyze Selected Photos**.
+4. Run **Auto Develop Selected Photos** for a durable batch job. Use
+   **Check AutoDevelop Job / Apply Results** to recover, review, or apply results.
+5. Inspect the applied settings and warnings in Lightroom. Completed inference
+   and successful application to the catalog are separate outcomes.
+
+Interrupted jobs retain checkpoints and are marked interrupted after a backend
+restart. Check the existing job instead of submitting a duplicate. Cancellation
+is cooperative: an active inference request may finish before the runner stops.
+It retains job data and does not undo edits already applied.
+
 ### Lightroom on another computer
 
-The Lightroom plug-in uploads each temporary 1600-pixel JPEG preview in the
-request as `preview_base64`. It never sends the Lightroom computer's local
-temporary path to the backend. The backend retains `preview_path` only for
-backward-compatible API clients.
+The plug-in renders JPEG previews with a 1600-pixel long-edge limit. Durable
+Auto Develop jobs upload binary JPEG bytes to the job preview endpoint.
+Synchronous requests such as Analyze use `preview_base64`. The plug-in does not
+send its local temporary path as a server-readable preview path. The backend
+retains `preview_path` for compatible backend-side API clients.
 
 Base64 expands binary content by approximately one third. The plug-in rejects
 a preview above 8 MiB before encoding, rejects an estimated or actual encoded
-payload above 11 MiB, and still deletes the per-photo temporary JPEG through
-the normal cleanup path. Preview content and local paths are not written to
-ordinary logs or learning records.
+payload above 11 MiB. Backend durable job previews also default to an 8 MiB
+limit. Temporary preview cleanup does not erase durable job storage.
+
+Backend jobs retain previews, manifests, checkpoints, and results in
+`data/jobs/`. Lightroom retains durable job material under its configured job
+root, which can include catalog paths, filenames, and identifiers. There is no
+automatic retention period. Cancellation does not erase stored data. Do not
+assume image metadata is stripped. Review [SECURITY.md](SECURITY.md) before
+sharing logs, previews, or job artifacts.
 
 To keep the backend and LM Studio on one computer while Lightroom runs on
-another computer on the same private LAN:
+another computer on a trusted private LAN with restricted client access:
 
 1. Copy the complete `AutoDevelopAI.lrplugin` directory to the Lightroom
    computer and add it through **File > Plug-in Manager**.
@@ -189,15 +251,15 @@ another computer on the same private LAN:
    `http://BACKEND-LAN-IP:8005/autodevelop/v1/health`, then set **Backend
    URL** in the plug-in preferences to `http://BACKEND-LAN-IP:8005` without
    the API suffix.
-6. Keep the request timeout high enough for the Base64 upload plus inference.
+6. Keep the request timeout high enough for upload and synchronous inference.
    The default is 120 seconds; the plug-in accepts 10 through 600 seconds.
 7. Create or import the three native Denoise presets on the Lightroom
    computer if Denoise 25, 50, and 75 should all be available.
 
 Verify a deployment by running Analyze and Auto Develop on one photo, checking
-that the backend receives `preview_base64` and no `preview_path`, and confirming
-that the Lightroom temporary preview is removed afterward. Port 8005 must not
-be exposed directly to the public internet because this API does not provide
+the appropriate Base64 or binary upload, then reviewing and applying its results.
+Check retained durable job files separately from temporary cleanup. Port 8005
+must not be exposed directly to the public internet because this API does not provide
 transport encryption or client authentication.
 
 LM Studio defaults to its OpenAI-compatible API at
@@ -213,6 +275,13 @@ ExifTool defaults to the `exiftool` executable on `PATH`. Override
 python -m pytest
 ```
 
+Tests use fake inference clients and HTTP mocks without cloud credentials or
+model weights. The Lua harness is skipped when no interpreter is available;
+set `AUTODEVELOP_LUA` or install Lua 5.1/LuaJIT on PATH to include it. CI is
+configured for Python 3.12 on Windows and Linux, with a separate Lua 5.1 job.
+Automated checks do not exercise the real Lightroom UI or prove model quality.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development instructions.
+
 ## Personalized learning
 
 Phase 4 adds an optional local retrieval-based learning system. After a
@@ -227,9 +296,10 @@ receive compact aggregate preferences. Slider, crop, rotational-leveling, and
 Upright preferences are scoped to the effective style. HDR feedback is
 retrieved globally because HDR is based on scene need rather than style.
 
-Learning does not fine-tune models, monitor Lightroom in the background, or
-upload data. AI Denoise application is not learned as a numeric Develop
-slider. Its SQLite database defaults to
+Learning does not fine-tune models or monitor Lightroom in the background.
+Storage is local, but aggregate preferences can be included in prompts sent to
+the selected provider, including remote providers. AI Denoise application is
+not learned as a numeric Develop slider. Its SQLite database defaults to
 `data/autodevelop_learning.sqlite3`. See
 [docs/LEARNING_SYSTEM.md](docs/LEARNING_SYSTEM.md) for storage, privacy,
 configuration, reset, and backup details.
@@ -239,7 +309,8 @@ configuration, reset, and backup details.
 ```text
 AutoDevelopAI.lrplugin/  Lightroom Classic plug-in
 backend/autodevelop/     FastAPI application package
-profiles/                File-based JSON style profiles
+backend/autodevelop/profiles/data/  Bundled JSON style profiles
+config/                  Model configuration example and ignored local settings
 data/                    SQLite database location
 logs/                    Backend log location
 temp/                    Temporary Lightroom previews
@@ -255,3 +326,17 @@ tests/integration/       API integration tests
 - Learning database: `data/autodevelop_learning.sqlite3`
 - Log: `logs/autodevelop.log`
 - Temporary previews: `temp/`
+- Durable backend jobs: `data/jobs/`
+
+## License and third-party requirements
+
+Original project code and documentation are available under the
+[MIT license](LICENSE). External software, services, model weights, and
+Adobe-generated preset material have separate terms; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The maintainer created the
+bundled Denoise presets in Lightroom. Users can also create the native presets
+in their own Lightroom installation as described above.
+
+Dependency versions have intentionally been preserved. The pinned dependency
+snapshot has unresolved security advisories; see
+[known dependency advisories](SECURITY.md#known-dependency-advisories).
